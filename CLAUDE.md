@@ -13,6 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Electron Apps
 - **Main App**: `npm install && npm start` (or `npm run dev`)
+- **Sports Monitor**: `cd sports-monitor && npm install && npm start` (or `npm run dev`)
+- **Build Sports Monitor**: `cd sports-monitor && npm run build`
+- **Test Sports Monitor**: `cd sports-monitor && npm test`
 
 ## Architecture
 
@@ -35,6 +38,10 @@ Windows Electron App → WebSocket → WSL Proxy Server → Claude Code
    - Includes multi-agent system (`multi-agent-system.js`)
    - Logs to `/mnt/c/github/claudeplus/proxy/proxy.log`
 
+3. **Sports Monitor** (`sports-monitor/`): Separate Electron application
+   - Sports game schedules and results monitoring
+   - Uses web scraping (axios, cheerio)
+   - Has build and test infrastructure
 
 ### Key Technical Details
 
@@ -42,6 +49,7 @@ Windows Electron App → WebSocket → WSL Proxy Server → Claude Code
 - Electron apps use `contextIsolation: true` and `nodeIntegration: false`
 - WebSocket communication for real-time messaging
 - Multi-agent system for request/response processing
+- Sports monitor includes cron jobs for scheduled tasks
 
 ## important-instruction-reminders
 Do what has been asked; nothing more, nothing less.

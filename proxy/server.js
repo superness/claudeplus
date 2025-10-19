@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const MultiAgentClaudeSystem = require('./multi-agent-system');
 
 // Create log file and override console.log
 const logFile = '/mnt/c/github/claudeplus/proxy/proxy.log';
@@ -61,26 +62,67 @@ class ClaudeProxy {
       console.log(`[PROXY] Received user message: ${message.content}`);
       
       try {
+        // Initialize multi-agent system for this request
+        const multiAgent = new MultiAgentClaudeSystem();
+        
+        // Set up real-time status callback
+        multiAgent.setStatusCallback((logEntry) => {
+          ws.send(JSON.stringify({
+            type: 'agent-status',
+            content: logEntry
+          }));
+        });
+        
         // Send status update to client
         ws.send(JSON.stringify({
           type: 'system-status',
-          content: 'Processing request...'
+          content: 'Initializing multi-agent validation system...'
         }));
         
-        // Direct Claude call without multi-agent overhead
-        const response = await this.sendToClaude(message.content);
+        // Process through multi-agent system
+        const response = await multiAgent.processUserRequest(message.content);
         
         // Send final response back to Windows client
         ws.send(JSON.stringify({
           type: 'claude-response',
           content: response
         }));
+
+        // Optionally send the full conversation log
+        ws.send(JSON.stringify({
+          type: 'agent-log',
+          content: multiAgent.getFullLog()
+        }));
         
       } catch (error) {
-        console.error('[PROXY] Error processing message:', error);
+        console.error('[PROXY] Multi-agent system error:', error);
         ws.send(JSON.stringify({
           type: 'claude-response',
-          content: `Error: ${error.message}`
+          content: `Multi-agent system error: ${error.message}`
+        }));
+      }
+    } else if (message.type === 'dragon-command') {
+      console.log(`[PROXY] 🐉 Dragon command received:`, message.content);
+      
+      try {
+        // Get the dragon orchestrator from multi-agent system
+        const multiAgent = new MultiAgentClaudeSystem();
+        const dragonInsights = await multiAgent.dragonOrchestrator.processCommand(message.content);
+        
+        // Send dragon insights back to client
+        ws.send(JSON.stringify({
+          type: 'dragon-insights',
+          content: dragonInsights,
+          timestamp: message.timestamp
+        }));
+        
+        console.log(`[PROXY] 🐉 Dragon insights sent to client`);
+        
+      } catch (error) {
+        console.error('[PROXY] 🐉 Dragon command error:', error);
+        ws.send(JSON.stringify({
+          type: 'dragon-error',
+          content: `Dragon orchestrator error: ${error.message}`
         }));
       }
     }
