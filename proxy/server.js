@@ -19,7 +19,8 @@ class ClaudeProxy {
     this.wss = new WebSocket.Server({ port: 8081 });
     this.claudeProcess = null;
     this.clients = new Set();
-    
+    this.conversationHistory = new Map(); // Track conversation per client
+
     this.setupWebSocketServer();
     console.log('Claude Proxy Server running on port 8081');
   }
@@ -28,7 +29,10 @@ class ClaudeProxy {
     this.wss.on('connection', (ws) => {
       console.log('[PROXY] Windows client connected');
       this.clients.add(ws);
-      
+
+      // Initialize conversation history for this client
+      this.conversationHistory.set(ws, []);
+
       // Send connection confirmation
       console.log('[PROXY] Sending connection confirmation to client');
       ws.send(JSON.stringify({
@@ -48,6 +52,7 @@ class ClaudeProxy {
 
       ws.on('close', () => {
         this.clients.delete(ws);
+        this.conversationHistory.delete(ws);
         console.log('[PROXY] Windows client disconnected');
       });
 
@@ -60,11 +65,24 @@ class ClaudeProxy {
   async handleClientMessage(message, ws) {
     if (message.type === 'user-message') {
       console.log(`[PROXY] Received user message: ${message.content}`);
-      
+
       try {
+        // Get conversation history for this client
+        const history = this.conversationHistory.get(ws) || [];
+
+        // Build context from history
+        let contextualMessage = message.content;
+        if (history.length > 0) {
+          const conversationContext = history.map(h =>
+            `User: ${h.user}\nAssistant: ${h.assistant}`
+          ).join('\n\n');
+
+          contextualMessage = `Previous conversation:\n${conversationContext}\n\nCurrent request: ${message.content}`;
+        }
+
         // Initialize multi-agent system for this request
         const multiAgent = new MultiAgentClaudeSystem();
-        
+
         // Set up real-time status callback
         multiAgent.setStatusCallback((logEntry) => {
           ws.send(JSON.stringify({
@@ -72,16 +90,23 @@ class ClaudeProxy {
             content: logEntry
           }));
         });
-        
+
         // Send status update to client
         ws.send(JSON.stringify({
           type: 'system-status',
           content: 'Initializing multi-agent validation system...'
         }));
-        
-        // Process through multi-agent system
-        const response = await multiAgent.processUserRequest(message.content);
-        
+
+        // Process through multi-agent system WITH CONTEXT
+        const response = await multiAgent.processUserRequest(contextualMessage);
+
+        // Store this exchange in history
+        history.push({
+          user: message.content,
+          assistant: response
+        });
+        this.conversationHistory.set(ws, history);
+
         // Send final response back to Windows client
         ws.send(JSON.stringify({
           type: 'claude-response',
@@ -101,31 +126,32 @@ class ClaudeProxy {
           content: `Multi-agent system error: ${error.message}`
         }));
       }
-    } else if (message.type === 'dragon-command') {
-      console.log(`[PROXY] 🐉 Dragon command received:`, message.content);
-      
-      try {
-        // Get the dragon orchestrator from multi-agent system
-        const multiAgent = new MultiAgentClaudeSystem();
-        const dragonInsights = await multiAgent.dragonOrchestrator.processCommand(message.content);
-        
-        // Send dragon insights back to client
-        ws.send(JSON.stringify({
-          type: 'dragon-insights',
-          content: dragonInsights,
-          timestamp: message.timestamp
-        }));
-        
-        console.log(`[PROXY] 🐉 Dragon insights sent to client`);
-        
-      } catch (error) {
-        console.error('[PROXY] 🐉 Dragon command error:', error);
-        ws.send(JSON.stringify({
-          type: 'dragon-error',
-          content: `Dragon orchestrator error: ${error.message}`
-        }));
-      }
-    }
+    } // DISABLED: Dragon-vision system disabled
+    // else if (message.type === 'dragon-command') {
+    //   console.log(`[PROXY] 🐉 Dragon command received:`, message.content);
+    //
+    //   try {
+    //     // Get the dragon orchestrator from multi-agent system
+    //     const multiAgent = new MultiAgentClaudeSystem();
+    //     const dragonInsights = await multiAgent.dragonOrchestrator.processCommand(message.content);
+    //
+    //     // Send dragon insights back to client
+    //     ws.send(JSON.stringify({
+    //       type: 'dragon-insights',
+    //       content: dragonInsights,
+    //       timestamp: message.timestamp
+    //     }));
+    //
+    //     console.log(`[PROXY] 🐉 Dragon insights sent to client`);
+    //
+    //   } catch (error) {
+    //     console.error('[PROXY] 🐉 Dragon command error:', error);
+    //     ws.send(JSON.stringify({
+    //       type: 'dragon-error',
+    //       content: `Dragon orchestrator error: ${error.message}`
+    //     }));
+    //   }
+    // }
   }
 
   processMessage(content) {

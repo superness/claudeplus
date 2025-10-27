@@ -954,14 +954,14 @@ function setupDragonOrchestration() {
 document.addEventListener('DOMContentLoaded', () => {
     console.log('[RENDERER] DOMContentLoaded - initializing systems');
     setupTitleBarControls();
-    setupDragonOrchestration();
-    
+    // setupDragonOrchestration(); // DISABLED: Dragon-vision system disabled
+
     // Add keyboard shortcut to close app (Ctrl+Q or Alt+F4)
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey && e.key === 'q') || (e.altKey && e.key === 'F4')) {
             window.electronAPI.closeWindow();
         }
     });
-    
-    console.log('[RENDERER] 🐉 Dragon orchestration system initialized');
+
+    // console.log('[RENDERER] 🐉 Dragon orchestration system initialized');
 });
