@@ -48,7 +48,7 @@ class MultiAgentClaudeSystem {
 
     return new Promise((resolve, reject) => {
       // Set working directory to OUTPUT folder, NOT the proxy project
-      const workingDir = '/mnt/c/github/claudeplus-output';
+      const workingDir = path.resolve(__dirname, '../output');
 
       const claude = spawn('claude', ['-'], {
         cwd: workingDir,

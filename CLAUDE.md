@@ -36,7 +36,8 @@ Windows Electron App → WebSocket → WSL Proxy Server → Claude Code
    - Entry point: `proxy/server.js`
    - Manages Claude Code processes via spawn
    - Includes multi-agent system (`multi-agent-system.js`)
-   - Logs to `/mnt/c/github/claudeplus/proxy/proxy.log`
+   - Logs to `proxy/proxy.log` (relative to project)
+   - Claude instances execute in `output/` directory (auto-created)
 
 3. **Sports Monitor** (`sports-monitor/`): Separate Electron application
    - Sports game schedules and results monitoring

@@ -1,10 +1,11 @@
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const MultiAgentClaudeSystem = require('./multi-agent-system');
 
 // Create log file and override console.log
-const logFile = '/mnt/c/github/claudeplus/proxy/proxy.log';
+const logFile = path.join(__dirname, 'proxy.log');
 const originalConsoleLog = console.log;
 console.log = function(...args) {
   const message = args.join(' ');
