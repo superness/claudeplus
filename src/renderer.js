@@ -10,6 +10,14 @@ const messagesContainer = document.getElementById('messages');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const typingIndicator = document.getElementById('typingIndicator');
+const currentDirectory = document.getElementById('currentDirectory');
+const selectDirectoryBtn = document.getElementById('selectDirectoryBtn');
+
+// Navigation elements
+const chatBtn = document.getElementById('chatBtn');
+const pipelineDesignerBtn = document.getElementById('pipelineDesignerBtn');
+const unifiedStudioBtn = document.getElementById('unifiedStudioBtn');
+const chatContainer = document.querySelector('.chat-container');
 
 // Handle proxy connection status
 window.electronAPI.onProxyConnected(() => {
@@ -56,6 +64,12 @@ window.electronAPI.onClaudeResponse((event, response) => {
     } else if (response.type === 'claude-response') {
         // Final AI response
         handleFinalResponse(response.content);
+    } else if (response.type === 'directory-changed') {
+        // Directory change confirmation
+        handleDirectoryChanged(response.directory);
+    } else if (response.type === 'directory-error') {
+        // Directory change error
+        handleDirectoryError(response.error);
     } else if (response.type === 'dragon-insights') {
         // Dragon orchestrator insights
         handleDragonInsights(response.content, response.timestamp);
@@ -816,6 +830,46 @@ function sendMessage() {
     messageInput.value = '';
 }
 
+// Directory selection handler
+async function selectDirectory() {
+    try {
+        const selectedPath = await window.electronAPI.selectDirectory();
+        if (selectedPath) {
+            currentDirectory.value = selectedPath;
+            console.log('[RENDERER] Directory selected:', selectedPath);
+        }
+    } catch (error) {
+        console.error('[RENDERER] Directory selection error:', error);
+    }
+}
+
+// Directory change handlers
+function handleDirectoryChanged(directory) {
+    console.log('[RENDERER] Directory change confirmed:', directory);
+    currentDirectory.value = directory;
+    
+    // Show a brief confirmation message
+    const originalPlaceholder = currentDirectory.placeholder;
+    currentDirectory.placeholder = 'Directory updated successfully!';
+    setTimeout(() => {
+        currentDirectory.placeholder = originalPlaceholder;
+    }, 2000);
+}
+
+function handleDirectoryError(error) {
+    console.error('[RENDERER] Directory change error:', error);
+    
+    // Show error message
+    const originalPlaceholder = currentDirectory.placeholder;
+    currentDirectory.placeholder = `Error: ${error}`;
+    currentDirectory.style.borderColor = '#f44336';
+    
+    setTimeout(() => {
+        currentDirectory.placeholder = originalPlaceholder;
+        currentDirectory.style.borderColor = '';
+    }, 3000);
+}
+
 // Event listeners
 sendBtn.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => {
@@ -824,6 +878,67 @@ messageInput.addEventListener('keypress', (e) => {
         sendMessage();
     }
 });
+
+selectDirectoryBtn.addEventListener('click', selectDirectory);
+
+// Navigation functionality
+function showView(viewName) {
+    // Update active button
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+    
+    switch(viewName) {
+        case 'chat':
+            chatBtn.classList.add('active');
+            chatContainer.style.display = 'flex';
+            hideIframe();
+            break;
+        case 'pipeline-designer':
+            pipelineDesignerBtn.classList.add('active');
+            chatContainer.style.display = 'none';
+            showIframe('pipeline-designer.html');
+            break;
+        case 'unified-studio':
+            unifiedStudioBtn.classList.add('active');
+            chatContainer.style.display = 'none';
+            showIframe('unified-pipeline-studio.html');
+            break;
+    }
+}
+
+function showIframe(src) {
+    let iframe = document.getElementById('embedded-view');
+    if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'embedded-view';
+        iframe.style.cssText = `
+            width: calc(100% - 40px);
+            height: calc(100vh - 200px);
+            border: none;
+            background: white;
+            border-radius: 8px;
+            margin: 20px;
+        `;
+        document.body.appendChild(iframe);
+    }
+    
+    // Use HTTP server for local files to avoid Electron file:// restrictions
+    const httpUrl = `http://localhost:3002/src/${src}`;
+    console.log('[RENDERER] Loading iframe via HTTP:', httpUrl);
+    iframe.src = httpUrl;
+    iframe.style.display = 'block';
+}
+
+function hideIframe() {
+    const iframe = document.getElementById('embedded-view');
+    if (iframe) {
+        iframe.style.display = 'none';
+    }
+}
+
+// Navigation event listeners
+chatBtn.addEventListener('click', () => showView('chat'));
+pipelineDesignerBtn.addEventListener('click', () => showView('pipeline-designer'));
+unifiedStudioBtn.addEventListener('click', () => showView('unified-studio'));
 
 // Make toggleProcessDetails available globally
 window.toggleProcessDetails = toggleProcessDetails;

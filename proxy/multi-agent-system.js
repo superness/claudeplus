@@ -3,15 +3,22 @@ const path = require('path');
 const fs = require('fs');
 
 class MultiAgentClaudeSystem {
-  constructor() {
+  constructor(workingDirectory = null) {
     this.sessionId = Date.now();
     this.conversationLog = [];
     this.commentaryHistory = []; // Track previous commentaries for context
+    this.workingDirectory = workingDirectory || path.join(__dirname, '..', 'output');
+    this.agentsDir = path.join(__dirname, '..', 'agents'); // Directory for agent JSON files
 
     // 🎯 STRUCTURED LOGGING SYSTEM FOR PARALLEL CHAOS CONTROL
     this.requestId = this.generateRequestId();
     this.parallelTracker = new Map(); // Track parallel Expert competitions
     this.logBuffer = new Map(); // Organized output by process
+    
+    // Ensure working directory exists
+    if (!fs.existsSync(this.workingDirectory)) {
+      fs.mkdirSync(this.workingDirectory, { recursive: true });
+    }
   }
 
   generateRequestId() {
@@ -31,26 +38,178 @@ class MultiAgentClaudeSystem {
     this.conversationLog.push(logEntry);
     console.log(`[${timestamp}] [${agent}] [${type.toUpperCase()}] ${logEntry.message}`);
     
-    // Send real-time status update if callback is available
+    // Send real-time status update if callback is available, but filter out internal prompts
     if (this.statusCallback) {
-      this.statusCallback(logEntry);
+      // Only send meaningful updates to UI, not internal prompts or technical messages
+      const isUserFacingMessage = this.shouldSendToUI(logEntry);
+      if (isUserFacingMessage) {
+        this.statusCallback(logEntry);
+      }
     }
     
     return logEntry;
+  }
+
+  shouldSendToUI(logEntry) {
+    const message = logEntry.message;
+    const agent = logEntry.agent;
+    const type = logEntry.type;
+    
+    // Always send COMMENTATOR insights and important system messages
+    if (agent === 'COMMENTATOR' && (type === 'insight' || type === 'success' || type === 'commentary')) {
+      return true;
+    }
+    
+    // Skip internal technical messages
+    const skipPatterns = [
+      'spawning claude instance',
+      'process exited',
+      'you are a',
+      'you are the',
+      'your job is to',
+      'response format:',
+      'spawn error',
+      'task_planner',
+      'task_executor',
+      'proof_validator',
+      'discerning_expert'
+    ];
+    
+    const isInternalMessage = skipPatterns.some(pattern => 
+      message.toLowerCase().includes(pattern.toLowerCase())
+    );
+    
+    if (isInternalMessage) {
+      return false;
+    }
+    
+    // Send meaningful phase updates
+    if (type === 'start' || type === 'success' || type === 'complete' || type === 'error') {
+      return true;
+    }
+    
+    // Skip most technical stdout/stderr unless it contains meaningful progress info
+    if (type === 'stdout' || type === 'stderr') {
+      const hasMeaningfulContent = [
+        'planning',
+        'execution', 
+        'validation',
+        'approved',
+        'rejected',
+        'complete'
+      ].some(keyword => message.toLowerCase().includes(keyword));
+      
+      return hasMeaningfulContent;
+    }
+    
+    return false; // Default to not sending
   }
 
   setStatusCallback(callback) {
     this.statusCallback = callback;
   }
 
+  // Agent Loading Methods
+  loadAgent(agentId) {
+    try {
+      const filePath = path.join(this.agentsDir, `${agentId}.json`);
+      if (fs.existsSync(filePath)) {
+        const data = fs.readFileSync(filePath, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error(`[MULTI-AGENT] Error loading agent ${agentId}:`, error);
+    }
+    return null;
+  }
+
+  getAgentPrompt(agentId, context = {}) {
+    const agent = this.loadAgent(agentId);
+    if (!agent) {
+      console.error(`[MULTI-AGENT] Agent ${agentId} not found, falling back to hardcoded prompts`);
+      return this.getFallbackPrompt(agentId, context);
+    }
+
+    // Handle template prompts with context injection
+    if (agent.system_prompt_template) {
+      let prompt = agent.system_prompt_template;
+      // Replace template variables with context values
+      for (const [key, value] of Object.entries(context)) {
+        prompt = prompt.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+      }
+      return prompt;
+    }
+
+    // Handle specializations (like expert types)
+    if (context.specialization && agent.specializations && agent.specializations[context.specialization]) {
+      const spec = agent.specializations[context.specialization];
+      return agent.system_prompt + spec.prompt_addition;
+    }
+
+    return agent.system_prompt;
+  }
+
+  getFallbackPrompt(agentId, context = {}) {
+    // Fallback to original hardcoded prompts if agent files are not found
+    switch(agentId) {
+      case 'task_planner':
+        return this.getTaskPlannerPrompt();
+      case 'discerning_expert':
+        let prompt = this.getDiscerningExpertPrompt();
+        if (context.specialization === 'thoroughness') {
+          prompt += '\n\nYou are the THOROUGHNESS EXPERT - focus on completeness and detail.';
+        } else if (context.specialization === 'feasibility') {
+          prompt += '\n\nYou are the FEASIBILITY EXPERT - focus on practicality and implementation.';
+        } else if (context.specialization === 'quality') {
+          prompt += '\n\nYou are the QUALITY EXPERT - focus on best practices and excellence.';
+        }
+        return prompt;
+      case 'task_executor':
+        return this.getTaskExecutorPrompt(context.approved_plan);
+      case 'proof_validator':
+        return this.getProofValidatorPrompt();
+      case 'commentator':
+        return this.getCommentatorPrompt();
+      default:
+        console.error(`[MULTI-AGENT] Unknown agent: ${agentId}`);
+        return 'You are a helpful AI assistant.';
+    }
+  }
+
+  getCommentatorPrompt() {
+    return `You are a PROCESS COMMENTATOR. You provide ONLY commentary about the multi-agent workflow process.
+
+ABSOLUTELY FORBIDDEN:
+- Mentioning ANY specifics about the user's task or domain
+- Providing ANY solutions, advice, or technical content
+- Revealing WHAT is being worked on
+- Using domain-specific terminology from the user's request
+
+YOU MUST ONLY SAY:
+- "The Task Planner is working..."
+- "The Expert is reviewing..."
+- "Attempt #X is starting..."
+- "The plan got approved/rejected..."
+- "The Validator is checking..."
+
+EXAMPLES OF CORRECT RESPONSES:
+- "The Task Planner is crafting their first plan! Let's see if it passes muster."
+- "Ouch! The Expert rejected that attempt. Time for a revision."
+- "Attempt #2 incoming! The Planner is back at it."
+- "Success! The Expert approved the plan. Time for execution!"
+
+NEVER mention: technology, implementation details, user requirements, domain knowledge.
+Keep under 30 words. Focus ONLY on process flow.`;
+  }
+
   async spawnClaudeInstance(role, prompt, input) {
     this.log(role, 'spawn', `Spawning Claude instance with role: ${role}`);
 
     return new Promise((resolve, reject) => {
-      // Set working directory to OUTPUT folder, NOT the proxy project
-      const workingDir = path.resolve(__dirname, '../output');
+      // Use the configured working directory
+      const workingDir = this.workingDirectory;
 
-      const claude = spawn('claude', ['-'], {
+      const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -120,10 +279,10 @@ User Input: ${input}`;
   async processUserRequest(userMessage) {
     this.log('SYSTEM', 'start', `Processing user request: "${userMessage}"`);
     
-    // Initial commentary - set the stage
+    // Initial commentary - set the stage (don't give away the answer!)
     const initialCommentary = await this.generateCommentary(
-      `A new user request has arrived! Our multi-agent validation system is spinning up to tackle: "${userMessage}"`,
-      [{ request: userMessage }]
+      `A new user request has arrived! Our multi-agent validation system is spinning up to tackle a user's request. The system will now begin the planning phase.`,
+      [{ phase: 'initialization', hasRequest: true }]
     );
     this.log('COMMENTATOR', 'start', initialCommentary.content || initialCommentary);
     
@@ -141,11 +300,40 @@ User Input: ${input}`;
       // Phase 1: Task Planning & Expert Validation Loop
       const approvedPlan = await this.planAndValidate(userMessage);
       
-      // Phase 2: Task Execution
-      const executionResult = await this.executeTask(userMessage, approvedPlan);
+      // Phase 2: Task Execution with Validation Loop
+      let executionResult;
+      let validatedResponse;
+      let maxRetries = 3;
+      let retryCount = 0;
       
-      // Phase 3: Proof Validation
-      const validatedResponse = await this.validateProof(userMessage, approvedPlan, executionResult);
+      do {
+        // Execute the task
+        executionResult = await this.executeTask(userMessage, approvedPlan);
+        
+        // Validate the execution
+        const validationResult = await this.validateProof(userMessage, approvedPlan, executionResult);
+        
+        if (validationResult.status === 'validation_failed') {
+          retryCount++;
+          this.log('SYSTEM', 'retry', `Validation failed, retry ${retryCount}/${maxRetries}`);
+          
+          // Add feedback to execution context for next attempt
+          if (retryCount < maxRetries) {
+            const retryCommentary = await this.generateCommentary(
+              `The Proof Validator rejected attempt ${retryCount}. The Task Executor is going to try again with this feedback: "${validationResult.feedback.substring(0, 200)}..."`,
+              [{ retry: retryCount, maxRetries, feedback: validationResult.feedback }]
+            );
+            this.log('COMMENTATOR', 'retry', retryCommentary.content || retryCommentary);
+          }
+        } else {
+          validatedResponse = validationResult;
+          break;
+        }
+      } while (retryCount < maxRetries && validatedResponse === undefined);
+      
+      if (validatedResponse === undefined) {
+        throw new Error(`Execution failed after ${maxRetries} validation attempts`);
+      }
       
       this.log('SYSTEM', 'complete', 'Multi-agent process completed successfully');
       return validatedResponse;
@@ -161,8 +349,8 @@ User Input: ${input}`;
     
     // Pre-planning commentary
     const planningCommentary = await this.generateCommentary(
-      `Here we go! The Task Planner is about to create the first plan for: "${userMessage}". Let's see what they come up with - will it pass the Expert's strict standards?`,
-      [{ phase: 'planning-start', request: userMessage }]
+      `Here we go! The Task Planner is about to create the first plan. Let's see what they come up with - will it pass the Expert's strict standards?`,
+      [{ phase: 'planning-start' }]
     );
     this.log('COMMENTATOR', 'planning', planningCommentary.content || planningCommentary);
     
@@ -176,6 +364,10 @@ User Input: ${input}`;
       });
     }
     
+    // Generate test scenarios to inform planning
+    this.log('TEST_GENERATION', 'start', 'Generating test scenarios for planning input');
+    const testScenarios = await this.generateTestScenarios(userMessage);
+    
     let attempts = 0;
     const maxAttempts = 5;
     let previousRejections = [];
@@ -187,8 +379,8 @@ User Input: ${input}`;
       // Generate commentary for ALL planning attempts
       if (attempts === 1) {
         const firstAttemptCommentary = await this.generateCommentary(
-          `FIRST PLANNING ATTEMPT: The Task Planner is about to create their first plan for the user request: "${userMessage}". The Expert will then evaluate this plan and either approve it or reject it with detailed feedback.`,
-          [{ phase: 'first-attempt', userRequest: userMessage, attemptNumber: 1 }]
+          `FIRST PLANNING ATTEMPT: The Task Planner is about to create their first plan. The Expert will then evaluate this plan and either approve it or reject it with detailed feedback.`,
+          [{ phase: 'first-attempt', attemptNumber: 1 }]
         );
         this.log('COMMENTATOR', 'first-attempt', firstAttemptCommentary.content || firstAttemptCommentary);
         
@@ -203,8 +395,8 @@ User Input: ${input}`;
         }
       } else {
         const commentary = await this.generateCommentary(
-          `User wants: ${userMessage}. This is planning attempt ${attempts} after ${attempts-1} rejections.`,
-          previousRejections.slice(-2)
+          `This is planning attempt ${attempts} after ${attempts-1} rejections. The Task Planner is revising their approach based on Expert feedback.`,
+          [{ phase: 'retry-attempt', attemptNumber: attempts, rejectionCount: attempts-1 }]
         );
         this.log('COMMENTATOR', 'insight', commentary.content || commentary);
         
@@ -220,22 +412,25 @@ User Input: ${input}`;
         }
       }
       
-      // Build context with previous rejections
+      // Build context with previous rejections and test scenarios
       let plannerInput = userMessage;
       if (previousRejections.length > 0) {
         plannerInput = `${userMessage}\n\nPREVIOUS REJECTIONS TO LEARN FROM:\n${previousRejections.map((r, i) => `\nAttempt ${i+1} was rejected because:\n${r}`).join('\n')}`;
       }
       
+      // Add test scenarios to planner input
+      plannerInput += `\n\nTEST SCENARIOS TO CONSIDER:\n${testScenarios}`;
+      
       // Task Planner creates plan
       const plan = await this.spawnClaudeInstance(
         'TASK_PLANNER',
-        this.getTaskPlannerPrompt(),
+        this.getAgentPrompt('task_planner'),
         plannerInput
       );
       
       // Commentary before Expert evaluation
       const preEvalCommentary = await this.generateCommentary(
-        `The Task Planner has submitted their plan! Now the moment of truth - will the notorious Expert approve it or deliver another crushing rejection?`,
+        `The Task Planner has submitted their plan! Now the moment of truth - will the Expert approve it or deliver another crushing rejection?`,
         [{ phase: 'expert-evaluation', attempt: attempts }]
       );
       this.log('COMMENTATOR', 'pre-eval', preEvalCommentary.content || preEvalCommentary);
@@ -261,18 +456,18 @@ User Input: ${input}`;
       const expertPromises = [
         this.spawnClaudeInstance(
           'EXPERT_THOROUGHNESS',
-          this.getDiscerningExpertPrompt() + '\n\nYou are the THOROUGHNESS EXPERT - focus on completeness and detail.',
-          `USER REQUEST: ${userMessage}\n\nPROPOSED PLAN:\n${plan}`
+          this.getAgentPrompt('discerning_expert', { specialization: 'thoroughness' }),
+          `USER REQUEST: ${userMessage}\n\nTEST SCENARIOS FOR REFERENCE:\n${testScenarios}\n\nPROPOSED PLAN:\n${plan}`
         ),
         this.spawnClaudeInstance(
           'EXPERT_FEASIBILITY', 
-          this.getDiscerningExpertPrompt() + '\n\nYou are the FEASIBILITY EXPERT - focus on practicality and implementation.',
-          `USER REQUEST: ${userMessage}\n\nPROPOSED PLAN:\n${plan}`
+          this.getAgentPrompt('discerning_expert', { specialization: 'feasibility' }),
+          `USER REQUEST: ${userMessage}\n\nTEST SCENARIOS FOR REFERENCE:\n${testScenarios}\n\nPROPOSED PLAN:\n${plan}`
         ),
         this.spawnClaudeInstance(
           'EXPERT_QUALITY',
-          this.getDiscerningExpertPrompt() + '\n\nYou are the QUALITY EXPERT - focus on best practices and excellence.',
-          `USER REQUEST: ${userMessage}\n\nPROPOSED PLAN:\n${plan}`
+          this.getAgentPrompt('discerning_expert', { specialization: 'quality' }),
+          `USER REQUEST: ${userMessage}\n\nTEST SCENARIOS FOR REFERENCE:\n${testScenarios}\n\nPROPOSED PLAN:\n${plan}`
         )
       ];
 
@@ -387,7 +582,7 @@ Reply with your preference or additional details, and I'll restart the validatio
       // EXECUTOR: Execute the task
       this.spawnClaudeInstance(
         'TASK_EXECUTOR',
-        this.getTaskExecutorPrompt(approvedPlan),
+        this.getAgentPrompt('task_executor', { approved_plan: approvedPlan }),
         userMessage
       ),
       
@@ -447,7 +642,7 @@ Prepare your validation framework:`,
     
     const validation = await this.spawnClaudeInstance(
       'PROOF_VALIDATOR',
-      `You are the PROOF VALIDATOR. Use your prepared validation framework to validate execution.
+      this.getAgentPrompt('proof_validator') + `
 
 VALIDATION FRAMEWORK:
 ${validationFramework}
@@ -511,7 +706,12 @@ Provide final validation decision:`,
         });
       }
       
-      throw new Error(`Proof validation failed: ${validation}`);
+      // Instead of throwing error, implement retry logic
+      return { 
+        status: 'validation_failed', 
+        feedback: validation,
+        shouldRetry: true 
+      };
     }
   }
 
@@ -534,6 +734,7 @@ CRITICAL: You must respond EXACTLY in this format. Do not provide final answers 
 UNDERSTANDING: [What you understand the user wants]
 APPROACH: [How you will find information/perform the task]  
 STEPS: [Numbered list of specific steps with tools/commands you'll use]
+TEST_CONSIDERATIONS: [How you will address the test scenarios provided]
 EVIDENCE: [What specific proof you will collect to validate your work]
 CONFIDENCE: [High/Medium/Low and why]
 
@@ -541,8 +742,11 @@ EXAMPLE of what you should do:
 UNDERSTANDING: User wants to know file/folder counts in directory
 APPROACH: Use bash commands to list and count directory contents
 STEPS: 1) Execute 'ls -la' to get directory listing, 2) Parse output to distinguish files from directories, 3) Count each type separately
+TEST_CONSIDERATIONS: Will test with directories containing various file types, hidden files, and edge cases like empty directories
 EVIDENCE: Will provide the raw 'ls -la' output and show counting methodology
 CONFIDENCE: High - straightforward directory listing task
+
+IMPORTANT: Consider the TEST SCENARIOS provided in your input when creating your plan. Address how your approach will handle the test cases and edge scenarios.
 
 DO NOT give final answers. CREATE A PLAN with specific commands/tools you will use.`;
   }
@@ -579,15 +783,23 @@ ${approvedPlan}
 EXECUTION REQUIREMENTS:
 1. Follow the approved plan step-by-step
 2. Create all necessary files using the Write tool
-3. You have full authority to create files without asking for permission
+3. You have full authority to create files - permissions are pre-approved
 4. Write actual, functional code - not examples or pseudocode
 5. Provide evidence of what you created (show file paths and key content)
+
+CRITICAL FILE LOCATION REQUIREMENTS:
+- You will see "Working Directory: [path]" in your input
+- ALL files must be created in that working directory
+- Use absolute paths starting with the working directory path
+- Example: If working directory is "/mnt/c/github/project/output", create files like "/mnt/c/github/project/output/filename.py"
+- NEVER create files in other locations
 
 IMPORTANT NOTES:
 - Your work will be validated by a Proof Validator
 - Focus on implementing what the plan specifies
-- If the plan asks for files to be created, create them
+- If the plan asks for files to be created, create them immediately
 - Document your implementation clearly
+- File operations are pre-authorized - proceed without hesitation
 
 Execute the plan now:`;
   }
@@ -645,7 +857,7 @@ Example: [STYLE:CRITICAL] The Expert validator rejected the plan on attempt #2 d
 Your status update:`;
 
     try {
-      const commentary = await this.spawnClaudeInstance('COMMENTATOR', commentaryPrompt, context);
+      const commentary = await this.spawnClaudeInstance('COMMENTATOR', this.getAgentPrompt('commentator', { context: context }), 'Provide process commentary only.');
       const rawCommentary = commentary.trim();
       
       // Parse styling directive if present
@@ -749,6 +961,25 @@ Your status update:`;
     }
     
     return score;
+  }
+
+  async generateTestScenarios(userMessage) {
+    try {
+      const response = await this.spawnClaudeInstance(
+        'TEST_SCENARIO_GENERATOR',
+        `You are a test scenario generator. Create 3-5 realistic test scenarios that would help validate a solution for the given request.
+
+Format your response as a simple list of scenarios, each on a new line starting with "- ".
+
+Keep scenarios concise but specific. Focus on edge cases, common use cases, and potential challenges.`,
+        `Generate test scenarios for this request: "${userMessage}"`
+      );
+      
+      return response || '- Standard use case validation\n- Error handling verification\n- Performance under load';
+    } catch (error) {
+      this.log('TEST_GENERATION', 'error', `Failed to generate test scenarios: ${error.message}`);
+      return '- Standard use case validation\n- Error handling verification\n- Performance under load';
+    }
   }
 }
 

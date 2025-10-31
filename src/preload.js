@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),
   
+  // Directory selection
+  selectDirectory: () => ipcRenderer.invoke('select-directory'),
+  
   // DRAGON ORCHESTRATOR POWERS 🐉
   dragonTakeScreenshot: () => ipcRenderer.invoke('dragon-take-screenshot'),
   dragonOrchestrate: (command) => ipcRenderer.invoke('dragon-orchestrate', command)

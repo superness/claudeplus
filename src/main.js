@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeImage, dialog } = require('electron');
 const path = require('path');
 const WebSocket = require('ws');
 const fs = require('fs');
@@ -14,9 +14,18 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      // Font rendering optimizations
+      subpixelFontScaling: true,
+      disableBlinkFeatures: 'Auxclick'
     },
-    show: false // Don't show until ready
+    show: false, // Don't show until ready
+    // Additional window options for better rendering
+    transparent: false,
+    backgroundColor: '#0D1117'
   });
 
   // Remove default menu
@@ -87,6 +96,39 @@ function connectToProxy() {
 ipcMain.on('send-to-claude', (event, message) => {
   if (wsClient && wsClient.readyState === WebSocket.OPEN) {
     wsClient.send(JSON.stringify({ type: 'user-message', content: message }));
+  }
+});
+
+// Directory selection handler
+ipcMain.handle('select-directory', async () => {
+  if (!mainWindow) return null;
+  
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Working Directory for Claude',
+      buttonLabel: 'Select Directory'
+    });
+    
+    if (!result.canceled && result.filePaths.length > 0) {
+      const selectedPath = result.filePaths[0];
+      console.log('[MAIN] Directory selected:', selectedPath);
+      
+      // Send directory change to proxy
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        wsClient.send(JSON.stringify({ 
+          type: 'directory-change', 
+          directory: selectedPath 
+        }));
+      }
+      
+      return selectedPath;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('[MAIN] Directory selection error:', error);
+    return null;
   }
 });
 
