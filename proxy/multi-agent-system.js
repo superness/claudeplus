@@ -7,13 +7,55 @@ class MultiAgentClaudeSystem {
     this.sessionId = Date.now();
     this.conversationLog = [];
     this.commentaryHistory = []; // Track previous commentaries for context
-    this.workingDirectory = workingDirectory || path.join(__dirname, '..', 'output');
-    this.agentsDir = path.join(__dirname, '..', 'agents'); // Directory for agent JSON files
+    // Ensure working directory is always a WSL path
+    const defaultDir = '/mnt/c/github/claudeplus/output';
+    this.workingDirectory = workingDirectory || defaultDir;
+    // Convert Windows paths to WSL paths if needed
+    if (this.workingDirectory.match(/^[A-Z]:\\/)) {
+      this.workingDirectory = this.workingDirectory.replace(/^([A-Z]):\\/, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
+      console.log(`[MULTI-AGENT] Converted Windows path to WSL: ${workingDirectory} -> ${this.workingDirectory}`);
+    }
+    this.agentsDir = '/mnt/c/github/claudeplus/agents'; // Directory for agent JSON files
 
     // 🎯 STRUCTURED LOGGING SYSTEM FOR PARALLEL CHAOS CONTROL
     this.requestId = this.generateRequestId();
     this.parallelTracker = new Map(); // Track parallel Expert competitions
     this.logBuffer = new Map(); // Organized output by process
+    
+    // 🚀 CEREBRO ENHANCEMENT V2: Advanced Memory Management & Process Pooling
+    this.processPool = new Map(); // Reusable Claude processes
+    this.maxPoolSize = Math.max(10, require('os').cpus().length * 2); // CPU-adaptive pool size
+    this.processTimeout = 600000; // 10 minute timeout for processes
+    this.memoryThreshold = Math.max(1024 * 1024 * 1024, process.memoryUsage().heapTotal * 0.8); // Adaptive memory threshold
+    this.activeProcesses = new Set(); // Track active process PIDs
+    this.processMetrics = new Map(); // Track performance per process
+    this.adaptiveThresholds = {
+      memoryWarning: this.memoryThreshold * 0.7,
+      memoryAlert: this.memoryThreshold * 0.85,
+      cpuThreshold: 80, // CPU usage percentage
+      responseTimeThreshold: 30000 // 30 second response time threshold
+    };
+    
+    // 🚀 CEREBRO ENHANCEMENT: Pipeline State Management & Caching
+    this.pipelineCache = new Map(); // Cache completed stage results
+    this.checkpointInterval = 30000; // Save state every 30 seconds
+    this.stateDir = path.join(this.workingDirectory, '.pipeline-state');
+    this.initializePipelineState();
+    
+    // 🚀 CEREBRO ENHANCEMENT V2: Adaptive Circuit Breaker Pattern
+    this.circuitBreaker = {
+      failureThreshold: 3,
+      timeout: 120000, // 2 minute timeout (increased)
+      state: 'CLOSED', // CLOSED, OPEN, HALF_OPEN
+      failures: 0,
+      lastFailure: null,
+      successThreshold: 2, // Success needed to close circuit
+      adaptiveTimeout: true, // Enable adaptive timeout based on error patterns
+      minTimeout: 60000, // Minimum timeout
+      maxTimeout: 600000, // Maximum timeout (10 minutes)
+      errorPatterns: new Map(), // Track error patterns for intelligent recovery
+      lastSuccessTime: Date.now()
+    };
     
     // Ensure working directory exists
     if (!fs.existsSync(this.workingDirectory)) {
@@ -56,53 +98,61 @@ class MultiAgentClaudeSystem {
     const type = logEntry.type;
     
     // Always send COMMENTATOR insights and important system messages
-    if (agent === 'COMMENTATOR' && (type === 'insight' || type === 'success' || type === 'commentary')) {
+    if (agent === 'COMMENTATOR') {
       return true;
     }
     
-    // Skip internal technical messages
-    const skipPatterns = [
-      'spawning claude instance',
-      'process exited',
-      'you are a',
-      'you are the',
-      'your job is to',
-      'response format:',
-      'spawn error',
-      'task_planner',
-      'task_executor',
-      'proof_validator',
-      'discerning_expert'
+    // Always send pipeline execution and stage updates
+    if (agent === 'PIPELINE_EXECUTION' || agent === 'SYSTEM') {
+      return true;
+    }
+    
+    // Send agent lifecycle events (spawn, start, complete, error)
+    if (type === 'spawn' || type === 'start' || type === 'success' || type === 'complete' || type === 'error' || type === 'close') {
+      return true;
+    }
+    
+    // Send agent work updates for pipeline stages (lore_architect, world_historian, etc.)
+    const pipelineAgents = [
+      'lore_architect', 'world_historian', 'geography_designer', 'ecology_validator',
+      'culture_architect', 'sociologist_reviewer', 'resource_designer', 'economy_designer',
+      'market_simulator', 'combat_designer', 'balance_analyzer', 'progression_designer',
+      'engagement_scorer', 'systems_integrator', 'emergence_detector', 'balance_auditor',
+      'player_experience_simulator', 'data_modeler', 'api_designer', 'code_generator',
+      'technical_validator', 'gameplay_validator', 'narrative_validator', 'final_integrator'
     ];
     
-    const isInternalMessage = skipPatterns.some(pattern => 
+    if (pipelineAgents.includes(agent.toLowerCase())) {
+      return true;
+    }
+    
+    // Only skip verbose internal prompts
+    const skipPatterns = [
+      'you are a master worldbuilder specializing',
+      'you are the commentator for a multi-agent',
+      'response format:',
+      'when creating lore:',
+      'output your lore in structured'
+    ];
+    
+    const isVerbosePrompt = skipPatterns.some(pattern => 
       message.toLowerCase().includes(pattern.toLowerCase())
     );
     
-    if (isInternalMessage) {
+    if (isVerbosePrompt) {
       return false;
     }
     
-    // Send meaningful phase updates
-    if (type === 'start' || type === 'success' || type === 'complete' || type === 'error') {
+    // Send meaningful stdout/stderr content
+    if (type === 'stdout' || type === 'stderr') {
+      // Skip empty or very short messages
+      if (message.trim().length < 10) {
+        return false;
+      }
       return true;
     }
     
-    // Skip most technical stdout/stderr unless it contains meaningful progress info
-    if (type === 'stdout' || type === 'stderr') {
-      const hasMeaningfulContent = [
-        'planning',
-        'execution', 
-        'validation',
-        'approved',
-        'rejected',
-        'complete'
-      ].some(keyword => message.toLowerCase().includes(keyword));
-      
-      return hasMeaningfulContent;
-    }
-    
-    return false; // Default to not sending
+    return true; // Default to sending (opposite of before)
   }
 
   setStatusCallback(callback) {
@@ -204,18 +254,58 @@ Keep under 30 words. Focus ONLY on process flow.`;
 
   async spawnClaudeInstance(role, prompt, input) {
     this.log(role, 'spawn', `Spawning Claude instance with role: ${role}`);
+    
+    // 🚀 CEREBRO ENHANCEMENT V2: Advanced pre-spawn validation
+    const canSpawn = await this.validateSpawnConditions(role);
+    if (!canSpawn) {
+      throw new Error(`Cannot spawn ${role}: System at capacity or degraded state`);
+    }
 
     return new Promise((resolve, reject) => {
+      // 🚀 CEREBRO ENHANCEMENT: Check memory usage before spawning
+      this.checkMemoryUsage();
+      
+      // Track spawn metrics
+      const spawnStartTime = Date.now();
+      
       // Use the configured working directory
       const workingDir = this.workingDirectory;
 
-      const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
+      // Copy working MCP config to any working directory
+      const sourceMcpConfig = '/mnt/c/github/spaceship-simulator/.mcp.json';
+      const targetMcpConfig = path.join(workingDir, '.mcp.json');
+      
+      console.log(`[MULTI-AGENT] Working directory: ${workingDir}`);
+      
+      // Copy MCP config to working directory so Claude can auto-detect it
+      if (fs.existsSync(sourceMcpConfig)) {
+        const mcpContent = fs.readFileSync(sourceMcpConfig, 'utf8');
+        // Update relative paths to be relative to the working directory
+        const mcpConfig = JSON.parse(mcpContent);
+        if (mcpConfig.mcpServers && mcpConfig.mcpServers['progress-reporter']) {
+          // Calculate relative path from workingDir to the MCP server
+          const serverPath = path.relative(workingDir, '/mnt/c/github/claudeplus/mcp-servers/progress-reporter/server.js');
+          mcpConfig.mcpServers['progress-reporter'].args = [serverPath];
+        }
+        fs.writeFileSync(targetMcpConfig, JSON.stringify(mcpConfig, null, 2));
+        console.log(`[MULTI-AGENT] MCP config copied to ${targetMcpConfig}`);
+        console.log(`[MULTI-AGENT] MCP config content:`, JSON.stringify(mcpConfig, null, 2));
+      } else {
+        console.log(`[MULTI-AGENT] Warning: Source MCP config not found at ${sourceMcpConfig}`);
+      }
+      
+      const claude = spawn('claude', [
+        '--permission-mode', 'bypassPermissions', 
+        '-'
+      ], {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
           PWD: workingDir,
-          HOME: process.env.HOME || process.env.USERPROFILE
+          HOME: process.env.HOME || process.env.USERPROFILE,
+          AGENT_NAME: role, // Pass agent name to MCP for proper identification
+          NODE_OPTIONS: '--max-old-space-size=4096' // Ensure enough memory for MCP
         }
       });
 
@@ -238,7 +328,20 @@ Keep under 30 words. Focus ONLY on process flow.`;
       });
 
       claude.on('close', (code) => {
-        this.log(role, 'close', `Process exited with code: ${code}`);
+        const executionTime = Date.now() - spawnStartTime;
+        this.log(role, 'close', `Process exited with code: ${code}, execution time: ${executionTime}ms`);
+        
+        // 🚀 CEREBRO ENHANCEMENT V2: Advanced process tracking and metrics
+        this.activeProcesses.delete(claude.pid);
+        this.updateProcessMetrics(role, executionTime, code === 0, errorOutput);
+        
+        // Update circuit breaker based on result
+        if (code === 0) {
+          this.recordSuccess();
+          this.circuitBreaker.lastSuccessTime = Date.now();
+        } else {
+          this.recordFailure(role, errorOutput);
+        }
 
         if (code !== 0) {
           reject(new Error(`${role} failed: ${errorOutput || 'Unknown error'}`));
@@ -539,9 +642,19 @@ User Input: ${input}`;
     const maxAttempts = 5;
     let previousRejections = [];
     
+    // 🚀 CEREBRO ENHANCEMENT: Intelligent retry with exponential backoff
+    const baseDelay = 1000; // 1 second base delay
+    
     while (attempts < maxAttempts) {
       attempts++;
       this.log('PLANNING_PHASE', 'attempt', `Planning attempt ${attempts}/${maxAttempts}`);
+      
+      // 🚀 CEREBRO ENHANCEMENT: Exponential backoff for retries
+      if (attempts > 1) {
+        const delay = baseDelay * Math.pow(2, attempts - 2);
+        this.log('SYSTEM', 'backoff', `Waiting ${delay}ms before retry attempt ${attempts}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
       
       // Generate commentary for ALL planning attempts
       if (attempts === 1) {
@@ -1146,6 +1259,403 @@ Keep scenarios concise but specific. Focus on edge cases, common use cases, and 
     } catch (error) {
       this.log('TEST_GENERATION', 'error', `Failed to generate test scenarios: ${error.message}`);
       return '- Standard use case validation\n- Error handling verification\n- Performance under load';
+    }
+  }
+  // Execute a single agent with a prompt (used for browser commander and direct agent execution)
+  async executeSingleAgent(agentConfig, prompt, workingDirectory = null, statusCallback = null) {
+    this.statusCallback = statusCallback;
+    const workingDir = workingDirectory || this.workingDirectory;
+    
+    this.log('SYSTEM', 'info', `Executing single agent: ${agentConfig.name}`);
+    this.log('SYSTEM', 'info', `Working directory: ${workingDir}`);
+    this.log('SYSTEM', 'info', `Prompt: ${prompt}`);
+    
+    try {
+      // Ensure working directory exists and has proper permissions
+      if (!fs.existsSync(workingDir)) {
+        fs.mkdirSync(workingDir, { recursive: true });
+      }
+      
+      // Create permissions config if it doesn't exist
+      const permissionsPath = path.join(workingDir, '.claude_permissions');
+      if (!fs.existsSync(permissionsPath)) {
+        const permissionsConfig = {
+          "allowedTools": ["Write", "Edit", "Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch"]
+        };
+        fs.writeFileSync(permissionsPath, JSON.stringify(permissionsConfig, null, 2));
+        this.log('SYSTEM', 'info', 'Created Claude permissions config');
+      }
+      
+      // Build the system prompt for the agent
+      const systemPrompt = agentConfig.systemPrompt || `You are ${agentConfig.name}. ${agentConfig.role}`;
+      
+      // Execute the agent using spawnClaudeInstance
+      const fullPrompt = `${systemPrompt}\n\nUser request: ${prompt}`;
+      const result = await this.spawnClaudeInstance(agentConfig.id, agentConfig.name, fullPrompt);
+      
+      this.log(agentConfig.id, 'success', `Agent execution completed`);
+      
+      // Send completion status
+      if (this.statusCallback) {
+        this.statusCallback({
+          type: 'agent-completed',
+          agent: agentConfig.id,
+          output: result
+        });
+      }
+      
+      return result;
+      
+    } catch (error) {
+      this.log(agentConfig.id, 'error', `Agent execution failed: ${error.message}`);
+      
+      // Send error status
+      if (this.statusCallback) {
+        this.statusCallback({
+          type: 'agent-error',
+          agent: agentConfig.id,
+          error: error.message
+        });
+      }
+      
+      throw error;
+    }
+  }
+
+  // 🚀 CEREBRO ENHANCEMENT V2: Advanced Memory Management Methods
+  checkMemoryUsage() {
+    const memUsage = process.memoryUsage();
+    const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+    const thresholdMB = Math.round(this.memoryThreshold / 1024 / 1024);
+    
+    // Progressive memory management with multiple thresholds
+    if (memUsage.heapUsed > this.adaptiveThresholds.memoryAlert) {
+      this.log('SYSTEM', 'critical', `Memory usage critical: ${heapUsedMB}MB/${thresholdMB}MB - Aggressive cleanup initiated`);
+      this.aggressiveCleanup();
+    } else if (memUsage.heapUsed > this.adaptiveThresholds.memoryWarning) {
+      this.log('SYSTEM', 'warning', `Memory usage high: ${heapUsedMB}MB/${thresholdMB}MB - Cleanup initiated`);
+      this.cleanupInactiveProcesses();
+      global.gc && global.gc(); // Force garbage collection if available
+    }
+    
+    // Update adaptive thresholds based on system performance
+    this.updateAdaptiveThresholds(memUsage);
+  }
+
+  cleanupInactiveProcesses() {
+    const now = Date.now();
+    for (const [pid, startTime] of this.activeProcesses.entries()) {
+      if (now - startTime > this.processTimeout) {
+        try {
+          process.kill(pid, 'SIGTERM');
+          this.activeProcesses.delete(pid);
+          this.log('SYSTEM', 'cleanup', `Terminated long-running process: ${pid}`);
+        } catch (error) {
+          // Process may already be dead
+          this.activeProcesses.delete(pid);
+        }
+      }
+    }
+  }
+
+  getSystemMetrics() {
+    const memUsage = process.memoryUsage();
+    const loadAvg = require('os').loadavg();
+    const freeMem = require('os').freemem();
+    const totalMem = require('os').totalmem();
+    
+    return {
+      memory: {
+        heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+        external: Math.round(memUsage.external / 1024 / 1024),
+        rss: Math.round(memUsage.rss / 1024 / 1024),
+        systemFree: Math.round(freeMem / 1024 / 1024),
+        systemTotal: Math.round(totalMem / 1024 / 1024),
+        threshold: Math.round(this.memoryThreshold / 1024 / 1024),
+        warningThreshold: Math.round(this.adaptiveThresholds.memoryWarning / 1024 / 1024),
+        alertThreshold: Math.round(this.adaptiveThresholds.memoryAlert / 1024 / 1024)
+      },
+      performance: {
+        activeProcesses: this.activeProcesses.size,
+        maxPoolSize: this.maxPoolSize,
+        cacheSize: this.pipelineCache.size,
+        loadAverage: loadAvg,
+        uptime: Math.round(process.uptime()),
+        circuitBreakerState: this.circuitBreaker.state,
+        circuitBreakerFailures: this.circuitBreaker.failures
+      },
+      intelligence: {
+        adaptiveThresholds: this.adaptiveThresholds,
+        processMetrics: Object.fromEntries(this.processMetrics),
+        errorPatterns: Object.fromEntries(this.circuitBreaker.errorPatterns),
+        lastSuccessTime: this.circuitBreaker.lastSuccessTime,
+        selfOptimizationActive: true
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  // 🚀 CEREBRO ENHANCEMENT: Pipeline State Management
+  initializePipelineState() {
+    if (!fs.existsSync(this.stateDir)) {
+      fs.mkdirSync(this.stateDir, { recursive: true });
+    }
+    this.loadPipelineCheckpoint();
+  }
+
+  savePipelineCheckpoint(pipelineId, stageId, result) {
+    try {
+      const checkpointPath = path.join(this.stateDir, `${pipelineId}.json`);
+      const checkpoint = {
+        pipelineId,
+        completedStages: Object.fromEntries(this.pipelineCache),
+        lastStage: stageId,
+        lastResult: result,
+        timestamp: new Date().toISOString(),
+        sessionId: this.sessionId
+      };
+      fs.writeFileSync(checkpointPath, JSON.stringify(checkpoint, null, 2));
+      this.log('SYSTEM', 'checkpoint', `Pipeline state saved: ${stageId}`);
+    } catch (error) {
+      this.log('SYSTEM', 'error', `Failed to save checkpoint: ${error.message}`);
+    }
+  }
+
+  loadPipelineCheckpoint(pipelineId = null) {
+    try {
+      if (!pipelineId) {
+        const files = fs.readdirSync(this.stateDir).filter(f => f.endsWith('.json'));
+        if (files.length === 0) return null;
+        pipelineId = files[0].replace('.json', '');
+      }
+      
+      const checkpointPath = path.join(this.stateDir, `${pipelineId}.json`);
+      if (!fs.existsSync(checkpointPath)) return null;
+      
+      const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
+      this.pipelineCache = new Map(Object.entries(checkpoint.completedStages));
+      this.log('SYSTEM', 'restore', `Pipeline state restored: ${checkpoint.lastStage}`);
+      return checkpoint;
+    } catch (error) {
+      this.log('SYSTEM', 'error', `Failed to load checkpoint: ${error.message}`);
+      return null;
+    }
+  }
+
+  clearPipelineState(pipelineId) {
+    try {
+      const checkpointPath = path.join(this.stateDir, `${pipelineId}.json`);
+      if (fs.existsSync(checkpointPath)) {
+        fs.unlinkSync(checkpointPath);
+      }
+      this.pipelineCache.clear();
+      this.log('SYSTEM', 'cleanup', `Pipeline state cleared: ${pipelineId}`);
+    } catch (error) {
+      this.log('SYSTEM', 'error', `Failed to clear state: ${error.message}`);
+    }
+  }
+
+  // 🚀 CEREBRO ENHANCEMENT: Circuit Breaker Pattern
+  checkCircuitBreaker() {
+    const now = Date.now();
+    
+    if (this.circuitBreaker.state === 'OPEN') {
+      if (now - this.circuitBreaker.lastFailure > this.circuitBreaker.timeout) {
+        this.circuitBreaker.state = 'HALF_OPEN';
+        this.log('SYSTEM', 'circuit', 'Circuit breaker moved to HALF_OPEN state');
+        return true;
+      }
+      this.log('SYSTEM', 'circuit', 'Circuit breaker OPEN - rejecting request');
+      return false;
+    }
+    
+    return true;
+  }
+
+  recordSuccess() {
+    // Reset failures on success regardless of state
+    this.circuitBreaker.failures = 0;
+    
+    if (this.circuitBreaker.state === 'HALF_OPEN') {
+      this.circuitBreaker.state = 'CLOSED';
+      this.log('SYSTEM', 'circuit', 'Circuit breaker CLOSED - system recovered');
+    }
+  }
+
+  recordFailure() {
+    this.circuitBreaker.failures++;
+    this.circuitBreaker.lastFailure = Date.now();
+    
+    if (this.circuitBreaker.failures >= this.circuitBreaker.failureThreshold) {
+      this.circuitBreaker.state = 'OPEN';
+      this.log('SYSTEM', 'circuit', `Circuit breaker OPEN - too many failures (${this.circuitBreaker.failures})`);
+    }
+  }
+
+  async executeWithCircuitBreaker(operation, operationName) {
+    if (!this.checkCircuitBreaker()) {
+      throw new Error(`Circuit breaker OPEN for ${operationName} - system protection active`);
+    }
+
+    try {
+      const result = await operation();
+      this.recordSuccess();
+      return result;
+    } catch (error) {
+      this.recordFailure();
+      this.log('SYSTEM', 'error', `Operation failed: ${operationName} - ${error.message}`);
+      throw error;
+    }
+  }
+
+  // 🚀 CEREBRO ENHANCEMENT V2: Advanced Intelligence Methods
+  async validateSpawnConditions(role) {
+    const metrics = this.getSystemMetrics();
+    
+    // Check memory conditions
+    if (metrics.memory.heapUsed > metrics.memory.alertThreshold) {
+      this.log('SYSTEM', 'warning', `Spawn denied for ${role}: Memory usage too high (${metrics.memory.heapUsed}MB)`);
+      return false;
+    }
+    
+    // Check active process limit
+    if (this.activeProcesses.size >= this.maxPoolSize) {
+      this.log('SYSTEM', 'warning', `Spawn denied for ${role}: Process pool at capacity (${this.activeProcesses.size}/${this.maxPoolSize})`);
+      return false;
+    }
+    
+    // Check circuit breaker state
+    if (this.circuitBreaker.state === 'OPEN') {
+      this.log('SYSTEM', 'warning', `Spawn denied for ${role}: Circuit breaker is OPEN`);
+      return false;
+    }
+    
+    return true;
+  }
+
+  updateProcessMetrics(role, executionTime, success, errorOutput) {
+    if (!this.processMetrics.has(role)) {
+      this.processMetrics.set(role, {
+        totalExecutions: 0,
+        successfulExecutions: 0,
+        totalExecutionTime: 0,
+        averageExecutionTime: 0,
+        lastExecution: null,
+        errorPatterns: new Map()
+      });
+    }
+    
+    const metrics = this.processMetrics.get(role);
+    metrics.totalExecutions++;
+    metrics.totalExecutionTime += executionTime;
+    metrics.averageExecutionTime = metrics.totalExecutionTime / metrics.totalExecutions;
+    metrics.lastExecution = Date.now();
+    
+    if (success) {
+      metrics.successfulExecutions++;
+    } else if (errorOutput) {
+      // Track error patterns for learning
+      const errorKey = this.categorizeError(errorOutput);
+      const count = metrics.errorPatterns.get(errorKey) || 0;
+      metrics.errorPatterns.set(errorKey, count + 1);
+    }
+    
+    this.processMetrics.set(role, metrics);
+  }
+
+  categorizeError(errorOutput) {
+    const errorString = errorOutput.toLowerCase();
+    if (errorString.includes('memory') || errorString.includes('out of memory')) return 'memory_error';
+    if (errorString.includes('timeout') || errorString.includes('timed out')) return 'timeout_error';
+    if (errorString.includes('network') || errorString.includes('connection')) return 'network_error';
+    if (errorString.includes('permission') || errorString.includes('access')) return 'permission_error';
+    if (errorString.includes('not found') || errorString.includes('missing')) return 'resource_error';
+    return 'unknown_error';
+  }
+
+  updateAdaptiveThresholds(memUsage) {
+    const systemLoad = require('os').loadavg()[0];
+    const memoryUtilization = memUsage.heapUsed / memUsage.heapTotal;
+    
+    // Adapt memory thresholds based on system performance
+    if (systemLoad < 1.0 && memoryUtilization < 0.5) {
+      // System is underutilized, can increase thresholds
+      this.adaptiveThresholds.memoryWarning = Math.min(
+        this.memoryThreshold * 0.8,
+        this.adaptiveThresholds.memoryWarning * 1.1
+      );
+    } else if (systemLoad > 2.0 || memoryUtilization > 0.8) {
+      // System is overloaded, decrease thresholds for safety
+      this.adaptiveThresholds.memoryWarning = Math.max(
+        this.memoryThreshold * 0.5,
+        this.adaptiveThresholds.memoryWarning * 0.9
+      );
+    }
+    
+    this.adaptiveThresholds.memoryAlert = this.adaptiveThresholds.memoryWarning * 1.2;
+  }
+
+  aggressiveCleanup() {
+    this.log('SYSTEM', 'info', 'Initiating aggressive cleanup due to critical memory usage');
+    
+    // Clean up inactive processes
+    this.cleanupInactiveProcesses();
+    
+    // Clear old cache entries
+    const cacheEntries = Array.from(this.pipelineCache.entries());
+    const oldEntries = cacheEntries.filter(([key, value]) => {
+      const age = Date.now() - (value.timestamp || 0);
+      return age > 300000; // Older than 5 minutes
+    });
+    
+    oldEntries.forEach(([key]) => {
+      this.pipelineCache.delete(key);
+      this.log('SYSTEM', 'cleanup', `Removed old cache entry: ${key}`);
+    });
+    
+    // Force garbage collection multiple times
+    if (global.gc) {
+      global.gc();
+      setTimeout(() => global.gc && global.gc(), 1000);
+      setTimeout(() => global.gc && global.gc(), 2000);
+    }
+    
+    this.log('SYSTEM', 'info', `Aggressive cleanup completed. Cache entries removed: ${oldEntries.length}`);
+  }
+
+  recordFailure(role, errorOutput) {
+    this.circuitBreaker.failures++;
+    this.circuitBreaker.lastFailure = Date.now();
+    
+    // Track error patterns for intelligent recovery
+    const errorType = this.categorizeError(errorOutput || '');
+    const errorCount = this.circuitBreaker.errorPatterns.get(errorType) || 0;
+    this.circuitBreaker.errorPatterns.set(errorType, errorCount + 1);
+    
+    // Adaptive timeout based on error patterns
+    if (this.circuitBreaker.adaptiveTimeout) {
+      const dominantErrorType = Array.from(this.circuitBreaker.errorPatterns.entries())
+        .sort((a, b) => b[1] - a[1])[0];
+      
+      if (dominantErrorType && dominantErrorType[0] === 'timeout_error') {
+        // Increase timeout for timeout errors
+        this.circuitBreaker.timeout = Math.min(
+          this.circuitBreaker.maxTimeout,
+          this.circuitBreaker.timeout * 1.5
+        );
+      } else if (dominantErrorType && dominantErrorType[0] === 'memory_error') {
+        // Shorter timeout for memory errors to fail fast
+        this.circuitBreaker.timeout = Math.max(
+          this.circuitBreaker.minTimeout,
+          this.circuitBreaker.timeout * 0.8
+        );
+      }
+    }
+    
+    if (this.circuitBreaker.failures >= this.circuitBreaker.failureThreshold) {
+      this.circuitBreaker.state = 'OPEN';
+      this.log('SYSTEM', 'circuit', `Circuit breaker OPEN - too many failures (${this.circuitBreaker.failures}) - timeout: ${this.circuitBreaker.timeout}ms`);
     }
   }
 }

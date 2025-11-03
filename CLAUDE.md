@@ -14,6 +14,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Pipeline System
 - **Start Pipeline System**: `./start-pipeline-system.sh` (launches proxy + file server + web UI on http://localhost:3003)
 
+### MCP Server Components
+- **Browser Automation Server**: `cd mcp-servers/browser-automation && npm install && npm start`
+- **Browser Automation Dev**: `cd mcp-servers/browser-automation && npm run dev`
+
 ## Architecture
 
 This is a Claude Proxy System with a three-tier architecture:
@@ -51,6 +55,15 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    - Configures agent workflows dynamically
    - Can be accessed standalone via `./start-pipeline-system.sh`
 
+5. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
+   - Provides web scraping and browser testing capabilities
+   - Integrated with the multi-agent system for web-based tasks
+
+6. **Web Interfaces**: Multiple access points
+   - Main Electron app (`src/index.html`)
+   - Web-based chat interface (`src/claude-app-web.html`)
+   - Standalone pipeline designer (via `./start-pipeline-system.sh`)
+
 ### Key Technical Details
 
 - **Proxy Communication**: WebSocket on port 8081, JSON message protocol with types: `user-message`, `directory-change`, `pipeline-config`, `get-templates`, `get-agents`, etc.
@@ -62,12 +75,34 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
 
 ## Agent System
 
-The multi-agent system uses JSON-defined agents with specific roles:
+The multi-agent system uses 38+ JSON-defined agents organized by category:
+
+### Core Workflow Agents
 - **task_planner**: Creates execution plans with UNDERSTANDING, APPROACH, STEPS, TEST_CONSIDERATIONS, EVIDENCE, CONFIDENCE
 - **task_executor**: Executes the plan with tool usage
 - **proof_validator**: Validates execution results
 - **discerning_expert**: Reviews plans before execution
-- Custom agents can be created and stored in `agents/` directory
+
+### Specialized Agent Categories
+- **Game Design**: combat_designer, economy_designer, geography_designer, lore_architect, culture_architect
+- **System Design**: system_designer, systems_integrator, api_designer, data_modeler, code_generator
+- **Validation**: design_validator, technical_validator, gameplay_validator, ecology_validator, narrative_validator
+- **Analysis**: balance_analyzer, balance_auditor, engagement_scorer, emergence_detector, player_experience_simulator
+- **Testing**: qa_tester, final_integrator
+- **Domain Experts**: world_historian, sociologist_reviewer, market_simulator, resource_designer, progression_designer
+
+### Template System
+Pre-configured pipeline workflows in `templates/`:
+- `claude-plus-v1.json`: Basic Claude Plus workflow
+- `game-design-v1.json`: Game development pipeline  
+- `living-game-world-v1.json`: Complex world simulation pipeline
+- `thesis-generator-v1.json`: Academic thesis generation workflow
+
+### Debugging and Logs
+- **Proxy Logs**: `proxy/proxy.log` (auto-created, gitignored)
+- **Claude Code Output**: `output/` directory with permissions pre-configured
+- **Pipeline State**: Active pipelines saved to `proxy/pipelines/*.json`
+- **Agent Definitions**: All agents stored in `agents/` directory as JSON files
 
 ## important-instruction-reminders
 Do what has been asked; nothing more, nothing less.

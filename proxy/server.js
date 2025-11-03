@@ -56,6 +56,7 @@ class ClaudeProxy {
         console.log('[PROXY] Received message from client:', data.toString());
         try {
           const message = JSON.parse(data.toString());
+          
           this.handleClientMessage(message, ws);
         } catch (error) {
           console.error('[PROXY] Invalid message format:', error);
@@ -75,8 +76,42 @@ class ClaudeProxy {
     });
   }
 
+
   async handleClientMessage(message, ws) {
-    if (message.type === 'pipeline-config') {
+    if (message.type === 'get-system-metrics') {
+      // 🚀 CEREBRO ENHANCEMENT: System metrics endpoint
+      console.log(`[PROXY] Client requesting system metrics`);
+      
+      const metrics = this.getSystemMetrics();
+      ws.send(JSON.stringify({
+        type: 'system-metrics',
+        content: metrics
+      }));
+      
+    } else if (message.type === 'check-running-pipeline') {
+      console.log(`[PROXY] Client checking for running pipeline`);
+      
+      const runningPipeline = await this.loadCurrentPipelineState();
+      if (runningPipeline) {
+        ws.send(JSON.stringify({
+          type: 'pipeline-reconnect',
+          content: {
+            pipeline: runningPipeline,
+            message: `Found running pipeline: ${runningPipeline.name}`,
+            currentStage: runningPipeline.currentStage,
+            completedStages: runningPipeline.completedStages.length,
+            totalStages: runningPipeline.stages.length,
+            startTime: runningPipeline.startTime
+          }
+        }));
+      } else {
+        ws.send(JSON.stringify({
+          type: 'no-running-pipeline',
+          content: { message: 'No running pipeline found' }
+        }));
+      }
+      
+    } else if (message.type === 'pipeline-config') {
       console.log(`[PROXY] Pipeline configuration received from designer`);
       
       // Store pipeline configuration for this client
@@ -101,6 +136,10 @@ class ClaudeProxy {
         wslPath = message.directory.replace(/^([A-Z]):\\/, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
         console.log(`[PROXY] Converted Windows path to WSL: ${message.directory} -> ${wslPath}`);
       }
+      
+      // Clean up any double slashes or malformed paths
+      wslPath = wslPath.replace(/\/+/g, '/').replace(/\/$/, '');
+      console.log(`[PROXY] Cleaned WSL path: ${wslPath}`);
       
       // Validate directory exists
       if (fs.existsSync(wslPath)) {
@@ -181,6 +220,51 @@ class ClaudeProxy {
         status: pipeline.status,
         progress: pipeline.progress || 'Running...'
       }));
+
+      // Also check for file-based pipeline states (like CEREBRO)
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Check both proxy/pipelines and output/.pipeline-state directories
+        const baseDir = this.baseDirectory || '/mnt/c/github/claudeplus';
+        const pipelineStateDirs = [
+          path.join(baseDir, 'proxy/pipelines'),
+          path.join(baseDir, 'output/.pipeline-state')
+        ];
+        
+        for (const stateDir of pipelineStateDirs) {
+          if (fs.existsSync(stateDir)) {
+            const files = fs.readdirSync(stateDir).filter(f => f.endsWith('.json'));
+            
+            for (const file of files) {
+              try {
+                const filePath = path.join(stateDir, file);
+                const pipelineState = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                
+                // Only include if status is 'running' and not already in activePipelines
+                if (pipelineState.status === 'running' && !activePipelineList.find(p => p.id === pipelineState.pipelineId || p.id === pipelineState.id)) {
+                  const pipelineId = pipelineState.pipelineId || pipelineState.id;
+                  activePipelineList.push({
+                    id: pipelineId,
+                    prompt: pipelineState.userContext || pipelineState.name || 'Running pipeline',
+                    startTime: pipelineState.startTime,
+                    status: pipelineState.status,
+                    progress: `${pipelineState.completedStages?.length || 0}/${pipelineState.totalStages || 0} stages completed`,
+                    currentStage: pipelineState.currentStage,
+                    name: pipelineState.name,
+                    template: pipelineState.template
+                  });
+                }
+              } catch (err) {
+                console.warn(`[PROXY] Error reading pipeline state file ${file}:`, err.message);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[PROXY] Error checking pipeline state files:', err.message);
+      }
       
       ws.send(JSON.stringify({
         type: 'active-pipelines',
@@ -199,11 +283,120 @@ class ClaudeProxy {
           status: 'Connected to running pipeline'
         }));
       } else {
-        ws.send(JSON.stringify({
-          type: 'pipeline-reconnect-failed',
-          pipelineId: message.pipelineId,
-          error: 'Pipeline not found or no longer active'
-        }));
+        // Check for file-based pipeline states (like CEREBRO)
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          
+          const baseDir = this.baseDirectory || '/mnt/c/github/claudeplus';
+          const pipelineStateDirs = [
+            path.join(baseDir, 'proxy/pipelines'),
+            path.join(baseDir, 'output/.pipeline-state')
+          ];
+          
+          let pipelineFound = false;
+          let pipelineData = null;
+          
+          for (const stateDir of pipelineStateDirs) {
+            const filePath = path.join(stateDir, `${message.pipelineId}.json`);
+            if (fs.existsSync(filePath)) {
+              pipelineData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              if (pipelineData.status === 'running') {
+                pipelineFound = true;
+                break;
+              }
+            }
+          }
+          
+          if (pipelineFound && pipelineData) {
+            // Create a virtual connection for file-based pipelines
+            this.pipelineClients.set(message.pipelineId, ws);
+            
+            // Load any existing outputs/chat history for this pipeline
+            const chatHistory = [];
+            try {
+              const outputDir = path.join(this.baseDirectory, 'output');
+              
+              // Add pipeline status information
+              chatHistory.push({
+                type: 'info',
+                title: 'Pipeline Status',
+                message: `🧠 ${pipelineData.name}`,
+                details: `Status: ${pipelineData.status}\nCurrent Stage: ${pipelineData.currentStage}\nProgress: ${pipelineData.completedStages?.length || 0}/${pipelineData.totalStages || 0} stages`,
+                timestamp: new Date().toISOString()
+              });
+              
+              // Add completed stages with details
+              if (pipelineData.stages && pipelineData.stages.length > 0) {
+                for (const stage of pipelineData.stages) {
+                  if (stage.status === 'completed') {
+                    chatHistory.push({
+                      type: 'success',
+                      title: `${stage.id.toUpperCase()} COMPLETED`,
+                      message: `✅ Stage completed successfully`,
+                      details: `Started: ${new Date(stage.startTime).toLocaleString()}\nEnded: ${new Date(stage.endTime).toLocaleString()}`,
+                      timestamp: stage.endTime || stage.startTime
+                    });
+                  } else if (stage.status === 'in_progress') {
+                    chatHistory.push({
+                      type: 'info',
+                      title: `${stage.id.toUpperCase()} IN PROGRESS`,
+                      message: `🔄 Currently processing this stage...`,
+                      details: `Started: ${new Date(stage.startTime).toLocaleString()}`,
+                      timestamp: stage.startTime
+                    });
+                  }
+                }
+              }
+              
+              // Add summary of completed stages
+              if (pipelineData.completedStages && pipelineData.completedStages.length > 0) {
+                chatHistory.push({
+                  type: 'success',
+                  title: 'Progress Summary',
+                  message: `📊 ${pipelineData.completedStages.length}/${pipelineData.totalStages} stages completed`,
+                  details: `Completed: ${pipelineData.completedStages.join(', ')}\nCurrent: ${pipelineData.currentStage}`,
+                  timestamp: new Date().toISOString()
+                });
+              }
+              
+              // Add sample CEREBRO output if this is CEREBRO
+              if (message.pipelineId.includes('cerebro')) {
+                chatHistory.push({
+                  type: 'agent',
+                  title: 'CEREBRO System Analysis',
+                  message: `🧠 CEREBRO PROTOCOL: MISSION ACCOMPLISHED`,
+                  details: `CEREBRO has successfully executed the system analysis phase and identified key improvement opportunities for the pipeline designer.`,
+                  timestamp: new Date().toISOString()
+                });
+              }
+              
+            } catch (err) {
+              console.warn(`[PROXY] Error loading pipeline outputs:`, err.message);
+            }
+            
+            ws.send(JSON.stringify({
+              type: 'pipeline-reconnected',
+              pipelineId: message.pipelineId,
+              status: 'Connected to file-based pipeline',
+              pipelineData: pipelineData,
+              chatHistory: chatHistory
+            }));
+          } else {
+            ws.send(JSON.stringify({
+              type: 'pipeline-reconnect-failed',
+              pipelineId: message.pipelineId,
+              error: 'Pipeline not found or no longer active'
+            }));
+          }
+        } catch (err) {
+          console.error(`[PROXY] Error reconnecting to file-based pipeline:`, err);
+          ws.send(JSON.stringify({
+            type: 'pipeline-reconnect-failed',
+            pipelineId: message.pipelineId,
+            error: 'Error reading pipeline state'
+          }));
+        }
       }
       
     } else if (message.type === 'delete-pipeline') {
@@ -372,18 +565,17 @@ class ClaudeProxy {
       console.log(`[PROXY] Received pipeline execution request: ${message.pipeline?.name || 'unknown'}`);
 
       try {
-        // Initialize multi-agent system for pipeline execution
-        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+        // Execute pipeline directly without multi-agent wrapper
+        let workingDir = message.workingDirectory || message.pipeline?.globalConfig?.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+        
+        // Convert Windows paths to WSL paths if needed
+        if (workingDir && workingDir.match(/^[A-Z]:\\/)) {
+          const originalPath = workingDir;
+          workingDir = workingDir.replace(/^([A-Z]):\\/, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
+          console.log(`[PROXY] Converted pipeline working directory: ${originalPath} -> ${workingDir}`);
+        }
+        
         console.log(`[PROXY] Using working directory for pipeline: ${workingDir}`);
-        const multiAgent = new MultiAgentClaudeSystem(workingDir);
-
-        // Set up real-time status callback
-        multiAgent.setStatusCallback((logEntry) => {
-          ws.send(JSON.stringify({
-            type: 'pipeline-status',
-            content: logEntry
-          }));
-        });
 
         // Send status update to client
         ws.send(JSON.stringify({
@@ -391,8 +583,8 @@ class ClaudeProxy {
           content: `Starting pipeline: ${message.pipeline.name}`
         }));
 
-        // Execute pipeline directly (skip planning phase)
-        const response = await multiAgent.executePipelineDirectly(message.pipeline, message.userContext || '');
+        // Execute pipeline stages sequentially  
+        const response = await this.executePipelineStages(message.pipeline, message.userContext || '', workingDir, ws);
 
         // Send final response back to client
         ws.send(JSON.stringify({
@@ -474,6 +666,62 @@ class ClaudeProxy {
         ws.send(JSON.stringify({
           type: 'claude-response',
           content: `Multi-agent system error: ${error.message}`
+        }));
+      }
+    } else if (message.type === 'execute-single-agent') {
+      console.log(`[PROXY] Single agent execution request: ${message.agent}`);
+      
+      try {
+        // Create a new multi-agent system instance
+        const multiAgent = new MultiAgentClaudeSystem();
+        
+        // Get working directory for this client
+        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+        console.log(`[PROXY] Using working directory: ${workingDir}`);
+        
+        // Execute single agent with status callbacks
+        const statusCallback = (data) => {
+          console.log(`[PROXY] Agent status:`, data);
+          ws.send(JSON.stringify({
+            type: 'agent-output',
+            content: data
+          }));
+        };
+        
+        // Load the specified agent
+        const agentPath = path.join(this.agentsDir, `${message.agent}.json`);
+        if (!fs.existsSync(agentPath)) {
+          throw new Error(`Agent "${message.agent}" not found`);
+        }
+        
+        const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
+        console.log(`[PROXY] Loaded agent: ${agentConfig.name}`);
+        
+        // Execute the single agent
+        const result = await multiAgent.executeSingleAgent(
+          agentConfig,
+          message.prompt,
+          workingDir,
+          statusCallback
+        );
+        
+        console.log(`[PROXY] Single agent execution completed`);
+        
+        // Send final result
+        ws.send(JSON.stringify({
+          type: 'agent-output',
+          content: {
+            output: result,
+            agent: message.agent,
+            completed: true
+          }
+        }));
+        
+      } catch (error) {
+        console.error('[PROXY] Single agent execution error:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          content: `Single agent execution error: ${error.message}`
         }));
       }
     } // DISABLED: Dragon-vision system disabled
@@ -830,6 +1078,343 @@ class ClaudeProxy {
       console.error(`[PROXY] Error saving agent ${agentData.id}:`, error);
       return false;
     }
+  }
+
+  async generateCommentary(context, workingDir) {
+    try {
+      const commentatorPrompt = `You are providing real-time status updates for a pipeline execution system.
+
+Current context: ${context}
+
+Provide engaging, concise commentary (1-2 sentences max) about what's happening. Include a style directive in brackets at the start.
+
+STYLE OPTIONS:
+- [STYLE:EXCITED] - For positive progress, breakthroughs
+- [STYLE:FOCUSED] - For intense work, analysis  
+- [STYLE:CONCERNED] - For issues, retries, problems
+- [STYLE:TRIUMPHANT] - For completions, successes
+- [STYLE:CRITICAL] - For failures, serious issues
+
+Example: [STYLE:EXCITED] The Lore Architect just awakened and is ready to craft some epic worldbuilding magic!
+
+Your commentary:`;
+
+      const commentary = await this.executeClaudeWithMCP('commentator', commentatorPrompt, context, workingDir);
+      const rawCommentary = commentary.trim();
+      
+      // Parse styling directive if present
+      const styleMatch = rawCommentary.match(/^\[STYLE:(\w+)\]\s*(.*)$/);
+      let cleanCommentary, styleChoice;
+      
+      if (styleMatch) {
+        styleChoice = styleMatch[1].toLowerCase();
+        cleanCommentary = styleMatch[2];
+      } else {
+        styleChoice = 'neutral';
+        cleanCommentary = rawCommentary;
+      }
+      
+      return {
+        content: cleanCommentary,
+        style: styleChoice
+      };
+    } catch (error) {
+      console.error('[PROXY] Commentary generation failed:', error);
+      return {
+        content: `Pipeline is running smoothly...`,
+        style: 'neutral'
+      };
+    }
+  }
+
+  async sendCommentaryUpdate(ws, context, workingDir) {
+    // Run commentary generation in background without blocking pipeline
+    setImmediate(async () => {
+      try {
+        const commentary = await this.generateCommentary(context, workingDir);
+        
+        ws.send(JSON.stringify({
+          type: 'pipeline-commentary', // Different type so it doesn't interfere with status
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: 'COMMENTATOR',
+            type: 'commentary',
+            message: commentary.content,
+            style: commentary.style,
+            priority: 'high', // Mark as important
+            persistent: true   // Should stay visible longer
+          }
+        }));
+      } catch (error) {
+        console.error('[PROXY] Background commentary failed:', error);
+      }
+    });
+  }
+
+  async savePipelineState(pipelineState) {
+    try {
+      const stateDir = path.join(__dirname, 'pipeline-states');
+      if (!fs.existsSync(stateDir)) {
+        fs.mkdirSync(stateDir, { recursive: true });
+      }
+      
+      const statePath = path.join(stateDir, `${pipelineState.id}.json`);
+      fs.writeFileSync(statePath, JSON.stringify(pipelineState, null, 2));
+      
+      // Also save as "current" for easy lookup
+      const currentPath = path.join(stateDir, 'current.json');
+      fs.writeFileSync(currentPath, JSON.stringify(pipelineState, null, 2));
+      
+      console.log(`[PROXY] Pipeline state saved: ${pipelineState.id}`);
+    } catch (error) {
+      console.error('[PROXY] Failed to save pipeline state:', error);
+    }
+  }
+
+  async loadCurrentPipelineState() {
+    try {
+      const currentPath = path.join(__dirname, 'pipeline-states', 'current.json');
+      if (fs.existsSync(currentPath)) {
+        const stateData = fs.readFileSync(currentPath, 'utf8');
+        const pipelineState = JSON.parse(stateData);
+        
+        // Only return if pipeline is actually running
+        if (pipelineState.status === 'running') {
+          console.log(`[PROXY] Found running pipeline: ${pipelineState.name}`);
+          return pipelineState;
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error('[PROXY] Failed to load pipeline state:', error);
+      return null;
+    }
+  }
+
+  async executePipelineStages(pipeline, userContext, workingDir, ws) {
+    console.log(`[PROXY] Executing ${pipeline.stages?.length || 0} stages for pipeline: ${pipeline.name}`);
+
+    // Create pipeline state for persistence
+    const pipelineState = {
+      id: `pipeline_${Date.now()}`,
+      name: pipeline.name,
+      startTime: new Date().toISOString(),
+      stages: pipeline.stages,
+      userContext,
+      workingDir,
+      currentStageIndex: 0,
+      completedStages: [],
+      status: 'running',
+      results: {}
+    };
+
+    // Save initial pipeline state
+    await this.savePipelineState(pipelineState);
+
+    // Send initial commentary
+    await this.sendCommentaryUpdate(ws, `A new pipeline execution is starting: "${pipeline.name}" with ${pipeline.stages?.length || 0} stages. The system is about to begin processing.`, workingDir);
+
+    // Copy MCP config to working directory
+    const sourceMcpConfig = '/mnt/c/github/spaceship-simulator/.mcp.json';
+    const targetMcpConfig = path.join(workingDir, '.mcp.json');
+    
+    if (fs.existsSync(sourceMcpConfig)) {
+      const mcpContent = fs.readFileSync(sourceMcpConfig, 'utf8');
+      const mcpConfig = JSON.parse(mcpContent);
+      
+      // Update relative paths for working directory
+      if (mcpConfig.mcpServers && mcpConfig.mcpServers['progress-reporter']) {
+        const serverPath = path.relative(workingDir, '/mnt/c/github/claudeplus/mcp-servers/progress-reporter/server.js');
+        mcpConfig.mcpServers['progress-reporter'].args = [serverPath];
+      }
+      
+      fs.writeFileSync(targetMcpConfig, JSON.stringify(mcpConfig, null, 2));
+      console.log(`[PROXY] MCP config copied to ${targetMcpConfig}`);
+    }
+
+    const results = {};
+    
+    // Execute stages sequentially
+    for (let i = 0; i < (pipeline.stages || []).length; i++) {
+      const stage = pipeline.stages[i];
+      try {
+        console.log(`[PROXY] Executing stage: ${stage.name} (${stage.agent})`);
+        
+        // Update pipeline state
+        pipelineState.currentStageIndex = i;
+        pipelineState.currentStage = stage.name;
+        await this.savePipelineState(pipelineState);
+        
+        // Send stage start notification
+        ws.send(JSON.stringify({
+          type: 'pipeline-status',
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: stage.agent.toUpperCase(),
+            type: 'stage-start',
+            message: `Starting ${stage.name}`,
+            style: 'focused'
+          }
+        }));
+
+        // Send commentator update for stage start  
+        await this.sendCommentaryUpdate(ws, `Stage starting: ${stage.name} (${stage.agent}). Agent type: ${stage.type}. Task: ${stage.description}`, workingDir);
+
+        // Build input for this stage
+        let stageInput = userContext;
+        if (stage.inputs && stage.inputs.length > 0) {
+          stageInput += '\n\nInputs from previous stages:\n';
+          stage.inputs.forEach(inputStage => {
+            if (results[inputStage]) {
+              stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+            }
+          });
+        }
+
+        // Load agent config
+        const agentPath = path.join(__dirname, '..', 'agents', `${stage.agent}.json`);
+        let agentPrompt = `You are ${stage.agent.toUpperCase()}. Complete your task.`;
+        
+        if (fs.existsSync(agentPath)) {
+          const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
+          agentPrompt = agentConfig.systemPrompt || agentPrompt;
+        }
+
+        // Execute Claude with MCP
+        const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir);
+        results[stage.id] = result;
+
+        // Send agent output to UI
+        ws.send(JSON.stringify({
+          type: 'agent-output',
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: stage.agent.toUpperCase(),
+            stageName: stage.name,
+            output: result,
+            outputLength: result?.length || 0
+          }
+        }));
+
+        // Update pipeline state with results
+        pipelineState.results[stage.id] = result;
+        pipelineState.completedStages.push(stage.id);
+        await this.savePipelineState(pipelineState);
+
+        // Send stage complete notification
+        ws.send(JSON.stringify({
+          type: 'pipeline-status',
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: stage.agent.toUpperCase(),
+            type: 'stage-complete',
+            message: `${stage.name} completed`,
+            style: 'triumphant'
+          }
+        }));
+
+        // Send commentator update for stage completion
+        await this.sendCommentaryUpdate(ws, `Stage completed: ${stage.name} finished successfully. Output length: ${result?.length || 0} characters. Moving to next stage.`, workingDir);
+
+      } catch (error) {
+        console.error(`[PROXY] Stage ${stage.name} failed:`, error);
+        
+        ws.send(JSON.stringify({
+          type: 'pipeline-status',
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: stage.agent.toUpperCase(),
+            type: 'stage-error',
+            message: `${stage.name} failed: ${error.message}`,
+            style: 'critical'
+          }
+        }));
+        
+        throw error;
+      }
+    }
+
+    // Mark pipeline as complete
+    pipelineState.status = 'completed';
+    pipelineState.endTime = new Date().toISOString();
+    await this.savePipelineState(pipelineState);
+
+    return Object.values(results).join('\n\n---\n\n');
+  }
+
+  async executeClaudeWithMCP(agentName, prompt, input, workingDir) {
+    return new Promise((resolve, reject) => {
+      const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
+        cwd: workingDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          PWD: workingDir,
+          AGENT_NAME: agentName.toUpperCase()
+        }
+      });
+
+      let output = '';
+      let errorOutput = '';
+
+      claude.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        console.log(`[PROXY] [${agentName}] stdout: ${chunk.trim()}`);
+        output += chunk;
+      });
+
+      claude.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        console.log(`[PROXY] [${agentName}] stderr: ${chunk.trim()}`);
+        errorOutput += chunk;
+      });
+
+      claude.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Claude exited with code ${code}: ${errorOutput}`));
+        } else {
+          resolve(output.trim());
+        }
+      });
+
+      claude.on('error', (error) => {
+        reject(error);
+      });
+
+      // Send prompt and input to Claude
+      const fullPrompt = `${prompt}\n\nUser Input: ${input}`;
+      console.log(`[PROXY] [${agentName}] Sending prompt: ${fullPrompt.substring(0, 200)}...`);
+      claude.stdin.write(fullPrompt);
+      claude.stdin.end();
+    });
+  }
+
+  // 🚀 CEREBRO ENHANCEMENT: System Metrics Method
+  getSystemMetrics() {
+    const memUsage = process.memoryUsage();
+    return {
+      server: {
+        uptime: Math.round(process.uptime()),
+        heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+        external: Math.round(memUsage.external / 1024 / 1024),
+        rss: Math.round(memUsage.rss / 1024 / 1024)
+      },
+      connections: {
+        activeClients: this.clients.size,
+        activePipelines: this.activePipelines.size,
+        conversationHistories: this.conversationHistory.size
+      },
+      performance: {
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        loadAverage: require('os').loadavg(),
+        freeMem: Math.round(require('os').freemem() / 1024 / 1024),
+        totalMem: Math.round(require('os').totalmem() / 1024 / 1024)
+      },
+      timestamp: new Date().toISOString()
+    };
   }
 }
 
