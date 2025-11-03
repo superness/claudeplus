@@ -368,6 +368,48 @@ class ClaudeProxy {
         success: saved
       }));
       
+    } else if (message.type === 'execute-pipeline') {
+      console.log(`[PROXY] Received pipeline execution request: ${message.pipeline?.name || 'unknown'}`);
+
+      try {
+        // Initialize multi-agent system for pipeline execution
+        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+        console.log(`[PROXY] Using working directory for pipeline: ${workingDir}`);
+        const multiAgent = new MultiAgentClaudeSystem(workingDir);
+
+        // Set up real-time status callback
+        multiAgent.setStatusCallback((logEntry) => {
+          ws.send(JSON.stringify({
+            type: 'pipeline-status',
+            content: logEntry
+          }));
+        });
+
+        // Send status update to client
+        ws.send(JSON.stringify({
+          type: 'system-status',
+          content: `Starting pipeline: ${message.pipeline.name}`
+        }));
+
+        // Execute pipeline directly (skip planning phase)
+        const response = await multiAgent.executePipelineDirectly(message.pipeline, message.userContext || '');
+
+        // Send final response back to client
+        ws.send(JSON.stringify({
+          type: 'pipeline-complete',
+          content: response,
+          pipeline: message.pipeline.name
+        }));
+
+      } catch (error) {
+        console.error('[PROXY] Pipeline execution error:', error);
+        ws.send(JSON.stringify({
+          type: 'pipeline-error',
+          content: error.message,
+          stack: error.stack
+        }));
+      }
+
     } else if (message.type === 'user-message') {
       console.log(`[PROXY] Received user message: ${message.content}`);
 

@@ -345,7 +345,10 @@ class PipelineDesigner {
       
       this.panOffset.x += deltaX;
       this.panOffset.y += deltaY;
-      
+
+      // Constrain pan to keep canvas visible
+      this.constrainPan();
+
       this.lastPanPoint = { x: e.clientX, y: e.clientY };
       this.updateCanvasTransform();
     } else if (this.draggedElement && this.currentTool === 'select') {
@@ -398,24 +401,77 @@ class PipelineDesigner {
 
   handleCanvasWheel(e) {
     e.preventDefault();
-    
+
     const rect = this.canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
-    
+
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newZoom = Math.max(0.2, Math.min(3, this.zoom * delta));
-    
+
     if (newZoom !== this.zoom) {
-      // Zoom towards mouse position
-      const zoomFactor = newZoom / this.zoom;
-      
-      this.panOffset.x = mouseX - (mouseX - this.panOffset.x) * zoomFactor;
-      this.panOffset.y = mouseY - (mouseY - this.panOffset.y) * zoomFactor;
-      
+      // Store old values
+      const oldZoom = this.zoom;
+      const oldPanX = this.panOffset.x;
+      const oldPanY = this.panOffset.y;
+
+      // Update zoom first
       this.zoom = newZoom;
+
+      // Calculate new pan to zoom towards mouse, but don't apply yet
+      const zoomFactor = newZoom / oldZoom;
+      let newPanX = mouseX - (mouseX - oldPanX) * zoomFactor;
+      let newPanY = mouseY - (mouseY - oldPanY) * zoomFactor;
+
+      // Apply the calculated pan
+      this.panOffset.x = newPanX;
+      this.panOffset.y = newPanY;
+
+      // THEN constrain - this will fix any out-of-bounds values
+      this.constrainPan();
+
       this.updateCanvasTransform();
     }
+  }
+
+  constrainPan() {
+    // Get viewport size
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    const viewportWidth = rect.width;
+    const viewportHeight = rect.height;
+
+    // Canvas actual size
+    const canvasWidth = 5000;
+    const canvasHeight = 5000;
+
+    // At current zoom, how big is the canvas?
+    const scaledWidth = canvasWidth * this.zoom;
+    const scaledHeight = canvasHeight * this.zoom;
+
+    // Calculate bounds to prevent showing empty canvas
+    let minPanX, maxPanX, minPanY, maxPanY;
+
+    if (scaledWidth <= viewportWidth) {
+      // Canvas smaller than viewport - lock to top-left
+      minPanX = maxPanX = 0;
+    } else {
+      // Canvas bigger than viewport
+      maxPanX = 0;
+      minPanX = -(scaledWidth - viewportWidth);
+    }
+
+    if (scaledHeight <= viewportHeight) {
+      // Canvas smaller than viewport - lock to top-left
+      minPanY = maxPanY = 0;
+    } else {
+      // Canvas bigger than viewport
+      maxPanY = 0;
+      minPanY = -(scaledHeight - viewportHeight);
+    }
+
+    // Clamp to calculated bounds
+    this.panOffset.x = Math.max(minPanX, Math.min(maxPanX, this.panOffset.x));
+    this.panOffset.y = Math.max(minPanY, Math.min(maxPanY, this.panOffset.y));
   }
 
   updateCanvasTransform() {
@@ -897,12 +953,129 @@ class PipelineDesigner {
 
   loadTemplateFromConfig(template) {
     console.log(`📋 Loading template from config: ${template.name}`);
-    
-    // For now, fall back to the existing hardcoded template loading
-    // This ensures the templates work while we have the disk-based agent system
-    this.loadTemplateFallback(template.id);
-    
-    console.log(`✅ Loaded template "${template.name}" from server (using fallback)`);
+
+    // Set pipeline config (nodes already cleared by loadTemplate)
+    this.pipelineConfig = {
+      id: template.id,
+      name: template.name,
+      description: template.description,
+      version: template.version,
+      category: template.category,
+      globalConfig: {
+        workingDirectory: null,
+        maxRetries: 5,
+        commentaryEnabled: true
+      }
+    };
+
+    // Create nodes from stages with smart layout
+    const nodeIds = [];
+
+    // Check if stages have phase information for vertical grouping
+    const hasPhases = template.stages.some(s => s.phase);
+
+    if (hasPhases) {
+      // Group stages by phase and layout vertically
+      const phases = {};
+      template.stages.forEach(stage => {
+        const phase = stage.phase || 'default';
+        if (!phases[phase]) phases[phase] = [];
+        phases[phase].push(stage);
+      });
+
+      const phaseKeys = Object.keys(phases);
+      const xStart = 1500; // Start well centered in 5000px canvas
+      const yStart = 1500; // Start well centered in 5000px canvas
+      const xSpacing = 400; // Space between phases
+      const ySpacing = 150; // Space between nodes in same phase
+
+      phaseKeys.forEach((phase, phaseIndex) => {
+        const phaseStages = phases[phase];
+        const x = xStart + (phaseIndex * xSpacing);
+
+        phaseStages.forEach((stage, stageIndex) => {
+          const y = yStart + (stageIndex * ySpacing);
+          const nodeId = this.createNode({
+            id: stage.id,
+            name: stage.name,
+            type: stage.type || 'agent',
+            icon: this.getStageIcon(stage.type),
+            description: stage.description,
+            agent: stage.agent,
+            x: x,
+            y: y,
+            config: {
+              inputs: stage.inputs || [],
+              outputs: stage.outputs || [],
+              phase: stage.phase
+            }
+          });
+          nodeIds.push(nodeId);
+        });
+      });
+    } else {
+      // Fallback to grid layout for templates without phases
+      const xStart = 1500; // Start well centered in 5000px canvas
+      const yStart = 1500; // Start well centered in 5000px canvas
+      const xSpacing = 350;
+      const ySpacing = 150;
+      const nodesPerRow = 4; // Max nodes per row
+
+      template.stages.forEach((stage, index) => {
+        const row = Math.floor(index / nodesPerRow);
+        const col = index % nodesPerRow;
+
+        const nodeId = this.createNode({
+          id: stage.id,
+          name: stage.name,
+          type: stage.type || 'agent',
+          icon: this.getStageIcon(stage.type),
+          description: stage.description,
+          agent: stage.agent,
+          x: xStart + (col * xSpacing),
+          y: yStart + (row * ySpacing),
+          config: {
+            inputs: stage.inputs || [],
+            outputs: stage.outputs || []
+          }
+        });
+        nodeIds.push(nodeId);
+      });
+    }
+
+    // Create edges based on flow
+    if (template.flow) {
+      if (template.flow.type === 'sequential') {
+        // Simple sequential flow
+        for (let i = 0; i < nodeIds.length - 1; i++) {
+          this.createConnection(nodeIds[i], nodeIds[i + 1], 'completed');
+        }
+      } else if (template.flow.type === 'conditional' && template.flow.connections) {
+        // Conditional flow with explicit connections
+        template.flow.connections.forEach(conn => {
+          const fromId = template.stages.find(s => s.id === conn.from)?.id;
+          const toId = template.stages.find(s => s.id === conn.to)?.id;
+          if (fromId && toId) {
+            this.createConnection(fromId, toId, conn.condition || 'completed');
+          }
+        });
+      }
+    }
+
+    console.log(`✅ Loaded template "${template.name}" from server with ${template.stages.length} stages`);
+  }
+
+  getStageIcon(stageType) {
+    const icons = {
+      'designer': '🎨',
+      'reviewer': '🔍',
+      'integrator': '🔧',
+      'validator': '✅',
+      'agent': '🤖',
+      'planner': '🧠',
+      'executor': '⚡'
+    };
+    return icons[stageType] || '📦';
   }
 
   loadClaudePlusTemplate() {
@@ -2569,36 +2742,73 @@ function savePipeline() {
 
 async function executePipeline() {
   console.log('Executing pipeline:', designer.pipelineConfig.name);
-  
-  // Open the web version of Claude app in a new tab
-  const claudeAppUrl = 'claude-app-web.html';
-  const newWindow = window.open(claudeAppUrl, '_blank', 'width=1200,height=800');
-  
-  if (newWindow) {
-    // Send pipeline configuration after a short delay
-    setTimeout(() => {
+
+  // Get user context for the pipeline
+  const userContext = prompt(
+    `🚀 Running Pipeline: ${designer.pipelineConfig.name}\n\n` +
+    `This pipeline has ${Array.from(designer.nodes.values()).length} stages.\n\n` +
+    `Enter context or requirements for this execution (optional):`,
+    ''
+  );
+
+  if (userContext === null) {
+    // User cancelled
+    return;
+  }
+
+  try {
+    const pipelineData = designer.exportPipeline();
+    const pipeline = JSON.parse(pipelineData);
+
+    // Connect to proxy and execute pipeline directly
+    const ws = new WebSocket('ws://localhost:8081');
+
+    ws.onopen = () => {
+      console.log('Connected to proxy, sending execute-pipeline message');
+      ws.send(JSON.stringify({
+        type: 'execute-pipeline',
+        pipeline: pipeline,
+        userContext: userContext || '',
+        workingDirectory: null // Will use proxy default
+      }));
+    };
+
+    ws.onmessage = (event) => {
       try {
-        const pipelineData = designer.exportPipeline();
-        
-        // Try to send configuration to proxy
-        const ws = new WebSocket('ws://localhost:8081');
-        ws.onopen = () => {
-          ws.send(JSON.stringify({
-            type: 'pipeline-config',
-            pipeline: JSON.parse(pipelineData)
-          }));
+        const message = JSON.parse(event.data);
+        console.log('Pipeline message:', message);
+
+        if (message.type === 'pipeline-status') {
+          console.log('[PIPELINE STATUS]', message.content);
+          // Could update UI with progress here
+        } else if (message.type === 'pipeline-complete') {
+          console.log('[PIPELINE COMPLETE]', message.content);
+          alert(`✅ Pipeline "${message.pipeline}" completed successfully!\n\nCheck console for detailed results.`);
           ws.close();
-        };
-        
-        alert(`🚀 Claude Plus Execution Engine opened!\n\nPipeline: ${designer.pipelineConfig.name}\n\nTest your pipeline in the new tab that just opened!`);
-        
-      } catch (wsError) {
-        console.log('WebSocket connection failed:', wsError);
-        alert(`🚀 Claude Plus Execution Engine opened!\n\nPipeline: ${designer.pipelineConfig.name}\n\nThe new tab is ready for testing!`);
+        } else if (message.type === 'pipeline-error') {
+          console.error('[PIPELINE ERROR]', message.content);
+          alert(`❌ Pipeline execution failed:\n\n${message.content}`);
+          ws.close();
+        }
+      } catch (err) {
+        console.error('Error parsing message:', err);
       }
-    }, 1000);
-  } else {
-    alert('❌ Could not open new tab. Please allow popups and try again.');
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      alert('❌ Could not connect to proxy server. Make sure it\'s running on port 8081.');
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket connection closed');
+    };
+
+    alert(`🚀 Pipeline execution started!\n\nPipeline: ${designer.pipelineConfig.name}\n\nWatch the console for real-time updates.`);
+
+  } catch (error) {
+    console.error('Error executing pipeline:', error);
+    alert(`❌ Error: ${error.message}`);
   }
 }
 
@@ -2936,29 +3146,25 @@ function executeCurrentPipeline() {
       designer.clearChatMessages();
       designer.addChatMessage('system', 'Proxy Server', 'Connected to proxy server', 'Sending prompt through pipeline...', '🔄');
       
-      // Send user message to proxy with working directory and artifacts
+      // Send execute-pipeline message to proxy (NOT user-message)
       const workingDirectory = document.getElementById('workingDirectory').value || '/mnt/c/github/claudeplus/output';
-      
-      // Build enhanced prompt with artifact context
-      let enhancedPrompt = userPrompt;
-      if (selectedArtifacts.length > 0) {
-        enhancedPrompt = buildPromptWithArtifacts(userPrompt, selectedArtifacts);
-      }
-      
+
+      // Get the current pipeline configuration
+      const pipelineData = designer.exportPipeline();
+      const pipeline = JSON.parse(pipelineData);
+
+      console.log('🎯 Executing pipeline directly:', pipeline.name);
+
       const message = {
-        type: 'user-message',
-        content: enhancedPrompt,
-        timestamp: new Date().toISOString(),
-        source: 'pipeline-designer',
+        type: 'execute-pipeline',
+        pipeline: pipeline,
+        userContext: userPrompt,
         workingDirectory: workingDirectory,
-        artifacts: selectedArtifacts.map(a => ({
-          name: a.name,
-          path: a.path,
-          type: a.type || 'document'
-        }))
+        timestamp: new Date().toISOString(),
+        source: 'pipeline-designer'
       };
-      
-      console.log('📤 Sending message to proxy:', message);
+
+      console.log('📤 Sending execute-pipeline message to proxy:', message);
       ws.send(JSON.stringify(message));
     };
     
@@ -2974,7 +3180,37 @@ function executeCurrentPipeline() {
         } else if (response.type === 'system-status') {
           // Multi-agent system initialization
           designer.addChatMessage('system', 'Multi-Agent System', response.content, null, '⚙️');
-          
+
+        } else if (response.type === 'pipeline-status') {
+          // Pipeline execution status updates
+          console.log('📊 Pipeline status update:', response.content);
+          const content = response.content;
+          if (content && content.message) {
+            designer.addChatMessage('pipeline', content.agent || 'Pipeline', content.message, null, '🔄');
+          }
+
+        } else if (response.type === 'pipeline-complete') {
+          // Pipeline execution completed successfully
+          console.log('✅ Pipeline complete:', response.content);
+          designer.addChatMessage('success', 'Pipeline Complete', `Pipeline "${response.pipeline}" executed successfully!`, JSON.stringify(response.content, null, 2), '🎉');
+
+          // Re-enable execute button
+          if (executeButton) {
+            executeButton.disabled = false;
+            executeButton.textContent = 'Execute Pipeline';
+          }
+
+        } else if (response.type === 'pipeline-error') {
+          // Pipeline execution failed
+          console.error('❌ Pipeline error:', response.content);
+          designer.addChatMessage('error', 'Pipeline Error', 'Pipeline execution failed', response.content, '❌');
+
+          // Re-enable execute button
+          if (executeButton) {
+            executeButton.disabled = false;
+            executeButton.textContent = 'Execute Pipeline';
+          }
+
         } else if (response.type === 'agent-status') {
           // Real-time agent status updates with pipeline visualization
           console.log('📊 Agent status update:', response.content);

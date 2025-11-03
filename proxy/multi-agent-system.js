@@ -344,6 +344,173 @@ User Input: ${input}`;
     }
   }
 
+  async executePipelineDirectly(pipelineConfig, userContext = '') {
+    this.log('PIPELINE_EXECUTION', 'start', `Executing pipeline: ${pipelineConfig.name}`);
+
+    // Initial commentary
+    const initialCommentary = await this.generateCommentary(
+      `🚀 Pipeline "${pipelineConfig.name}" is starting! This pipeline has ${pipelineConfig.stages?.length || 0} stages across ${pipelineConfig.stages?.filter(s => s.phase).reduce((acc, s) => acc.add(s.phase), new Set()).size || 0} phases.`,
+      [{ phase: 'pipeline-start', pipelineName: pipelineConfig.name }]
+    );
+    this.log('COMMENTATOR', 'start', initialCommentary.content || initialCommentary);
+
+    if (this.statusCallback) {
+      this.statusCallback({
+        timestamp: new Date().toISOString(),
+        agent: 'COMMENTATOR',
+        type: 'insight',
+        message: initialCommentary.content || initialCommentary,
+        style: initialCommentary.style || 'EXCITED'
+      });
+    }
+
+    try {
+      // Group stages by phase
+      const phases = {};
+      (pipelineConfig.stages || []).forEach(stage => {
+        const phase = stage.phase || 'default';
+        if (!phases[phase]) phases[phase] = [];
+        phases[phase].push(stage);
+      });
+
+      const phaseKeys = Object.keys(phases).sort();
+      const results = {};
+
+      // Execute each phase sequentially
+      for (const phase of phaseKeys) {
+        this.log('PIPELINE_EXECUTION', 'phase_start', `Starting phase: ${phase}`);
+
+        const phaseCommentary = await this.generateCommentary(
+          `📋 Entering Phase: ${phase} with ${phases[phase].length} agents`,
+          [{ phase: 'phase-start', phaseName: phase }]
+        );
+        this.log('COMMENTATOR', 'phase', phaseCommentary.content || phaseCommentary);
+
+        // Execute all stages in this phase (could be parallel or sequential based on flow)
+        for (const stage of phases[phase]) {
+          this.log('PIPELINE_EXECUTION', 'stage_start', `Executing stage: ${stage.name} (${stage.agent})`);
+
+          const stageCommentary = await this.generateCommentary(
+            `🎯 Running ${stage.name}: ${stage.description}`,
+            [{ phase: 'stage-start', stageName: stage.name }]
+          );
+          this.log('COMMENTATOR', 'stage', stageCommentary.content || stageCommentary);
+
+          if (this.statusCallback) {
+            this.statusCallback({
+              timestamp: new Date().toISOString(),
+              agent: 'PIPELINE',
+              type: 'stage_progress',
+              message: `Executing: ${stage.name}`,
+              style: 'FOCUSED'
+            });
+          }
+
+          // Load the agent configuration
+          const agentConfig = this.loadAgentConfig(stage.agent);
+          if (!agentConfig) {
+            throw new Error(`Agent configuration not found: ${stage.agent}`);
+          }
+
+          // Prepare input context for the agent
+          let agentInput = userContext;
+          if (stage.inputs && stage.inputs.length > 0) {
+            agentInput += '\n\nInputs from previous stages:\n';
+            stage.inputs.forEach(inputStage => {
+              if (results[inputStage]) {
+                agentInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+              }
+            });
+          }
+
+          // Execute the agent
+          const agentResult = await this.spawnClaudeInstance(
+            stage.agent.toUpperCase(),
+            agentConfig.systemPrompt,
+            agentInput
+          );
+
+          results[stage.id] = agentResult;
+
+          const stageCompleteCommentary = await this.generateCommentary(
+            `✅ ${stage.name} completed successfully`,
+            [{ phase: 'stage-complete', stageName: stage.name }]
+          );
+          this.log('COMMENTATOR', 'stage_complete', stageCompleteCommentary.content || stageCompleteCommentary);
+        }
+
+        const phaseCompleteCommentary = await this.generateCommentary(
+          `🎉 Phase ${phase} complete! Moving to next phase...`,
+          [{ phase: 'phase-complete', phaseName: phase }]
+        );
+        this.log('COMMENTATOR', 'phase_complete', phaseCompleteCommentary.content || phaseCompleteCommentary);
+      }
+
+      this.log('PIPELINE_EXECUTION', 'complete', 'Pipeline execution completed successfully');
+
+      const finalCommentary = await this.generateCommentary(
+        `🏆 Pipeline "${pipelineConfig.name}" completed successfully! All ${pipelineConfig.stages?.length || 0} stages executed.`,
+        [{ phase: 'pipeline-complete', pipelineName: pipelineConfig.name }]
+      );
+      this.log('COMMENTATOR', 'complete', finalCommentary.content || finalCommentary);
+
+      if (this.statusCallback) {
+        this.statusCallback({
+          timestamp: new Date().toISOString(),
+          agent: 'COMMENTATOR',
+          type: 'success',
+          message: finalCommentary.content || finalCommentary,
+          style: 'TRIUMPHANT'
+        });
+      }
+
+      return {
+        status: 'success',
+        pipeline: pipelineConfig.name,
+        results: results,
+        message: 'Pipeline executed successfully'
+      };
+
+    } catch (error) {
+      this.log('PIPELINE_EXECUTION', 'error', `Pipeline execution failed: ${error.message}`);
+
+      const errorCommentary = await this.generateCommentary(
+        `❌ Pipeline execution failed: ${error.message}`,
+        [{ phase: 'pipeline-error', error: error.message }]
+      );
+      this.log('COMMENTATOR', 'error', errorCommentary.content || errorCommentary);
+
+      if (this.statusCallback) {
+        this.statusCallback({
+          timestamp: new Date().toISOString(),
+          agent: 'COMMENTATOR',
+          type: 'error',
+          message: errorCommentary.content || errorCommentary,
+          style: 'CRITICAL'
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  loadAgentConfig(agentId) {
+    const agentPath = path.join(this.agentsDir, `${agentId}.json`);
+    if (!fs.existsSync(agentPath)) {
+      this.log('SYSTEM', 'error', `Agent config not found: ${agentPath}`);
+      return null;
+    }
+
+    try {
+      const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
+      this.log('SYSTEM', 'info', `Loaded agent config: ${agentId}`);
+      return agentConfig;
+    } catch (error) {
+      this.log('SYSTEM', 'error', `Failed to load agent config ${agentId}: ${error.message}`);
+      return null;
+    }
+  }
+
   async planAndValidate(userMessage) {
     this.log('PLANNING_PHASE', 'start', 'Beginning planning and validation phase');
     
