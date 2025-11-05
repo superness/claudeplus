@@ -31,6 +31,23 @@ class PipelineDesigner {
     this.init();
   }
 
+  // Helper method to format conditions for display
+  formatCondition(condition) {
+    if (typeof condition === 'string') {
+      return condition;
+    } else if (typeof condition === 'object' && condition !== null) {
+      // Handle structured conditions
+      if (condition.type === 'decision_equals') {
+        return `decision: ${condition.value}`;
+      } else if (condition.description) {
+        return condition.description;
+      } else {
+        return JSON.stringify(condition);
+      }
+    }
+    return 'completed'; // default fallback
+  }
+
   showReconnectedPipelineStatus(content) {
     const pipeline = content.pipeline;
     
@@ -880,7 +897,7 @@ class PipelineDesigner {
       <div class="success-text">
         <strong>Connection Created!</strong><br>
         ${fromNode.config.name} → ${toNode.config.name}<br>
-        <small>Condition: ${condition}</small>
+        <small>Condition: ${this.formatCondition(condition)}</small>
       </div>
     `;
     
@@ -961,7 +978,7 @@ class PipelineDesigner {
       label.setAttribute('y', labelY);
       label.setAttribute('text-anchor', 'middle');
       label.setAttribute('class', 'connection-label');
-      label.textContent = connection.condition || 'completed';
+      label.textContent = this.formatCondition(connection.condition);
       
       // Add hover events for connection manipulation
       path.addEventListener('click', (e) => {
@@ -979,7 +996,7 @@ class PipelineDesigner {
     const toNode = this.nodes.get(connection.to);
     
     if (fromNode && toNode) {
-      const choice = confirm(`Connection: ${fromNode.config.name} → ${toNode.config.name}\nCondition: ${connection.condition}\n\nClick OK to delete this connection, or Cancel to keep it.`);
+      const choice = confirm(`Connection: ${fromNode.config.name} → ${toNode.config.name}\nCondition: ${this.formatCondition(connection.condition)}\n\nClick OK to delete this connection, or Cancel to keep it.`);
       
       if (choice) {
         // Remove connection from array
@@ -3476,7 +3493,7 @@ function showConnections() {
     
     if (fromNode && toNode) {
       connectionsList += `${index + 1}. ${fromNode.config.name} → ${toNode.config.name}\n`;
-      connectionsList += `   Condition: ${conn.condition}\n\n`;
+      connectionsList += `   Condition: ${designer.formatCondition(conn.condition)}\n\n`;
     }
   });
   

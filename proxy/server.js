@@ -490,11 +490,21 @@ class ClaudeProxy {
       const template = this.loadTemplate(message.templateId);
       
       if (template) {
-        ws.send(JSON.stringify({
+        console.log(`[PROXY] Template ${message.templateId} loaded, has connections:`, !!(template.flow && template.flow.connections));
+        if (template.flow && template.flow.connections) {
+          console.log(`[PROXY] Template has ${template.flow.connections.length} connections`);
+        }
+        
+        const response = {
           type: 'template-data',
           template: template
-        }));
+        };
+        
+        console.log(`[PROXY] Sending template response, size: ${JSON.stringify(response).length} bytes`);
+        ws.send(JSON.stringify(response));
+        console.log(`[PROXY] Template ${message.templateId} response sent successfully`);
       } else {
+        console.log(`[PROXY] Template ${message.templateId} not found`);
         ws.send(JSON.stringify({
           type: 'template-not-found',
           templateId: message.templateId
@@ -1234,14 +1244,24 @@ Your commentary:`;
 
     const results = {};
     
-    // Execute stages sequentially
-    for (let i = 0; i < (pipeline.stages || []).length; i++) {
-      const stage = pipeline.stages[i];
+    // Execute stages with conditional flow
+    const stageMap = {};
+    pipeline.stages.forEach(stage => stageMap[stage.id] = stage);
+    
+    let currentStageId = pipeline.stages[0]?.id; // Start with first stage
+    let executionCount = 0;
+    const maxExecutions = 20; // Prevent infinite loops
+    
+    while (currentStageId && executionCount < maxExecutions) {
+      const stage = stageMap[currentStageId];
+      if (!stage) break;
+      
+      executionCount++;
       try {
         console.log(`[PROXY] Executing stage: ${stage.name} (${stage.agent})`);
         
         // Update pipeline state
-        pipelineState.currentStageIndex = i;
+        pipelineState.currentStageIndex = executionCount - 1;
         pipelineState.currentStage = stage.name;
         await this.savePipelineState(pipelineState);
         
@@ -1277,7 +1297,34 @@ Your commentary:`;
         
         if (fs.existsSync(agentPath)) {
           const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
-          agentPrompt = agentConfig.systemPrompt || agentPrompt;
+          
+          // Handle system_prompt_template with placeholder injection
+          if (agentConfig.system_prompt_template) {
+            agentPrompt = agentConfig.system_prompt_template;
+            
+            // Inject placeholders from previous stage results
+            if (stage.inputs && stage.inputs.length > 0) {
+              stage.inputs.forEach(inputStage => {
+                if (results[inputStage]) {
+                  // Replace {approved_plan}, {plan}, {previous_output}, etc.
+                  agentPrompt = agentPrompt.replace(/\{approved_plan\}/g, results[inputStage]);
+                  agentPrompt = agentPrompt.replace(/\{plan\}/g, results[inputStage]);
+                  agentPrompt = agentPrompt.replace(/\{previous_output\}/g, results[inputStage]);
+                }
+              });
+            }
+          } else {
+            agentPrompt = agentConfig.systemPrompt || agentPrompt;
+          }
+        }
+        
+        // Add decision instructions from stage definition
+        if (stage.decisions && stage.decisions.length > 0) {
+          agentPrompt += `\n\nIMPORTANT: End your response with exactly one of these decisions:\n`;
+          stage.decisions.forEach(decision => {
+            agentPrompt += `- DECISION: ${decision.choice} (${decision.description})\n`;
+          });
+          agentPrompt += `\nFormat: End with "DECISION: [YOUR_CHOICE]" on the last line.`;
         }
 
         // Execute Claude with MCP
@@ -1316,6 +1363,16 @@ Your commentary:`;
         // Send commentator update for stage completion
         await this.sendCommentaryUpdate(ws, `Stage completed: ${stage.name} finished successfully. Output length: ${result?.length || 0} characters. Moving to next stage.`, workingDir);
 
+        // Determine next stage based on conditional flow
+        console.log(`[PROXY] [FLOW] Stage ${stage.id} completed. Determining next stage...`);
+        console.log(`[PROXY] [FLOW] Stage result length: ${result?.length || 0} characters`);
+        console.log(`[PROXY] [FLOW] Stage result preview: ${result?.substring(0, 200)}...`);
+        
+        const nextStageId = this.determineNextStage(pipeline, stage.id, result);
+        console.log(`[PROXY] [FLOW] Next stage determined: ${nextStageId}`);
+        
+        currentStageId = nextStageId;
+        
       } catch (error) {
         console.error(`[PROXY] Stage ${stage.name} failed:`, error);
         
@@ -1340,6 +1397,104 @@ Your commentary:`;
     await this.savePipelineState(pipelineState);
 
     return Object.values(results).join('\n\n---\n\n');
+  }
+
+  determineNextStage(pipeline, currentStageId, stageResult) {
+    console.log(`[PROXY] [FLOW] determineNextStage called for stage: ${currentStageId}`);
+    console.log(`[PROXY] [FLOW] Pipeline object keys: ${Object.keys(pipeline)}`);
+    console.log(`[PROXY] [FLOW] Pipeline.flow exists: ${!!pipeline.flow}`);
+    if (pipeline.flow) {
+      console.log(`[PROXY] [FLOW] Pipeline.flow keys: ${Object.keys(pipeline.flow)}`);
+      console.log(`[PROXY] [FLOW] Pipeline.flow.connections exists: ${!!pipeline.flow.connections}`);
+    }
+    
+    // Find connections from current stage (check both locations for compatibility)
+    const connections = pipeline.flow?.connections || pipeline.connections || [];
+    console.log(`[PROXY] [FLOW] Total connections in pipeline: ${connections.length}`);
+    console.log(`[PROXY] [FLOW] Using connections from: ${pipeline.flow?.connections ? 'pipeline.flow.connections' : pipeline.connections ? 'pipeline.connections' : 'none'}`);
+    
+    const fromConnections = connections.filter(conn => conn.from === currentStageId);
+    console.log(`[PROXY] [FLOW] Connections from ${currentStageId}: ${fromConnections.length}`);
+    fromConnections.forEach((conn, i) => {
+      console.log(`[PROXY] [FLOW] Connection ${i}: ${conn.from} -> ${conn.to}, condition: ${JSON.stringify(conn.condition)}`);
+    });
+    
+    if (fromConnections.length === 0) {
+      console.log(`[PROXY] [FLOW] No connections from ${currentStageId}, pipeline ends`);
+      return null;
+    }
+    
+    // Check stage result for decision keywords
+    const resultLower = stageResult.toLowerCase();
+    console.log(`[PROXY] [FLOW] Stage result (first 100 chars): ${stageResult.substring(0, 100)}`);
+    console.log(`[PROXY] [FLOW] Stage result (last 100 chars): ${stageResult.substring(Math.max(0, stageResult.length - 100))}`);
+    
+    console.log(`[PROXY] [FLOW] Evaluating ${fromConnections.length} connections...`);
+    
+    for (let i = 0; i < fromConnections.length; i++) {
+      const connection = fromConnections[i];
+      const condition = connection.condition;
+      
+      console.log(`[PROXY] [FLOW] Evaluating connection ${i}: ${connection.from} -> ${connection.to}`);
+      console.log(`[PROXY] [FLOW] Condition type: ${typeof condition}`);
+      console.log(`[PROXY] [FLOW] Condition value: ${JSON.stringify(condition)}`);
+      
+      // Handle structured conditions
+      if (typeof condition === 'object' && condition.type === 'decision_equals') {
+        console.log(`[PROXY] [FLOW] Structured condition: decision_equals ${condition.value}`);
+        const decision = this.extractDecision(stageResult);
+        console.log(`[PROXY] [FLOW] Extracted decision: "${decision}"`);
+        console.log(`[PROXY] [FLOW] Comparing "${decision}" === "${condition.value}"`);
+        
+        if (decision === condition.value) {
+          console.log(`[PROXY] [FLOW] ✅ Flow condition met: ${condition.description} -> ${connection.to}`);
+          return connection.to;
+        } else {
+          console.log(`[PROXY] [FLOW] ❌ Flow condition not met: "${decision}" !== "${condition.value}"`);
+        }
+      }
+      // Handle simple string conditions (for compatibility)
+      else if (typeof condition === 'string') {
+        console.log(`[PROXY] [FLOW] String condition: ${condition}`);
+        const conditionLower = condition.toLowerCase();
+        if (conditionLower === 'plan_complete' || conditionLower === 'execution_complete') {
+          console.log(`[PROXY] [FLOW] ✅ Flow condition met: ${condition} -> ${connection.to}`);
+          return connection.to;
+        } else {
+          console.log(`[PROXY] [FLOW] ❌ String condition not recognized: ${condition}`);
+        }
+      }
+    }
+    
+    // Default to first connection if no specific condition matched
+    console.log(`[PROXY] No condition matched, using default: ${fromConnections[0].to}`);
+    return fromConnections[0].to;
+  }
+
+  extractDecision(stageResult) {
+    console.log(`[PROXY] [FLOW] extractDecision called`);
+    
+    // Look for "DECISION: VALUE" format at the end of the output
+    const lines = stageResult.split('\n');
+    console.log(`[PROXY] [FLOW] Total lines in result: ${lines.length}`);
+    
+    const searchLines = Math.min(10, lines.length);
+    console.log(`[PROXY] [FLOW] Searching last ${searchLines} lines for DECISION:`);
+    
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
+      const line = lines[i].trim();
+      console.log(`[PROXY] [FLOW] Line ${i}: "${line}"`);
+      
+      const match = line.match(/^DECISION:\s*(.+)$/i);
+      if (match) {
+        const decision = match[1].trim().toUpperCase();
+        console.log(`[PROXY] [FLOW] ✅ Found decision: "${decision}"`);
+        return decision;
+      }
+    }
+    
+    console.log(`[PROXY] [FLOW] ❌ No DECISION: found in last ${searchLines} lines`);
+    return null;
   }
 
   async executeClaudeWithMCP(agentName, prompt, input, workingDir) {
