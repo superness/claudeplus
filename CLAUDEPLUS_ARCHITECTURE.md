@@ -58,8 +58,8 @@ ClaudePlus solves this by providing:
                         (Child Processes)
                               │
 ┌─────────────────────────────▼───────────────────────────────┐
-│ LAYER 3: Claude Code Instances (Multi-Agent System)        │
-│ - multi-agent-system.js orchestration layer                │
+│ LAYER 3: Claude Code Instances                             │
+│ - Direct Claude orchestration                              │
 │ - 79+ Specialized agents in /agents/ directory             │
 │ - Parallel expert evaluation                               │
 │ - Circuit breaker pattern for resilience                   │
@@ -88,8 +88,8 @@ generateCommentary()        // Creates engaging real-time commentary
 savePipelineState()         // Persists state for crash recovery
 ```
 
-### Layer 3: Multi-Agent System (proxy/multi-agent-system.js)
-**1,663 lines of advanced orchestration intelligence**
+### Layer 3: Claude Code Orchestration
+**Direct Claude process management**
 
 Revolutionary features:
 - **Parallel Expert Evaluation**: Spawns 3 expert agents (Thoroughness, Feasibility, Quality) in parallel, selects best review

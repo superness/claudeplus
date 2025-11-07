@@ -2,7 +2,6 @@ const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const MultiAgentClaudeSystem = require('./multi-agent-system');
 
 // Create log file and override console.log
 const logFile = path.join(__dirname, 'proxy.log');
@@ -629,28 +628,18 @@ class ClaudeProxy {
           contextualMessage = `Previous conversation:\n${conversationContext}\n\nCurrent request: ${message.content}`;
         }
 
-        // Initialize multi-agent system for this request
         // Use working directory from message, fallback to stored value, then current directory
         const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
         console.log(`[PROXY] Using working directory: ${workingDir}`);
-        const multiAgent = new MultiAgentClaudeSystem(workingDir);
-
-        // Set up real-time status callback
-        multiAgent.setStatusCallback((logEntry) => {
-          ws.send(JSON.stringify({
-            type: 'agent-status',
-            content: logEntry
-          }));
-        });
 
         // Send status update to client
         ws.send(JSON.stringify({
           type: 'system-status',
-          content: 'Initializing multi-agent validation system...'
+          content: 'Processing request...'
         }));
 
-        // Process through multi-agent system WITH CONTEXT
-        const response = await multiAgent.processUserRequest(contextualMessage);
+        // Process directly with Claude
+        const response = await this.sendToClaude(contextualMessage);
 
         // Store this exchange in history
         history.push({
@@ -664,83 +653,27 @@ class ClaudeProxy {
           type: 'claude-response',
           content: response
         }));
-
-        // Optionally send the full conversation log
-        ws.send(JSON.stringify({
-          type: 'agent-log',
-          content: multiAgent.getFullLog()
-        }));
         
       } catch (error) {
-        console.error('[PROXY] Multi-agent system error:', error);
+        console.error('[PROXY] Claude processing error:', error);
         ws.send(JSON.stringify({
           type: 'claude-response',
-          content: `Multi-agent system error: ${error.message}`
+          content: `Claude processing error: ${error.message}`
         }));
       }
     } else if (message.type === 'execute-single-agent') {
-      console.log(`[PROXY] Single agent execution request: ${message.agent}`);
+      console.log(`[PROXY] Single agent execution not available - system removed`);
       
-      try {
-        // Create a new multi-agent system instance
-        const multiAgent = new MultiAgentClaudeSystem();
-        
-        // Get working directory for this client
-        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
-        console.log(`[PROXY] Using working directory: ${workingDir}`);
-        
-        // Execute single agent with status callbacks
-        const statusCallback = (data) => {
-          console.log(`[PROXY] Agent status:`, data);
-          ws.send(JSON.stringify({
-            type: 'agent-output',
-            content: data
-          }));
-        };
-        
-        // Load the specified agent
-        const agentPath = path.join(this.agentsDir, `${message.agent}.json`);
-        if (!fs.existsSync(agentPath)) {
-          throw new Error(`Agent "${message.agent}" not found`);
-        }
-        
-        const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
-        console.log(`[PROXY] Loaded agent: ${agentConfig.name}`);
-        
-        // Execute the single agent
-        const result = await multiAgent.executeSingleAgent(
-          agentConfig,
-          message.prompt,
-          workingDir,
-          statusCallback
-        );
-        
-        console.log(`[PROXY] Single agent execution completed`);
-        
-        // Send final result
-        ws.send(JSON.stringify({
-          type: 'agent-output',
-          content: {
-            output: result,
-            agent: message.agent,
-            completed: true
-          }
-        }));
-        
-      } catch (error) {
-        console.error('[PROXY] Single agent execution error:', error);
-        ws.send(JSON.stringify({
-          type: 'error',
-          content: `Single agent execution error: ${error.message}`
-        }));
-      }
+      ws.send(JSON.stringify({
+        type: 'error',
+        content: 'Single agent execution feature has been removed'
+      }));
     } // DISABLED: Dragon-vision system disabled
     // else if (message.type === 'dragon-command') {
     //   console.log(`[PROXY] 🐉 Dragon command received:`, message.content);
     //
     //   try {
-    //     // Get the dragon orchestrator from multi-agent system
-    //     const multiAgent = new MultiAgentClaudeSystem();
+    //     // Dragon orchestrator system removed
     //     const dragonInsights = await multiAgent.dragonOrchestrator.processCommand(message.content);
     //
     //     // Send dragon insights back to client
@@ -1282,11 +1215,30 @@ Your commentary:`;
 
         // Build input for this stage
         let stageInput = userContext;
-        if (stage.inputs && stage.inputs.length > 0) {
+        const stageInputs = stage.inputs || stage.config?.inputs || [];
+        if (stageInputs && stageInputs.length > 0) {
           stageInput += '\n\nInputs from previous stages:\n';
-          stage.inputs.forEach(inputStage => {
-            if (results[inputStage]) {
+          stageInputs.forEach(inputStage => {
+            // Prevent stages from accessing their own previous results to avoid confusion
+            if (results[inputStage] && inputStage !== stage.id) {
               stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+            }
+          });
+        }
+        
+        // DEBUG: Log what input each agent is receiving
+        console.log(`[PROXY] [DEBUG] Agent ${stage.agent} receiving input (${stageInput.length} chars): ${stageInput.substring(0, 200)}...`);
+        console.log(`[PROXY] [DEBUG] Available results for ${stage.agent}:`, Object.keys(results));
+        console.log(`[PROXY] [DEBUG] Resolved stage inputs:`, stageInputs);
+        console.log(`[PROXY] [DEBUG] Raw stage.inputs:`, stage.inputs);
+        console.log(`[PROXY] [DEBUG] Raw stage.config.inputs:`, stage.config?.inputs);
+        
+        // DEBUG: Log detailed input content for validators
+        if (stage.agent === 'proof_validator') {
+          console.log(`[PROXY] [DEBUG] VALIDATOR INPUT DETAILS:`);
+          stageInputs.forEach(inputStage => {
+            if (results[inputStage]) {
+              console.log(`[PROXY] [DEBUG] - ${inputStage}: ${results[inputStage].substring(0, 300)}...`);
             }
           });
         }
@@ -1318,15 +1270,34 @@ Your commentary:`;
           }
         }
         
-        // Add decision instructions from stage definition
+        // Add decision instructions - either from stage definition or extract from pipeline connections
+        let availableDecisions = [];
+        
         if (stage.decisions && stage.decisions.length > 0) {
+          // Use explicitly defined stage decisions
+          availableDecisions = stage.decisions;
+        } else {
+          // Extract decisions from pipeline connections
+          const connections = pipeline.flow?.connections || pipeline.connections || [];
+          const stageConnections = connections.filter(conn => conn.from === stage.id);
+          
+          availableDecisions = stageConnections.map(conn => ({
+            choice: typeof conn.condition === 'object' ? conn.condition.value : conn.condition,
+            description: conn.description || `Go to ${conn.to}`
+          }));
+        }
+        
+        if (availableDecisions.length > 0) {
           agentPrompt += `\n\nIMPORTANT: End your response with exactly one of these decisions:\n`;
-          stage.decisions.forEach(decision => {
+          availableDecisions.forEach(decision => {
             agentPrompt += `- DECISION: ${decision.choice} (${decision.description})\n`;
           });
           agentPrompt += `\nFormat: End with "DECISION: [YOUR_CHOICE]" on the last line.`;
         }
 
+        // DEBUG: Log what prompt is being sent
+        console.log(`[PROXY] [DEBUG] Agent ${stage.agent} final prompt (${agentPrompt.length} chars): ${agentPrompt.substring(0, 300)}...`);
+        
         // Execute Claude with MCP
         const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir);
         results[stage.id] = result;
@@ -1477,7 +1448,8 @@ Your commentary:`;
       const line = lines[i].trim();
       console.log(`[PROXY] [FLOW] Line ${i}: "${line}"`);
       
-      const match = line.match(/^DECISION:\s*(.+)$/i);
+      // Handle both plain and markdown-formatted decisions
+      const match = line.match(/^\*{0,2}\s*DECISION:\s*(.+?)\*{0,2}$/i);
       if (match) {
         const decision = match[1].trim().toUpperCase();
         console.log(`[PROXY] [FLOW] ✅ Found decision: "${decision}"`);

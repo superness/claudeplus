@@ -5,10 +5,9 @@
 | Component | Lines | Purpose |
 |-----------|-------|---------|
 | proxy/server.js | 1,592 | WebSocket proxy, pipeline orchestration, state management |
-| proxy/multi-agent-system.js | 1,663 | Multi-agent coordination, circuit breaker, memory management |
 | src/pipeline-designer.js | 4,738 | Visual pipeline editor with canvas manipulation |
 | standalone-pipeline.html | 2,893 | Professional web UI with glassmorphism design |
-| **Total Core System** | **10,886** | Production-grade AI automation platform |
+| **Total Core System** | **9,223** | Production-grade AI automation platform |
 
 ## Agent Ecosystem
 
@@ -150,7 +149,7 @@
 ✅ Comprehensive logging at every stage
 
 ### Maintainability
-✅ Clean separation of concerns (proxy vs multi-agent)
+✅ Clean separation of concerns (proxy vs agent orchestration)
 ✅ Configuration-driven agent system
 ✅ Template-based workflow definition
 ✅ Structured logging with timestamps and session IDs
@@ -243,7 +242,7 @@
 
 ## Metrics That Impress
 
-- **10,886 lines** of core production code
+- **9,223 lines** of core production code
 - **79 specialized agents** across multiple domains
 - **8 pre-built templates** for different use cases
 - **4.7K line** visual pipeline designer

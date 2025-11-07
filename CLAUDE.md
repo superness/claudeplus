@@ -37,29 +37,22 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
 
 2. **WSL Proxy Server** (`proxy/server.js`): Node.js WebSocket server
    - Manages WebSocket connections from Electron clients
-   - Spawns Claude Code processes via `multi-agent-system.js`
+   - Spawns Claude Code processes directly
    - Tracks conversation history per client
    - Manages working directories (converts Windows paths to WSL paths)
    - Logs to `proxy/proxy.log`
    - Claude instances execute in `output/` directory (auto-created with permissions config)
 
-3. **Multi-Agent System** (`proxy/multi-agent-system.js`): Orchestration layer
-   - Spawns multiple Claude Code instances for plan-review-execute-validate workflow
-   - Uses agents defined in `agents/*.json` (task_planner, task_executor, proof_validator, etc.)
-   - Working directory defaults to `output/` with Claude Code permissions pre-configured
-   - Real-time status callbacks to proxy for UI updates
-
-4. **Pipeline Designer** (`src/pipeline-designer.js`, `src/pipeline-designer.html`): Visual pipeline editor
+3. **Pipeline Designer** (`src/pipeline-designer.js`, `src/pipeline-designer.html`): Visual pipeline editor
    - Drag-and-drop interface for building AI agent pipelines
    - Uses templates from `templates/*.json`
    - Configures agent workflows dynamically
    - Can be accessed standalone via `./start-pipeline-system.sh`
 
-5. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
+4. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
    - Provides web scraping and browser testing capabilities
-   - Integrated with the multi-agent system for web-based tasks
 
-6. **Web Interfaces**: Multiple access points
+5. **Web Interfaces**: Multiple access points
    - Main Electron app (`src/index.html`)
    - Web-based chat interface (`src/claude-app-web.html`)
    - Standalone pipeline designer (via `./start-pipeline-system.sh`)
@@ -75,7 +68,7 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
 
 ## Agent System
 
-The multi-agent system uses 38+ JSON-defined agents organized by category:
+The system uses 38+ JSON-defined agents organized by category:
 
 ### Core Workflow Agents
 - **task_planner**: Creates execution plans with UNDERSTANDING, APPROACH, STEPS, TEST_CONSIDERATIONS, EVIDENCE, CONFIDENCE
