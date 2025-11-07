@@ -1430,44 +1430,36 @@ Your commentary:`;
     console.log(`[PROXY] [FLOW] Stage result (last 100 chars): ${stageResult.substring(Math.max(0, stageResult.length - 100))}`);
     
     console.log(`[PROXY] [FLOW] Evaluating ${fromConnections.length} connections...`);
-    
+
+    // Extract decision from agent output (if present)
+    const decision = this.extractDecision(stageResult);
+    console.log(`[PROXY] [FLOW] Extracted decision: "${decision}"`);
+
+    // Try to match against connection conditions
     for (let i = 0; i < fromConnections.length; i++) {
       const connection = fromConnections[i];
-      const condition = connection.condition;
-      
+      const condition = typeof connection.condition === 'object'
+        ? connection.condition.value
+        : connection.condition;
+
       console.log(`[PROXY] [FLOW] Evaluating connection ${i}: ${connection.from} -> ${connection.to}`);
-      console.log(`[PROXY] [FLOW] Condition type: ${typeof condition}`);
-      console.log(`[PROXY] [FLOW] Condition value: ${JSON.stringify(condition)}`);
-      
-      // Handle structured conditions
-      if (typeof condition === 'object' && condition.type === 'decision_equals') {
-        console.log(`[PROXY] [FLOW] Structured condition: decision_equals ${condition.value}`);
-        const decision = this.extractDecision(stageResult);
-        console.log(`[PROXY] [FLOW] Extracted decision: "${decision}"`);
-        console.log(`[PROXY] [FLOW] Comparing "${decision}" === "${condition.value}"`);
-        
-        if (decision === condition.value) {
-          console.log(`[PROXY] [FLOW] ✅ Flow condition met: ${condition.description} -> ${connection.to}`);
-          return connection.to;
-        } else {
-          console.log(`[PROXY] [FLOW] ❌ Flow condition not met: "${decision}" !== "${condition.value}"`);
-        }
+      console.log(`[PROXY] [FLOW] Condition: "${condition}"`);
+
+      // Handle auto-complete conditions (stage completion, no decision needed)
+      if (condition && condition.toLowerCase().endsWith('_complete')) {
+        console.log(`[PROXY] [FLOW] ✅ Auto-complete condition matched -> ${connection.to}`);
+        return connection.to;
       }
-      // Handle simple string conditions (for compatibility)
-      else if (typeof condition === 'string') {
-        console.log(`[PROXY] [FLOW] String condition: ${condition}`);
-        const conditionLower = condition.toLowerCase();
-        if (conditionLower === 'plan_complete' || conditionLower === 'execution_complete') {
-          console.log(`[PROXY] [FLOW] ✅ Flow condition met: ${condition} -> ${connection.to}`);
-          return connection.to;
-        } else {
-          console.log(`[PROXY] [FLOW] ❌ String condition not recognized: ${condition}`);
-        }
+
+      // Handle decision-based conditions
+      if (decision && condition && decision.toUpperCase() === condition.toUpperCase()) {
+        console.log(`[PROXY] [FLOW] ✅ Decision matches condition -> ${connection.to}`);
+        return connection.to;
       }
     }
-    
-    // Default to first connection if no specific condition matched
-    console.log(`[PROXY] No condition matched, using default: ${fromConnections[0].to}`);
+
+    // Default to first connection if no match
+    console.log(`[PROXY] [FLOW] No condition matched, using first connection: ${fromConnections[0].to}`);
     return fromConnections[0].to;
   }
 

@@ -968,7 +968,9 @@ class PipelineDesigner {
       path.setAttribute('class', 'connection-path');
       path.setAttribute('data-from', connection.from);
       path.setAttribute('data-to', connection.to);
-      path.setAttribute('data-condition', connection.condition || 'completed');
+      path.setAttribute('data-condition', typeof connection.condition === 'object'
+        ? JSON.stringify(connection.condition)
+        : (connection.condition || 'completed'));
       
       // Add connection condition label at 1/3 position to avoid overlaps in loops
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
