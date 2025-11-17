@@ -582,6 +582,65 @@ class PipelineDesigner {
     this.updateConnectionLines();
   }
 
+  centerViewportOnNodes() {
+    console.log('📹 [CENTER] centerViewportOnNodes called');
+    console.log(`📹 [CENTER] Current nodes count: ${this.nodes.size}`);
+
+    if (this.nodes.size === 0) {
+      // No nodes, center on default position (5000, 5000)
+      const canvasRect = this.canvas.parentElement.getBoundingClientRect();
+      this.panOffset.x = canvasRect.width / 2 - 5000 * this.zoom;
+      this.panOffset.y = canvasRect.height / 2 - 5000 * this.zoom;
+      console.log(`📹 [CENTER] No nodes, centering on default (5000, 5000)`);
+      console.log(`📹 [CENTER] Viewport size: ${canvasRect.width}x${canvasRect.height}`);
+      console.log(`📹 [CENTER] Pan offset set to: ${this.panOffset.x}, ${this.panOffset.y}`);
+      this.updateCanvasTransform();
+      return;
+    }
+
+    // Calculate bounding box of all nodes
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    this.nodes.forEach(node => {
+      const x = node.position.x;
+      const y = node.position.y;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + 200); // Node width ~200px
+      maxY = Math.max(maxY, y + 80);  // Node height ~80px
+    });
+
+    console.log(`📹 [CENTER] Bounding box: minX=${minX}, minY=${minY}, maxX=${maxX}, maxY=${maxY}`);
+
+    // Calculate center of bounding box
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    console.log(`📹 [CENTER] Center of nodes: ${centerX}, ${centerY}`);
+
+    // Get viewport size
+    const canvasRect = this.canvas.parentElement.getBoundingClientRect();
+    const viewportCenterX = canvasRect.width / 2;
+    const viewportCenterY = canvasRect.height / 2;
+
+    console.log(`📹 [CENTER] Viewport center: ${viewportCenterX}, ${viewportCenterY}`);
+    console.log(`📹 [CENTER] Current zoom: ${this.zoom}`);
+
+    // Calculate pan offset to center the nodes
+    this.panOffset.x = viewportCenterX - centerX * this.zoom;
+    this.panOffset.y = viewportCenterY - centerY * this.zoom;
+
+    console.log(`📹 [CENTER] Calculated pan offset: ${this.panOffset.x}, ${this.panOffset.y}`);
+
+    // Apply constraints
+    this.constrainPan();
+
+    console.log(`📹 [CENTER] After constraints pan offset: ${this.panOffset.x}, ${this.panOffset.y}`);
+
+    this.updateCanvasTransform();
+    console.log('📹 [CENTER] ✅ Camera centered on nodes');
+  }
+
   selectNode(nodeId) {
     // Remove previous selection
     document.querySelectorAll('.pipeline-node').forEach(node => {
@@ -1197,15 +1256,19 @@ class PipelineDesigner {
         // Conditional flow with explicit connections
         template.flow.connections.forEach(conn => {
           const fromId = template.stages.find(s => s.id === conn.from)?.id;
-          const toId = template.stages.find(s => s.id === conn.to)?.id;
-          if (fromId && toId) {
-            this.createConnection(fromId, toId, conn.condition || 'completed');
+          // Allow null toId for pipeline completion connections
+          const toId = conn.to === null ? null : template.stages.find(s => s.id === conn.to)?.id;
+          if (fromId && (toId !== undefined)) {
+            this.createConnection(fromId, toId, conn.condition || 'completed', conn.description);
           }
         });
       }
     }
 
     console.log(`✅ Loaded template "${template.name}" from server with ${template.stages.length} stages`);
+
+    // Center viewport on the loaded nodes
+    this.centerViewportOnNodes();
   }
 
   getStageIcon(stageType) {
@@ -1607,37 +1670,46 @@ class PipelineDesigner {
         config: node.config.config,
         position: node.position
       })),
-      connections: this.connections
+      connections: this.connections,
+      flow: {
+        type: 'conditional',
+        description: 'Each stage must complete before the next begins',
+        connections: this.connections
+      }
     };
 
     return JSON.stringify(pipeline, null, 2);
   }
 
-  createConnection(fromNodeId, toNodeId, condition = 'completed') {
+  createConnection(fromNodeId, toNodeId, condition = 'completed', description = null) {
     console.log('🔗 [CREATE] Creating connection:', {
       from: fromNodeId,
       to: toNodeId,
-      condition: condition
+      condition: condition,
+      description: description
     });
-    
+
     // Check if connection already exists
-    const existingConnection = this.connections.find(conn => 
+    const existingConnection = this.connections.find(conn =>
       conn.from === fromNodeId && conn.to === toNodeId
     );
-    
+
     if (existingConnection) {
       console.log('⚠️ [CREATE] Connection already exists, updating condition:', existingConnection);
       existingConnection.condition = condition;
+      if (description) existingConnection.description = description;
     } else {
       // Add connection to the connections array
-      this.connections.push({
+      const newConnection = {
         from: fromNodeId,
         to: toNodeId,
         condition: condition
-      });
+      };
+      if (description) newConnection.description = description;
+      this.connections.push(newConnection);
       console.log('✅ [CREATE] New connection added. Total connections:', this.connections.length);
     }
-    
+
     console.log('🔗 [CREATE] Current connections:', this.connections);
   }
 
@@ -3049,98 +3121,137 @@ function showActivePipelineReconnectUI(pipelines) {
 
 function reconnectToPipeline(pipelineId) {
   try {
+    console.log(`🔄 Reconnecting to pipeline: ${pipelineId}`);
+
+    // Close existing WebSocket if any
+    if (window.designer && window.designer.ws) {
+      window.designer.ws.close();
+    }
+
+    // Create new WebSocket connection that will be kept alive
     const ws = new WebSocket('ws://localhost:8081');
-    
+
+    // Store the WebSocket in designer object for future use
+    if (window.designer) {
+      window.designer.ws = ws;
+    }
+
     ws.onopen = () => {
-      console.log(`🔄 Reconnecting to pipeline: ${pipelineId}`);
+      console.log(`✅ WebSocket connected, sending reconnect request for ${pipelineId}`);
       ws.send(JSON.stringify({
         type: 'reconnect-pipeline',
         pipelineId: pipelineId
       }));
-      
-      ws.onmessage = (event) => {
-        try {
-          const response = JSON.parse(event.data);
-          if (response.type === 'pipeline-reconnected') {
-            console.log('🔄 Successfully reconnected to pipeline');
-            closeReconnectBanner();
-            
-            // Show execution results area
-            const resultsDiv = document.getElementById('executionResults');
-            if (resultsDiv) {
-              resultsDiv.style.display = 'block';
-              
-              // Generate chat history HTML
-              let chatHistoryHTML = '';
-              if (response.chatHistory && response.chatHistory.length > 0) {
-                chatHistoryHTML = response.chatHistory.map(msg => `
-                  <div class="chat-message ${msg.type}">
-                    <div class="message-icon">${getMessageIcon(msg.type)}</div>
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const response = JSON.parse(event.data);
+        console.log('📥 Received message:', response.type);
+
+        if (response.type === 'pipeline-reconnected') {
+          console.log('✅ Successfully reconnected to pipeline');
+          closeReconnectBanner();
+
+          // Show execution results area
+          const resultsDiv = document.getElementById('executionResults');
+          if (resultsDiv) {
+            resultsDiv.style.display = 'block';
+
+            // Generate chat history HTML
+            let chatHistoryHTML = '';
+            if (response.chatHistory && response.chatHistory.length > 0) {
+              chatHistoryHTML = response.chatHistory.map(msg => `
+                <div class="chat-message ${msg.type}">
+                  <div class="message-icon">${getMessageIcon(msg.type)}</div>
+                  <div class="message-content">
+                    <div class="message-header">
+                      <span class="message-agent">${msg.title || 'System'}</span>
+                      <span class="message-timestamp">${new Date(msg.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="message-text">${msg.message}</div>
+                    ${msg.details ? `<div class="message-details">${msg.details}</div>` : ''}
+                  </div>
+                </div>
+              `).join('');
+            }
+
+            const pipelineInfo = response.pipelineData ? response.pipelineData : {};
+            const pipelineName = pipelineInfo.name || 'Reconnected Pipeline';
+
+            resultsDiv.innerHTML = `
+              <div class="execution-results-header" onclick="toggleExecutionResults()">
+                <div class="execution-results-title">
+                  <span>🔄</span>
+                  ${pipelineName}
+                </div>
+                <div class="execution-results-controls">
+                  <span class="results-toggle" id="resultsToggleIcon">📖</span>
+                </div>
+              </div>
+              <div class="execution-results-content" id="executionResultsContent">
+                <div class="chat-container" id="chatContainer">
+                  <div class="chat-message system">
+                    <div class="message-icon">🔄</div>
                     <div class="message-content">
                       <div class="message-header">
-                        <span class="message-agent">${msg.title || 'System'}</span>
-                        <span class="message-timestamp">${new Date(msg.timestamp).toLocaleTimeString()}</span>
+                        <span class="message-agent">System</span>
+                        <span class="message-timestamp">${new Date().toLocaleTimeString()}</span>
                       </div>
-                      <div class="message-text">${msg.message}</div>
-                      ${msg.details ? `<div class="message-details">${msg.details}</div>` : ''}
+                      <div class="message-text">Successfully reconnected to running pipeline</div>
+                      <div class="message-details">Pipeline ID: ${pipelineId}</div>
                     </div>
                   </div>
-                `).join('');
-              }
-              
-              const pipelineInfo = response.pipelineData ? response.pipelineData : {};
-              const pipelineName = pipelineInfo.name || 'Reconnected Pipeline';
-              
-              resultsDiv.innerHTML = `
-                <div class="execution-results-header" onclick="toggleExecutionResults()">
-                  <div class="execution-results-title">
-                    <span>🔄</span>
-                    ${pipelineName}
-                  </div>
-                  <div class="execution-results-controls">
-                    <span class="results-toggle" id="resultsToggleIcon">📖</span>
-                  </div>
+                  ${chatHistoryHTML}
                 </div>
-                <div class="execution-results-content" id="executionResultsContent">
-                  <div class="chat-container" id="chatContainer">
-                    <div class="chat-message system">
-                      <div class="message-icon">🔄</div>
-                      <div class="message-content">
-                        <div class="message-header">
-                          <span class="message-agent">System</span>
-                          <span class="message-timestamp">${new Date().toLocaleTimeString()}</span>
-                        </div>
-                        <div class="message-text">Successfully reconnected to running pipeline</div>
-                        <div class="message-details">Pipeline ID: ${pipelineId}</div>
-                      </div>
-                    </div>
-                    ${chatHistoryHTML}
-                  </div>
-                </div>
-              `;
-              resultsDiv.classList.add('expanded');
-              
-              // Set up the global designer variable to point to existing chat container
-              if (window.designer) {
-                window.designer.chatContainer = document.getElementById('chatContainer');
-              }
+              </div>
+            `;
+            resultsDiv.classList.add('expanded');
+
+            // Set up the global designer variable to point to existing chat container
+            if (window.designer) {
+              window.designer.chatContainer = document.getElementById('chatContainer');
+              window.designer.currentPipelineId = pipelineId;
             }
-          } else if (response.type === 'pipeline-reconnect-failed') {
-            console.error('🔄 Failed to reconnect:', response.error);
-            alert(`Failed to reconnect to pipeline: ${response.error}`);
           }
-        } catch (error) {
-          console.error('Error parsing reconnect response:', error);
+
+          // DO NOT close WebSocket - keep it alive for pipeline updates!
+
+        } else if (response.type === 'pipeline-reconnect-failed') {
+          console.error('❌ Failed to reconnect:', response.error);
+          alert(`Failed to reconnect to pipeline: ${response.error}`);
+          ws.close();
+
+        } else if (response.type === 'pipeline-update' || response.type === 'pipeline-stage-update') {
+          // Handle ongoing pipeline updates after reconnection
+          console.log('📊 Pipeline update received');
+          if (window.designer && window.designer.handlePipelineUpdate) {
+            window.designer.handlePipelineUpdate(response);
+          }
+
+        } else if (response.type === 'pipeline-completed') {
+          console.log('🏁 Pipeline completed');
+          if (window.designer && window.designer.handlePipelineComplete) {
+            window.designer.handlePipelineComplete(response);
+          }
         }
-        ws.close();
-      };
+      } catch (error) {
+        console.error('Error parsing message:', error);
+      }
     };
-    
-    ws.onerror = () => {
-      console.error('🔄 Failed to connect for pipeline reconnection');
+
+    ws.onerror = (error) => {
+      console.error('❌ WebSocket error:', error);
+      alert('Failed to connect to proxy server. Make sure it\'s running on port 8081.');
     };
+
+    ws.onclose = () => {
+      console.log('🔌 WebSocket connection closed');
+    };
+
   } catch (error) {
     console.error('Error reconnecting to pipeline:', error);
+    alert(`Error: ${error.message}`);
   }
 }
 
@@ -3295,6 +3406,101 @@ function closeReconnectBanner() {
 // Global functions for toolbar actions
 function loadTemplate() {
   designer.loadTemplate('claude-plus-v1');
+}
+
+async function generatePipelineFromPrompt() {
+  const promptInput = document.getElementById('pipelineGeneratorPrompt');
+  const statusDiv = document.getElementById('generationStatus');
+  const generateBtn = document.getElementById('generatePipelineBtn');
+
+  const userPrompt = promptInput.value.trim();
+
+  if (!userPrompt) {
+    alert('Please enter a description of the pipeline you want to create');
+    return;
+  }
+
+  // Show loading status
+  statusDiv.style.display = 'block';
+  statusDiv.className = 'generation-status loading';
+  statusDiv.innerHTML = '🔄 Connecting to Claude Code to generate your pipeline...';
+  generateBtn.disabled = true;
+
+  try {
+    // Create WebSocket connection to proxy
+    const ws = new WebSocket('ws://localhost:8081');
+
+    ws.onopen = () => {
+      console.log('[GENERATOR] Connected to proxy');
+      statusDiv.innerHTML = '✨ Claude Code is analyzing your request and creating the pipeline...';
+
+      // Load existing templates and agents to provide as context
+      const templateContext = window.loadedTemplates ? JSON.stringify(window.loadedTemplates[0] || {}, null, 2) : '{}';
+      const agentContext = window.loadedAgents ? JSON.stringify(window.loadedAgents[0] || {}, null, 2) : '{}';
+
+      // Send pipeline generation request
+      ws.send(JSON.stringify({
+        type: 'pipeline-generation-request',
+        userPrompt: userPrompt,
+        context: {
+          templateExample: templateContext,
+          agentExample: agentContext
+        }
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('[GENERATOR] Message received:', message.type);
+
+        if (message.type === 'pipeline-generation-status') {
+          statusDiv.innerHTML = `⚙️ ${message.content}`;
+        } else if (message.type === 'pipeline-generation-complete') {
+          statusDiv.className = 'generation-status success';
+          statusDiv.innerHTML = `✅ Pipeline generated successfully!<br><br>` +
+            `<strong>Template:</strong> ${message.template.name}<br>` +
+            `<strong>Agents Created:</strong> ${message.agents.length}<br><br>` +
+            `The template and agents have been saved and are now available in the sidebar.`;
+
+          // Reload templates and agents to show the new ones
+          setTimeout(() => {
+            loadTemplatesFromServer();
+            loadAgentsFromServer();
+            promptInput.value = '';
+          }, 1000);
+
+          ws.close();
+        } else if (message.type === 'pipeline-generation-error') {
+          statusDiv.className = 'generation-status error';
+          statusDiv.innerHTML = `❌ Generation failed: ${message.error}`;
+          ws.close();
+        }
+      } catch (err) {
+        console.error('[GENERATOR] Error parsing message:', err);
+        statusDiv.className = 'generation-status error';
+        statusDiv.innerHTML = `❌ Error: ${err.message}`;
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('[GENERATOR] WebSocket error:', error);
+      statusDiv.className = 'generation-status error';
+      statusDiv.innerHTML = '❌ Could not connect to proxy server. Make sure it\'s running on port 8081.';
+      generateBtn.disabled = false;
+    };
+
+    ws.onclose = () => {
+      console.log('[GENERATOR] Connection closed');
+      generateBtn.disabled = false;
+    };
+
+  } catch (error) {
+    console.error('[GENERATOR] Error:', error);
+    statusDiv.className = 'generation-status error';
+    statusDiv.innerHTML = `❌ Error: ${error.message}`;
+    generateBtn.disabled = false;
+  }
 }
 
 function savePipeline() {
