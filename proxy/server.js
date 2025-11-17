@@ -2718,15 +2718,24 @@ Your commentary:`;
       console.log(`[PROXY] [FLOW] Evaluating connection ${i}: ${connection.from} -> ${connection.to}`);
       console.log(`[PROXY] [FLOW] Condition: "${condition}"`);
 
-      // Handle auto-complete conditions (stage completion, no decision needed)
-      if (condition && condition.toLowerCase().endsWith('_complete')) {
-        console.log(`[PROXY] [FLOW] ✅ Auto-complete condition matched -> ${connection.to}`);
-        return connection.to;
-      }
-
-      // Handle decision-based conditions
+      // FIRST: Handle decision-based conditions (explicit DECISION: lines take priority)
       if (decision && condition && decision.toUpperCase() === condition.toUpperCase()) {
         console.log(`[PROXY] [FLOW] ✅ Decision matches condition -> ${connection.to}`);
+        return connection.to;
+      }
+    }
+
+    // SECOND: If no explicit decision matched, check for auto-complete conditions
+    for (let i = 0; i < fromConnections.length; i++) {
+      const connection = fromConnections[i];
+      const condition = typeof connection.condition === 'object'
+        ? connection.condition.value
+        : connection.condition;
+
+      // Handle auto-complete conditions (stage completion, no decision needed)
+      // Only use this if there was NO explicit decision
+      if (!decision && condition && condition.toLowerCase().endsWith('_complete')) {
+        console.log(`[PROXY] [FLOW] ✅ Auto-complete condition matched (no decision) -> ${connection.to}`);
         return connection.to;
       }
     }
