@@ -613,32 +613,58 @@ class ClaudeProxy {
 
           // Try to load execution log
           const executionLogPath = path.join(baseDir, 'proxy/pipelines', `${message.pipelineId}_execution.json`);
+          const stageOutputs = {}; // Store all stage outputs
+
           if (fs.existsSync(executionLogPath)) {
             const executionLog = fs.readFileSync(executionLogPath, 'utf8');
             const events = executionLog.trim().split('\n').map(line => JSON.parse(line));
 
-            // Convert execution events to chat history
+            // Convert execution events to chat history AND collect stage outputs
             for (const event of events) {
               if (event.eventType === 'stage_completed') {
+                // Store the full output for this stage
+                stageOutputs[event.stageId] = {
+                  stageName: event.stageName,
+                  agent: event.agent,
+                  output: event.output || '',
+                  prompt: event.prompt || '',
+                  outputLength: event.outputLength,
+                  promptLength: event.promptLength,
+                  timestamp: event.timestamp
+                };
+
                 chatHistory.push({
                   type: 'success',
                   title: `${event.stageName} COMPLETED`,
                   message: `✅ Stage completed successfully`,
-                  details: `Agent: ${event.agent}\nOutput: ${event.outputLength} characters`,
-                  timestamp: event.timestamp
+                  details: `Agent: ${event.agent}\nOutput: ${event.outputLength} characters\nPrompt: ${event.promptLength} characters`,
+                  timestamp: event.timestamp,
+                  output: event.output,
+                  prompt: event.prompt
                 });
               } else if (event.eventType === 'stage_started') {
                 chatHistory.push({
                   type: 'info',
                   title: `${event.stageName} STARTED`,
                   message: `🔄 Processing with ${event.agent}`,
-                  timestamp: event.timestamp
+                  timestamp: event.timestamp,
+                  prompt: event.prompt
                 });
               } else if (event.eventType === 'stage_error') {
                 chatHistory.push({
                   type: 'error',
                   title: `${event.stageName} ERROR`,
                   message: `❌ ${event.error}`,
+                  timestamp: event.timestamp,
+                  error: event.error,
+                  stack: event.stack
+                });
+              } else if (event.eventType === 'stage_routed') {
+                chatHistory.push({
+                  type: 'info',
+                  title: 'ROUTING',
+                  message: `➡️ ${event.fromStage} → ${event.toStage}`,
+                  details: `Decision: ${event.decision}\n${event.reasoning}`,
                   timestamp: event.timestamp
                 });
               }
@@ -653,7 +679,8 @@ class ClaudeProxy {
           pipelineId: message.pipelineId,
           status: 'Connected to running pipeline',
           pipelineData: pipelineData,
-          chatHistory: chatHistory
+          chatHistory: chatHistory,
+          stageOutputs: stageOutputs // Include all stage outputs
         }));
       } else {
         // Check for file-based pipeline states (like CEREBRO)
@@ -2164,8 +2191,8 @@ Your commentary:`;
     setImmediate(async () => {
       try {
         const commentary = await this.generateCommentary(context, workingDir);
-        
-        ws.send(JSON.stringify({
+
+        const commentaryMessage = JSON.stringify({
           type: 'pipeline-commentary', // Different type so it doesn't interfere with status
           content: {
             timestamp: new Date().toISOString(),
@@ -2176,7 +2203,14 @@ Your commentary:`;
             priority: 'high', // Mark as important
             persistent: true   // Should stay visible longer
           }
-        }));
+        });
+
+        // Broadcast to all connected clients (including pipeline monitors)
+        this.clients.forEach(client => {
+          if (client.readyState === 1) { // WebSocket.OPEN = 1
+            client.send(commentaryMessage);
+          }
+        });
       } catch (error) {
         console.error('[PROXY] Background commentary failed:', error);
       }
@@ -2209,7 +2243,7 @@ Your commentary:`;
       if (fs.existsSync(currentPath)) {
         const stateData = fs.readFileSync(currentPath, 'utf8');
         const pipelineState = JSON.parse(stateData);
-        
+
         // Only return if pipeline is actually running
         if (pipelineState.status === 'running') {
           console.log(`[PROXY] Found running pipeline: ${pipelineState.name}`);
@@ -2219,6 +2253,90 @@ Your commentary:`;
       return null;
     } catch (error) {
       console.error('[PROXY] Failed to load pipeline state:', error);
+      return null;
+    }
+  }
+
+  async autoCommitPipelineChanges(pipelineState, workingDir) {
+    try {
+      console.log(`[PROXY] [AUTO-COMMIT] Checking for changes to commit in ${workingDir}`);
+
+      // Check if working directory is a git repository
+      const { execSync } = require('child_process');
+
+      try {
+        execSync('git rev-parse --git-dir', { cwd: workingDir, stdio: 'pipe' });
+      } catch (err) {
+        console.log(`[PROXY] [AUTO-COMMIT] Not a git repository: ${workingDir}`);
+        return;
+      }
+
+      // Check if there are any changes
+      let statusOutput;
+      try {
+        statusOutput = execSync('git status --porcelain', { cwd: workingDir, encoding: 'utf8' });
+      } catch (err) {
+        console.error(`[PROXY] [AUTO-COMMIT] Failed to check git status:`, err.message);
+        return;
+      }
+
+      if (!statusOutput || statusOutput.trim().length === 0) {
+        console.log(`[PROXY] [AUTO-COMMIT] No changes to commit`);
+        return;
+      }
+
+      console.log(`[PROXY] [AUTO-COMMIT] Changes detected, creating commit...`);
+
+      // Generate commit message based on pipeline results
+      const pipelineName = pipelineState.name || 'Pipeline';
+      const completedStages = pipelineState.completedStages || [];
+      const totalStages = completedStages.length;
+
+      // Build a summary of what was done
+      let commitMessage = `Pipeline auto-commit: ${pipelineName}\n\n`;
+      commitMessage += `Completed ${totalStages} stage${totalStages !== 1 ? 's' : ''}:\n`;
+
+      // Add completed stages to commit message
+      completedStages.forEach((stageId, index) => {
+        const stage = pipelineState.stages?.find(s => s.id === stageId);
+        const stageName = stage?.name || stageId;
+        commitMessage += `${index + 1}. ${stageName}\n`;
+      });
+
+      commitMessage += `\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n`;
+      commitMessage += `Co-Authored-By: Claude <noreply@anthropic.com>`;
+
+      // Stage all modified files
+      try {
+        execSync('git add -u', { cwd: workingDir, stdio: 'pipe' });
+        console.log(`[PROXY] [AUTO-COMMIT] Staged modified files`);
+      } catch (err) {
+        console.error(`[PROXY] [AUTO-COMMIT] Failed to stage files:`, err.message);
+        return;
+      }
+
+      // Create commit
+      try {
+        execSync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
+          cwd: workingDir,
+          stdio: 'pipe'
+        });
+        console.log(`[PROXY] [AUTO-COMMIT] ✅ Commit created successfully`);
+
+        // Get the commit hash
+        const commitHash = execSync('git rev-parse --short HEAD', {
+          cwd: workingDir,
+          encoding: 'utf8'
+        }).trim();
+        console.log(`[PROXY] [AUTO-COMMIT] Commit hash: ${commitHash}`);
+
+        return commitHash;
+      } catch (err) {
+        console.error(`[PROXY] [AUTO-COMMIT] Failed to create commit:`, err.message);
+        return null;
+      }
+    } catch (error) {
+      console.error(`[PROXY] [AUTO-COMMIT] Error during auto-commit:`, error.message);
       return null;
     }
   }
@@ -2372,9 +2490,6 @@ Your commentary:`;
           }
         }));
 
-        // Send commentator update for stage start  
-        await this.sendCommentaryUpdate(ws, `Stage starting: ${stage.name} (${stage.agent}). Agent type: ${stage.type}. Task: ${stage.description}`, workingDir);
-
         // Build input for this stage
         let stageInput = userContext;
         const stageInputs = stage.inputs || stage.config?.inputs || [];
@@ -2387,6 +2502,10 @@ Your commentary:`;
             }
           });
         }
+
+        // Send commentator update for stage start with inputs context
+        const inputSummary = stageInput ? `Input preview: ${stageInput.substring(0, 400)}...` : 'No input context';
+        await this.sendCommentaryUpdate(ws, `Stage "${stage.name}" starting. Agent: ${stage.agent}. Task: ${stage.description}. ${inputSummary}`, workingDir);
         
         // DEBUG: Log what input each agent is receiving
         console.log(`[PROXY] [DEBUG] Agent ${stage.agent} receiving input (${stageInput.length} chars): ${stageInput.substring(0, 200)}...`);
@@ -2598,15 +2717,17 @@ Your commentary:`;
           }
         }));
 
-        // Send commentator update for stage completion
-        await this.sendCommentaryUpdate(ws, `Stage completed: ${stage.name} finished successfully. Output length: ${result?.length || 0} characters. Moving to next stage.`, workingDir);
-
         // Determine next stage based on conditional flow
         console.log(`[PROXY] [FLOW] Stage ${stage.id} completed. Determining next stage...`);
         console.log(`[PROXY] [FLOW] Stage result length: ${result?.length || 0} characters`);
         console.log(`[PROXY] [FLOW] Stage result preview: ${result?.substring(0, 200)}...`);
-        
+
         const decision = this.extractDecision(result);
+
+        // Send commentator update for stage completion with actual content
+        const resultPreview = result?.substring(0, 500) || '';
+        const contextInfo = `Stage "${stage.name}" (${stage.agent}) completed. Decision: ${decision || 'none'}. Output preview: ${resultPreview}`;
+        await this.sendCommentaryUpdate(ws, contextInfo, workingDir);
         const nextStageId = this.determineNextStage(pipeline, stage.id, result);
         console.log(`[PROXY] [FLOW] Next stage determined: ${nextStageId}`);
 
@@ -2668,6 +2789,25 @@ Your commentary:`;
       duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime),
       finalResults: Object.keys(results)
     });
+
+    // Auto-commit changes if working on a git repository
+    try {
+      const commitHash = await this.autoCommitPipelineChanges(pipelineState, workingDir);
+      if (commitHash) {
+        console.log(`[PROXY] Pipeline changes committed: ${commitHash}`);
+
+        // Notify client about the commit
+        ws.send(JSON.stringify({
+          type: 'pipeline-commit',
+          pipelineId: pipelineState.id,
+          commitHash,
+          message: `Pipeline changes automatically committed: ${commitHash}`
+        }));
+      }
+    } catch (commitError) {
+      console.error('[PROXY] Failed to auto-commit pipeline changes:', commitError);
+      // Don't fail the pipeline if commit fails - just log it
+    }
 
     return Object.values(results).join('\n\n---\n\n');
   }
