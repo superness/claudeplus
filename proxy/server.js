@@ -1,7 +1,10 @@
 const WebSocket = require('ws');
+const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const InfographicGenerator = require('./infographic-generator');
+const BrowserAutomationService = require('./browser-automation-service');
 
 // Create log file and override console.log
 const logFile = path.join(__dirname, 'proxy.log');
@@ -16,7 +19,13 @@ console.log = function(...args) {
 
 class ClaudeProxy {
   constructor() {
-    this.wss = new WebSocket.Server({ port: 8081 });
+    // Create HTTP server first
+    this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
+    this.httpServer.listen(8081);
+
+    // Attach WebSocket server to HTTP server
+    this.wss = new WebSocket.Server({ server: this.httpServer });
+
     this.claudeProcess = null;
     this.clients = new Set();
     this.conversationHistory = new Map(); // Track conversation per client
@@ -26,13 +35,211 @@ class ClaudeProxy {
     this.pipelinesDataDir = path.join(__dirname, 'pipelines'); // Directory for pipeline data files
     this.templatesDir = path.join(__dirname, '..', 'templates'); // Directory for template JSON files
     this.agentsDir = path.join(__dirname, '..', 'agents'); // Directory for agent JSON files
+    this.pipelineInfographics = new Map(); // Track infographic generators per pipeline
+    this.infographicsDir = path.join(__dirname, 'pipeline-infographics'); // Infographics output directory
+    this.browserAutomation = null; // Browser automation service instance
+    this.browserSessions = new Map(); // Track browser sessions per pipeline/client
 
     this.initializePipelineStorage();
     this.initializeTemplateStorage();
     this.initializeAgentStorage();
     this.setupWebSocketServer();
     this.loadActivePipelines(); // Load pipelines from disk
-    console.log('Claude Proxy Server running on port 8081');
+    console.log('Claude Proxy Server running on port 8081 (HTTP + WebSocket)');
+  }
+
+  handleHttpRequest(req, res) {
+    // Enable CORS for cross-origin requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    // Browser automation HTTP endpoints
+    if (req.url === '/browser-init' && req.method === 'POST') {
+      this.handleBrowserInit(req, res);
+      return;
+    }
+
+    if (req.url.startsWith('/browser-') && req.method === 'POST') {
+      this.handleBrowserCommand(req, res);
+      return;
+    }
+
+    // API endpoint to list available infographics
+    if (req.url === '/list-infographics' && req.method === 'GET') {
+      try {
+        const infographics = [];
+
+        if (fs.existsSync(this.infographicsDir)) {
+          const pipelineDirs = fs.readdirSync(this.infographicsDir);
+
+          pipelineDirs.forEach(pipelineId => {
+            const pipelineDir = path.join(this.infographicsDir, pipelineId);
+            const stats = fs.statSync(pipelineDir);
+
+            // Skip files, only process directories
+            if (!stats.isDirectory()) return;
+
+            // Get all run directories
+            const runDirs = fs.readdirSync(pipelineDir)
+              .filter(name => name.startsWith('run_'))
+              .map(runDir => {
+                const runPath = path.join(pipelineDir, runDir);
+                const infographicPath = path.join(runPath, 'infographic.html');
+                const runStats = fs.statSync(runPath);
+
+                if (fs.existsSync(infographicPath)) {
+                  return {
+                    runDir,
+                    timestamp: runDir.replace('run_', ''),
+                    path: infographicPath,
+                    modified: runStats.mtime
+                  };
+                }
+                return null;
+              })
+              .filter(run => run !== null)
+              .sort((a, b) => b.modified - a.modified); // Most recent first
+
+            if (runDirs.length === 0) return;
+
+            // Get pipeline name from execution log
+            let pipelineName = pipelineId;
+            let status = 'unknown';
+
+            try {
+              const executionLogPath = path.join(this.pipelinesDataDir, `${pipelineId}_execution.json`);
+              if (fs.existsSync(executionLogPath)) {
+                const executionLog = JSON.parse(fs.readFileSync(executionLogPath, 'utf8'));
+                const events = executionLog.events || [];
+
+                if (events.length > 0) {
+                  const lastEvent = events[events.length - 1];
+                  if (lastEvent.eventType === 'pipeline_completed') {
+                    status = 'completed';
+                  } else if (lastEvent.eventType === 'stage_error') {
+                    status = 'error';
+                  } else {
+                    status = 'running';
+                  }
+
+                  if (lastEvent.pipelineName) {
+                    pipelineName = lastEvent.pipelineName;
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(`[PROXY] Could not read execution log for ${pipelineId}:`, err.message);
+            }
+
+            // Add pipeline with all runs
+            const indexPath = path.join(pipelineDir, 'index.html');
+            const httpBase = path.join(__dirname, '..');  // Parent of proxy/ where HTTP server runs
+            const relativeIndexPath = path.relative(httpBase, indexPath);
+            const relativeLatestRunPath = path.relative(httpBase, runDirs[0].path);
+
+            infographics.push({
+              id: pipelineId,
+              name: pipelineName,
+              indexPath: fs.existsSync(indexPath) ? `http://localhost:3005/${relativeIndexPath.replace(/\\/g, '/')}` : null,
+              latestRunPath: `http://localhost:3005/${relativeLatestRunPath.replace(/\\/g, '/')}`,
+              totalRuns: runDirs.length,
+              status: status,
+              lastModified: runDirs[0].modified.toISOString(),
+              runs: runDirs.map(run => {
+                const relativeRunPath = path.relative(httpBase, run.path);
+                return {
+                  timestamp: run.timestamp,
+                  path: `http://localhost:3005/${relativeRunPath.replace(/\\/g, '/')}`,
+                  modified: run.modified.toISOString()
+                };
+              })
+            });
+          });
+        }
+
+        // Sort by last modified (newest first)
+        infographics.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ infographics }));
+      } catch (error) {
+        console.error('[PROXY] Error listing infographics:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // API endpoint to get current pipeline state
+    if (req.url === '/api/pipeline-state' && req.method === 'GET') {
+      try {
+        const currentStatePath = path.join(__dirname, 'pipeline-states', 'current.json');
+
+        if (fs.existsSync(currentStatePath)) {
+          const state = JSON.parse(fs.readFileSync(currentStatePath, 'utf8'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(state));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({}));
+        }
+      } catch (error) {
+        console.error('[PROXY] Error reading pipeline state:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // API endpoint to get recent execution events
+    if (req.url.startsWith('/api/recent-events') && req.method === 'GET') {
+      try {
+        const url = new URL(req.url, `http://localhost:8081`);
+        const limit = parseInt(url.searchParams.get('limit') || '10');
+
+        // Find the most recent execution log
+        let allEvents = [];
+
+        if (fs.existsSync(this.pipelinesDataDir)) {
+          const executionFiles = fs.readdirSync(this.pipelinesDataDir)
+            .filter(f => f.endsWith('_execution.json'))
+            .map(f => ({
+              name: f,
+              path: path.join(this.pipelinesDataDir, f),
+              mtime: fs.statSync(path.join(this.pipelinesDataDir, f)).mtime
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+          // Read the most recent execution log
+          if (executionFiles.length > 0) {
+            const logData = JSON.parse(fs.readFileSync(executionFiles[0].path, 'utf8'));
+            allEvents = logData.events || [];
+          }
+        }
+
+        // Return most recent events
+        const recentEvents = allEvents.slice(-limit).reverse();
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(recentEvents));
+      } catch (error) {
+        console.error('[PROXY] Error reading execution events:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // Default: upgrade to WebSocket
+    res.writeHead(426, { 'Content-Type': 'text/plain' });
+    res.end('This service requires WebSocket connection');
   }
 
   setupWebSocketServer() {
@@ -75,6 +282,91 @@ class ClaudeProxy {
     });
   }
 
+
+  async handleBrowserInit(req, res) {
+    try {
+      if (!this.browserAutomation) {
+        this.browserAutomation = new BrowserAutomationService();
+        await this.browserAutomation.start();
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ready', message: 'Browser automation initialized' }));
+    } catch (error) {
+      console.error('[PROXY] Browser init failed:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  async handleBrowserCommand(req, res) {
+    let body = '';
+
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+      try {
+        if (!this.browserAutomation) {
+          throw new Error('Browser automation not initialized. Call /browser-init first.');
+        }
+
+        const args = body ? JSON.parse(body) : {};
+        const command = req.url.replace('/browser-', '');
+        let result;
+
+        switch (command) {
+          case 'launch':
+            result = await this.browserAutomation.launchBrowser(args);
+            result = { sessionId: result };
+            break;
+
+          case 'navigate':
+            result = await this.browserAutomation.navigate(args.sessionId, args.url, args.waitUntil);
+            break;
+
+          case 'click':
+            result = await this.browserAutomation.click(args.sessionId, args.selector, args.timeout);
+            break;
+
+          case 'type':
+            result = await this.browserAutomation.type(args.sessionId, args.selector, args.text, args.delay);
+            break;
+
+          case 'evaluate':
+            result = await this.browserAutomation.evaluate(args.sessionId, args.script);
+            break;
+
+          case 'screenshot':
+            result = await this.browserAutomation.screenshot(args.sessionId, args.path, args.options);
+            break;
+
+          case 'get-console-logs':
+            result = await this.browserAutomation.getConsoleLogs(args.sessionId, args.filter, args.clear);
+            break;
+
+          case 'clear-console-logs':
+            result = await this.browserAutomation.clearConsoleLogs(args.sessionId);
+            break;
+
+          case 'close':
+            result = await this.browserAutomation.closeBrowser(args.sessionId);
+            break;
+
+          default:
+            throw new Error(`Unknown browser command: ${command}`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, result }));
+      } catch (error) {
+        console.error('[PROXY] Browser command failed:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message, stack: error.stack }));
+      }
+    });
+  }
 
   async handleClientMessage(message, ws) {
     if (message.type === 'get-system-metrics') {
@@ -224,10 +516,11 @@ class ClaudeProxy {
       try {
         const fs = require('fs');
         const path = require('path');
-        
-        // Check both proxy/pipelines and output/.pipeline-state directories
+
+        // Check proxy/pipeline-states, proxy/pipelines, and output/.pipeline-state directories
         const baseDir = this.baseDirectory || '/mnt/c/github/claudeplus';
         const pipelineStateDirs = [
+          path.join(baseDir, 'proxy/pipeline-states'),
           path.join(baseDir, 'proxy/pipelines'),
           path.join(baseDir, 'output/.pipeline-state')
         ];
@@ -244,16 +537,35 @@ class ClaudeProxy {
                 // Only include if status is 'running' and not already in activePipelines
                 if (pipelineState.status === 'running' && !activePipelineList.find(p => p.id === pipelineState.pipelineId || p.id === pipelineState.id)) {
                   const pipelineId = pipelineState.pipelineId || pipelineState.id;
-                  activePipelineList.push({
-                    id: pipelineId,
-                    prompt: pipelineState.userContext || pipelineState.name || 'Running pipeline',
-                    startTime: pipelineState.startTime,
-                    status: pipelineState.status,
-                    progress: `${pipelineState.completedStages?.length || 0}/${pipelineState.totalStages || 0} stages completed`,
-                    currentStage: pipelineState.currentStage,
-                    name: pipelineState.name,
-                    template: pipelineState.template
-                  });
+
+                  // Verify the process is actually running by checking PID
+                  let processIsAlive = false;
+                  if (pipelineState.pid) {
+                    try {
+                      // Check if process exists (kill with signal 0 doesn't kill, just checks)
+                      process.kill(pipelineState.pid, 0);
+                      processIsAlive = true;
+                      console.log(`[PROXY] Pipeline ${pipelineId} has alive process: ${pipelineState.pid}`);
+                    } catch (e) {
+                      console.log(`[PROXY] Pipeline ${pipelineId} process ${pipelineState.pid} is dead`);
+                      processIsAlive = false;
+                    }
+                  }
+
+                  // Only include if process is actually alive
+                  if (processIsAlive) {
+                    activePipelineList.push({
+                      id: pipelineId,
+                      prompt: pipelineState.userContext || pipelineState.name || 'Running pipeline',
+                      startTime: pipelineState.startTime,
+                      status: pipelineState.status,
+                      progress: `${pipelineState.completedStages?.length || 0}/${pipelineState.totalStages || 0} stages completed`,
+                      currentStage: pipelineState.currentStage,
+                      name: pipelineState.name,
+                      template: pipelineState.template,
+                      pid: pipelineState.pid
+                    });
+                  }
                 }
               } catch (err) {
                 console.warn(`[PROXY] Error reading pipeline state file ${file}:`, err.message);
@@ -272,23 +584,86 @@ class ClaudeProxy {
       
     } else if (message.type === 'reconnect-pipeline') {
       console.log(`[PROXY] Client reconnecting to pipeline: ${message.pipelineId}`);
-      
+
       if (this.activePipelines.has(message.pipelineId)) {
         this.pipelineClients.set(message.pipelineId, ws);
-        
+
+        // Load pipeline state and chat history
+        const chatHistory = [];
+        let pipelineData = null;
+
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const baseDir = this.baseDirectory || '/mnt/c/github/claudeplus';
+
+          // Try to load pipeline state file
+          const pipelineStateDirs = [
+            path.join(baseDir, 'proxy/pipeline-states'),
+            path.join(baseDir, 'proxy/pipelines')
+          ];
+
+          for (const stateDir of pipelineStateDirs) {
+            const filePath = path.join(stateDir, `${message.pipelineId}.json`);
+            if (fs.existsSync(filePath)) {
+              pipelineData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              break;
+            }
+          }
+
+          // Try to load execution log
+          const executionLogPath = path.join(baseDir, 'proxy/pipelines', `${message.pipelineId}_execution.json`);
+          if (fs.existsSync(executionLogPath)) {
+            const executionLog = fs.readFileSync(executionLogPath, 'utf8');
+            const events = executionLog.trim().split('\n').map(line => JSON.parse(line));
+
+            // Convert execution events to chat history
+            for (const event of events) {
+              if (event.eventType === 'stage_completed') {
+                chatHistory.push({
+                  type: 'success',
+                  title: `${event.stageName} COMPLETED`,
+                  message: `✅ Stage completed successfully`,
+                  details: `Agent: ${event.agent}\nOutput: ${event.outputLength} characters`,
+                  timestamp: event.timestamp
+                });
+              } else if (event.eventType === 'stage_started') {
+                chatHistory.push({
+                  type: 'info',
+                  title: `${event.stageName} STARTED`,
+                  message: `🔄 Processing with ${event.agent}`,
+                  timestamp: event.timestamp
+                });
+              } else if (event.eventType === 'stage_error') {
+                chatHistory.push({
+                  type: 'error',
+                  title: `${event.stageName} ERROR`,
+                  message: `❌ ${event.error}`,
+                  timestamp: event.timestamp
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`[PROXY] Error loading pipeline data for reconnect:`, err.message);
+        }
+
         ws.send(JSON.stringify({
           type: 'pipeline-reconnected',
           pipelineId: message.pipelineId,
-          status: 'Connected to running pipeline'
+          status: 'Connected to running pipeline',
+          pipelineData: pipelineData,
+          chatHistory: chatHistory
         }));
       } else {
         // Check for file-based pipeline states (like CEREBRO)
         try {
           const fs = require('fs');
           const path = require('path');
-          
+
           const baseDir = this.baseDirectory || '/mnt/c/github/claudeplus';
           const pipelineStateDirs = [
+            path.join(baseDir, 'proxy/pipeline-states'),
             path.join(baseDir, 'proxy/pipelines'),
             path.join(baseDir, 'output/.pipeline-state')
           ];
@@ -314,7 +689,7 @@ class ClaudeProxy {
             // Load any existing outputs/chat history for this pipeline
             const chatHistory = [];
             try {
-              const outputDir = path.join(this.baseDirectory, 'output');
+              const outputDir = path.join(baseDir, 'output');
               
               // Add pipeline status information
               chatHistory.push({
@@ -576,14 +951,19 @@ class ClaudeProxy {
       try {
         // Execute pipeline directly without multi-agent wrapper
         let workingDir = message.workingDirectory || message.pipeline?.globalConfig?.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
-        
+
+        // Trim whitespace from working directory path
+        if (workingDir) {
+          workingDir = workingDir.trim();
+        }
+
         // Convert Windows paths to WSL paths if needed
         if (workingDir && workingDir.match(/^[A-Z]:\\/)) {
           const originalPath = workingDir;
           workingDir = workingDir.replace(/^([A-Z]):\\/, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
           console.log(`[PROXY] Converted pipeline working directory: ${originalPath} -> ${workingDir}`);
         }
-        
+
         console.log(`[PROXY] Using working directory for pipeline: ${workingDir}`);
 
         // Send status update to client
@@ -607,6 +987,124 @@ class ClaudeProxy {
         ws.send(JSON.stringify({
           type: 'pipeline-error',
           content: error.message,
+          stack: error.stack
+        }));
+      }
+
+    } else if (message.type === 'browser-automation-init') {
+      console.log('[PROXY] Initializing browser automation service');
+
+      try {
+        if (!this.browserAutomation) {
+          this.browserAutomation = new BrowserAutomationService();
+          await this.browserAutomation.start();
+        }
+
+        ws.send(JSON.stringify({
+          type: 'browser-automation-ready',
+          message: 'Browser automation service initialized'
+        }));
+      } catch (error) {
+        console.error('[PROXY] Browser automation init failed:', error);
+        ws.send(JSON.stringify({
+          type: 'browser-automation-error',
+          error: error.message
+        }));
+      }
+
+    } else if (message.type === 'browser-automation-command') {
+      console.log(`[PROXY] Browser automation command: ${message.command}`);
+
+      try {
+        if (!this.browserAutomation) {
+          throw new Error('Browser automation not initialized. Send browser-automation-init first.');
+        }
+
+        let result;
+
+        switch (message.command) {
+          case 'launch':
+            result = await this.browserAutomation.launchBrowser(message.args || {});
+            // Store session for this client
+            this.browserSessions.set(ws, result);
+            break;
+
+          case 'navigate':
+            result = await this.browserAutomation.navigate(
+              message.sessionId || this.browserSessions.get(ws),
+              message.args.url,
+              message.args.waitUntil
+            );
+            break;
+
+          case 'click':
+            result = await this.browserAutomation.click(
+              message.sessionId || this.browserSessions.get(ws),
+              message.args.selector,
+              message.args.timeout
+            );
+            break;
+
+          case 'type':
+            result = await this.browserAutomation.type(
+              message.sessionId || this.browserSessions.get(ws),
+              message.args.selector,
+              message.args.text,
+              message.args.delay
+            );
+            break;
+
+          case 'evaluate':
+            result = await this.browserAutomation.evaluate(
+              message.sessionId || this.browserSessions.get(ws),
+              message.args.script
+            );
+            break;
+
+          case 'screenshot':
+            result = await this.browserAutomation.screenshot(
+              message.sessionId || this.browserSessions.get(ws),
+              message.args.path,
+              message.args.options
+            );
+            break;
+
+          case 'getConsoleLogs':
+            result = await this.browserAutomation.getConsoleLogs(
+              message.sessionId || this.browserSessions.get(ws),
+              message.args.filter,
+              message.args.clear
+            );
+            break;
+
+          case 'clearConsoleLogs':
+            result = await this.browserAutomation.clearConsoleLogs(
+              message.sessionId || this.browserSessions.get(ws)
+            );
+            break;
+
+          case 'close':
+            result = await this.browserAutomation.closeBrowser(
+              message.sessionId || this.browserSessions.get(ws)
+            );
+            this.browserSessions.delete(ws);
+            break;
+
+          default:
+            throw new Error(`Unknown browser automation command: ${message.command}`);
+        }
+
+        ws.send(JSON.stringify({
+          type: 'browser-automation-result',
+          command: message.command,
+          result
+        }));
+      } catch (error) {
+        console.error(`[PROXY] Browser automation command failed:`, error);
+        ws.send(JSON.stringify({
+          type: 'browser-automation-error',
+          command: message.command,
+          error: error.message,
           stack: error.stack
         }));
       }
@@ -639,7 +1137,7 @@ class ClaudeProxy {
         }));
 
         // Process directly with Claude
-        const response = await this.sendToClaude(contextualMessage);
+        const response = await this.sendToClaude(contextualMessage, ws);
 
         // Store this exchange in history
         history.push({
@@ -661,13 +1159,437 @@ class ClaudeProxy {
           content: `Claude processing error: ${error.message}`
         }));
       }
+    } else if (message.type === 'pipeline-monitor-init') {
+      console.log('[PROXY] Pipeline monitor initialized');
+
+      // Send back system context confirmation
+      ws.send(JSON.stringify({
+        type: 'assistant-message',
+        content: 'Pipeline monitor ready. I have full context of the system architecture and know where to find all logs and states.'
+      }));
+
+    } else if (message.type === 'pipeline-monitor-query') {
+      console.log(`[PROXY] Monitor query: ${message.message}`);
+
+      try {
+        // Get or initialize conversation history for this monitor client
+        const history = this.conversationHistory.get(ws) || [];
+
+        // Build conversation context if we have history
+        let conversationContext = '';
+        if (message.history && message.history.length > 0) {
+          conversationContext = '\n\nPREVIOUS CONVERSATION:\n';
+          conversationContext += message.history.slice(-10).map(h => {
+            if (h.role === 'user') {
+              return `User: ${h.content}`;
+            } else if (h.role === 'assistant') {
+              return `Assistant: ${h.content}`;
+            }
+            return '';
+          }).filter(Boolean).join('\n\n');
+          conversationContext += '\n\n';
+        }
+
+        // Build specialized context for pipeline monitoring
+        const monitorContext = `PIPELINE MONITOR QUERY
+
+Working Directory: /mnt/c/github/claudeplus
+
+Your specialized role: You are monitoring the Claude Plus pipeline system. Answer questions about:
+- Pipeline status and execution
+- Error analysis from structured logs
+- Agent states and completions
+- System health
+${conversationContext}
+Current User Question: ${message.message}
+
+IMPORTANT INSTRUCTIONS:
+1. Check structured execution logs FIRST: proxy/pipelines/*_execution.json
+2. Use 'tail -n 100' to read recent log entries
+3. Parse JSON for specific error events, stage completions, routing decisions
+4. Check current pipeline state: proxy/pipeline-states/current.json
+5. Only check proxy/proxy.log as LAST RESORT (it's 30k+ lines)
+6. Be concise and actionable
+7. Focus on answering the specific question
+8. Remember previous conversation context to provide relevant follow-up answers
+
+Common commands you should use:
+- tail -n 100 /mnt/c/github/claudeplus/proxy/pipelines/<pipeline>_execution.json
+- cat /mnt/c/github/claudeplus/proxy/pipeline-states/current.json
+- ls -lt /mnt/c/github/claudeplus/proxy/pipeline-states/
+- grep "stage_error" /mnt/c/github/claudeplus/proxy/pipelines/*_execution.json
+
+Answer the question directly and concisely.`;
+
+        // Get working directory
+        const workingDir = '/mnt/c/github/claudeplus';
+
+        // Send to Claude with monitor context
+        const response = await this.sendToClaude(monitorContext, ws);
+
+        // Store this exchange in history
+        history.push({
+          user: message.message,
+          assistant: response
+        });
+        this.conversationHistory.set(ws, history);
+
+        // Send response back
+        ws.send(JSON.stringify({
+          type: 'assistant-message',
+          content: response
+        }));
+
+      } catch (error) {
+        console.error('[PROXY] Monitor query error:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: `Error processing query: ${error.message}`
+        }));
+      }
+
+    } else if (message.type === 'game-dev-studio-init') {
+      console.log('[PROXY] Game Dev Studio initialized');
+      console.log(`[PROXY] Working directory: ${message.workingDirectory}`);
+
+      // Set working directory
+      if (message.workingDirectory) {
+        this.workingDirectory.set(ws, message.workingDirectory);
+      }
+
+      // Send back confirmation
+      ws.send(JSON.stringify({
+        type: 'assistant-message',
+        content: `Game Dev Studio ready! I'm set up to work on your game project at: ${message.workingDirectory}\n\nI can run pipelines, implement features, and modify this interface. What would you like to build?`
+      }));
+
+    } else if (message.type === 'game-dev-studio-query') {
+      console.log(`[PROXY] Game Dev Studio query: ${message.message}`);
+
+      try {
+        // Get or initialize conversation history
+        const history = this.conversationHistory.get(ws) || [];
+
+        // Build conversation context
+        let conversationContext = '';
+        if (message.history && message.history.length > 0) {
+          conversationContext = '\n\nPREVIOUS CONVERSATION:\n';
+          conversationContext += message.history.slice(-10).map(h => {
+            if (h.role === 'user') {
+              return `User: ${h.content}`;
+            } else if (h.role === 'assistant') {
+              return `Assistant: ${h.content}`;
+            }
+            return '';
+          }).filter(Boolean).join('\n\n');
+          conversationContext += '\n\n';
+        }
+
+        // Detect if user wants to modify THIS interface (game-dev-studio.html)
+        const wantsToModifyStudioInterface = /\b(modify|change|update|edit|improve)\s+(this|the)?\s*(interface|studio)/i.test(message.message);
+
+        // Build specialized context
+        let studioContext = `GAME DEV STUDIO - Pipeline Interface Helper
+
+Working Directory: ${message.workingDirectory}
+
+Your specialized role: You are a helper interface between the user and the meta game development pipeline system.
+
+CRITICAL RULES:
+- Your ONLY job is to help users run pipelines on their game project
+- You do NOT directly edit game files yourself
+- You do NOT implement features yourself
+- You ARE the interface layer that translates user requests into pipeline executions
+
+What you DO:
+1. Listen to what the user wants to build/fix/improve in their game
+2. Frame their request appropriately for the pipeline system
+3. Execute the pipeline with their request
+4. Report progress and results back to them
+
+What you DON'T DO:
+- Don't use Edit/Write/Bash tools on the game project files
+- Don't implement game features directly
+- Don't suggest they do it themselves
+${conversationContext}
+Current User Request: ${message.message}
+
+IMPORTANT INSTRUCTIONS:`;
+
+        if (wantsToModifyStudioInterface) {
+          studioContext += `
+
+USER WANTS TO MODIFY THIS INTERFACE (game-dev-studio.html)
+
+This is the ONLY exception where you directly edit files - when they want to change THIS interface.
+
+1. Read the current game-dev-studio.html file at /mnt/c/github/claudeplus/game-dev-studio.html
+2. Understand what changes the user wants
+3. Use the Edit or Write tool to modify the HTML/CSS/JavaScript
+4. Explain what you changed and why
+5. Tell them to refresh their browser to see changes
+
+Be creative and implement their requested changes to the interface!`;
+
+        } else {
+          studioContext += `
+
+USER GAME REQUEST - ALWAYS USE PIPELINE
+
+For ANY request about the game (questions, development, changes, etc.), you ALWAYS run the pipeline.
+
+Your ONLY job:
+1. Take whatever the user said
+2. Wordsmith it into a clear, detailed prompt for the pipeline
+3. Output the pipeline execution request in the special format below
+4. The proxy will detect it and execute the pipeline automatically
+
+HOW TO EXECUTE A PIPELINE:
+
+Output this exact format:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "dev-cycle-meta-v1",
+  "userPrompt": "<your reworded/detailed version of their request>",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Then add a brief message to the user explaining what you're doing.
+
+Examples:
+
+User: "Tell me about ship fitting"
+Your response:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "dev-cycle-meta-v1",
+  "userPrompt": "The user wants to understand how the ship fitting system works in the game. Review the ship fitting code, examine the implementation, and provide a detailed explanation of the system's features, how it works, and what capabilities it has.",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Running the meta development pipeline to analyze and explain the ship fitting system...
+
+---
+
+User: "make the ship faster"
+Your response:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "dev-cycle-meta-v1",
+  "userPrompt": "The user wants to increase the ship's speed. Review the current ship movement code, identify the speed parameter, and increase it to make the ship move faster. Test the change to ensure it works properly.",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Running the meta development pipeline to increase ship speed...
+
+---
+
+CRITICAL RULES:
+- EVERY request must output [PIPELINE-EXECUTE]...[/PIPELINE-EXECUTE]
+- ALWAYS use "dev-cycle-meta-v1" as the pipelineName
+- DO NOT use Read/Write/Edit/Bash tools on game files
+- DO NOT answer questions directly - let the pipeline handle it
+- Just wordsmith the prompt and output the execution request`;
+        }
+
+        studioContext += `
+
+Remember: You're working in a game development context. Be creative, helpful, and proactive about suggesting pipelines or modifications!`;
+
+        // Get working directory
+        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+
+        // Send to Claude with game dev context
+        const response = await this.sendToClaude(studioContext, ws);
+
+        // Store exchange in history
+        history.push({
+          user: message.message,
+          assistant: response
+        });
+        this.conversationHistory.set(ws, history);
+
+        // Send response back
+        ws.send(JSON.stringify({
+          type: 'assistant-message',
+          content: response
+        }));
+
+      } catch (error) {
+        console.error('[PROXY] Game Dev Studio query error:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: `Error processing query: ${error.message}`
+        }));
+      }
+
     } else if (message.type === 'execute-single-agent') {
       console.log(`[PROXY] Single agent execution not available - system removed`);
-      
+
       ws.send(JSON.stringify({
         type: 'error',
         content: 'Single agent execution feature has been removed'
       }));
+    } else if (message.type === 'pipeline-generation-request') {
+      console.log(`[PROXY] Pipeline generation request received`);
+      console.log(`[PROXY] User prompt: ${message.userPrompt}`);
+
+      try {
+        // Send status update
+        ws.send(JSON.stringify({
+          type: 'pipeline-generation-status',
+          content: 'Starting Claude Code to generate your pipeline...'
+        }));
+
+        // Build the system prompt for Claude Code
+        const systemPrompt = `You are a Pipeline and Agent Generator. Your job is to create a complete pipeline template JSON and all necessary agent JSON files based on the user's natural language description.
+
+USER REQUEST:
+${message.userPrompt}
+
+TEMPLATE SCHEMA (use this as reference):
+${message.context.templateExample}
+
+AGENT SCHEMA (use this as reference):
+${message.context.agentExample}
+
+IMPORTANT INSTRUCTIONS:
+1. Create a pipeline template JSON with:
+   - Unique id (lowercase with hyphens)
+   - Descriptive name
+   - Clear description
+   - List of stages (each stage needs: id, name, type, agent, description)
+   - Each stage should have "inputs" array listing stage IDs it depends on
+   - Stages that make decisions should have "decisions" array with choice and description
+
+2. Create proper flow.connections array:
+   - CRITICAL: Connections use SIMPLE STRING CONDITIONS, not JavaScript expressions
+   - Each connection needs: "from" (stage id), "to" (stage id or null), "condition" (simple string), "description"
+   - Condition strings should match the decision "choice" values from the stage's decisions array
+   - Use simple keywords like: "APPROVED", "REJECTED", "NEEDS_FIXES", "complete", "ready", etc.
+   - DO NOT use JavaScript expressions like "output.confidence > 0.7" - these will NOT work
+   - For unconditional transitions, use simple keywords like "complete" or "ready"
+   - End-of-pipeline connections should have "to": null
+   - Example valid conditions: "APPROVED", "REJECTED", "plan_complete", "execution_complete"
+   - Example INVALID conditions: "planning.output.confidence > 0.7", "validation.output.success === true"
+
+3. Create all agent JSON files referenced in the pipeline with:
+   - Unique id matching the agent references in stages
+   - Clear systemPrompt or system_prompt_template
+   - Appropriate type (planner, executor, validator, analyzer, reviewer, etc.)
+   - Capabilities list
+   - Each agent's prompt should end with "DECISION: [keyword]" matching the condition strings
+   - For reviewer/validator agents, ensure decision keywords match connection conditions
+
+4. Output your response in this EXACT format:
+
+=== TEMPLATE ===
+{
+  "id": "template-id",
+  "name": "Template Name",
+  ...complete template JSON...
+}
+
+=== AGENT: agent_id_1 ===
+{
+  "id": "agent_id_1",
+  "name": "Agent Name",
+  ...complete agent JSON...
+}
+
+=== AGENT: agent_id_2 ===
+{
+  "id": "agent_id_2",
+  ...complete agent JSON...
+}
+
+5. Make sure all stage.agent references in the template match the agent IDs you create.
+6. Create meaningful, functional prompts for each agent that end with "DECISION: [keyword]".
+7. Ensure connection conditions match the decision keywords from agent prompts.
+
+EXAMPLE OF CORRECT CONNECTION FORMAT:
+{
+  "flow": {
+    "type": "conditional",
+    "connections": [
+      {
+        "from": "planner",
+        "to": "reviewer",
+        "condition": "plan_complete",
+        "description": "Plan is complete, send to reviewer"
+      },
+      {
+        "from": "reviewer",
+        "to": "executor",
+        "condition": "APPROVED",
+        "description": "Reviewer approved, execute the plan"
+      },
+      {
+        "from": "reviewer",
+        "to": "planner",
+        "condition": "REJECTED",
+        "description": "Reviewer rejected, revise the plan"
+      },
+      {
+        "from": "executor",
+        "to": null,
+        "condition": "complete",
+        "description": "Execution complete, end pipeline"
+      }
+    ]
+  }
+}
+
+Note: The reviewer stage would have decisions: [{"choice": "APPROVED", ...}, {"choice": "REJECTED", ...}]
+
+Generate the complete pipeline system now:`;
+
+        // Execute Claude Code to generate the pipeline
+        const response = await this.executeClaudeWithMCP(
+          'pipeline_generator',
+          systemPrompt,
+          message.userPrompt,
+          process.cwd()
+        );
+
+        console.log(`[PROXY] Claude Code response received, length: ${response.length}`);
+
+        // Parse the response to extract template and agents
+        const parsedResults = this.parsePipelineGenerationResponse(response);
+
+        if (parsedResults.template && parsedResults.agents.length > 0) {
+          // Save template to templates directory
+          const templateSaved = this.saveTemplate(parsedResults.template);
+
+          // Save all agents to agents directory
+          const agentsSaved = parsedResults.agents.map(agent => this.saveAgent(agent));
+
+          if (templateSaved && agentsSaved.every(saved => saved)) {
+            ws.send(JSON.stringify({
+              type: 'pipeline-generation-complete',
+              template: parsedResults.template,
+              agents: parsedResults.agents
+            }));
+
+            console.log(`[PROXY] Pipeline generation successful: ${parsedResults.template.id}, ${parsedResults.agents.length} agents`);
+          } else {
+            throw new Error('Failed to save template or agents to disk');
+          }
+        } else {
+          throw new Error('Could not parse template or agents from Claude Code response');
+        }
+
+      } catch (error) {
+        console.error('[PROXY] Pipeline generation error:', error);
+        ws.send(JSON.stringify({
+          type: 'pipeline-generation-error',
+          error: error.message,
+          stack: error.stack
+        }));
+      }
     } // DISABLED: Dragon-vision system disabled
     // else if (message.type === 'dragon-command') {
     //   console.log(`[PROXY] 🐉 Dragon command received:`, message.content);
@@ -703,14 +1625,18 @@ class ClaudeProxy {
     return content;
   }
 
-  async sendToClaude(message) {
+  async sendToClaude(message, ws = null) {
     console.log(`[PROXY] Attempting to send message to Claude: "${message}"`);
     try {
+      // Save 'this' context for use in callbacks
+      const self = this;
+
       return new Promise((resolve, reject) => {
         console.log('[PROXY] Spawning claude process...');
         const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
           cwd: process.cwd(),
-          stdio: ['pipe', 'pipe', 'pipe']
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: process.env
         });
 
         let output = '';
@@ -732,11 +1658,71 @@ class ClaudeProxy {
           console.log(`[PROXY] Claude process closed with code: ${code}`);
           console.log(`[PROXY] Final output: "${output}"`);
           console.log(`[PROXY] Final error: "${errorOutput}"`);
-          
+
           if (code !== 0) {
             resolve(`Error: ${errorOutput || 'Claude process failed'}`);
           } else {
-            resolve(output || 'No response from Claude');
+            // Check if output contains a pipeline execution request
+            const pipelineRequestMatch = output.match(/\[PIPELINE-EXECUTE\]([\s\S]*?)\[\/PIPELINE-EXECUTE\]/);
+
+            if (pipelineRequestMatch) {
+              try {
+                const pipelineRequest = JSON.parse(pipelineRequestMatch[1].trim());
+                console.log(`[PROXY] Detected pipeline execution request:`, pipelineRequest);
+
+                // Extract the user-facing message (everything after the JSON block)
+                const userMessage = output.replace(/\[PIPELINE-EXECUTE\][\s\S]*?\[\/PIPELINE-EXECUTE\]/, '').trim();
+
+                // Execute the pipeline asynchronously (don't wait)
+                self.executePipeline(
+                  pipelineRequest.pipelineName,
+                  pipelineRequest.userPrompt,
+                  pipelineRequest.workingDirectory,
+                  ws
+                ).then(pipelineResult => {
+                  console.log(`[PROXY] Pipeline completed, sending results back to Game Dev Studio`);
+
+                  // Now send the pipeline results to Claude to format a response for the user
+                  const resultMessage = `PIPELINE EXECUTION COMPLETE
+
+The ${pipelineRequest.pipelineName} pipeline has finished executing.
+
+Original user request: ${message}
+
+Pipeline output:
+${pipelineResult}
+
+Your job now: Review the pipeline output and provide a helpful, conversational response to the user explaining what was done or what was found. Be concise and friendly.`;
+
+                  self.sendToClaude(resultMessage, ws).then(finalResponse => {
+                    // Send final response to user
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                      ws.send(JSON.stringify({
+                        type: 'assistant-message',
+                        content: finalResponse
+                      }));
+                    }
+                  });
+
+                }).catch(err => {
+                  console.error(`[PROXY] Pipeline execution failed:`, err);
+                  if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                      type: 'assistant-message',
+                      content: `Pipeline execution failed: ${err.message || err}`
+                    }));
+                  }
+                });
+
+                // Return immediate acknowledgment message
+                resolve(userMessage || `Running ${pipelineRequest.pipelineName} pipeline...`);
+              } catch (e) {
+                console.error(`[PROXY] Failed to parse pipeline request:`, e);
+                resolve(output || 'No response from Claude');
+              }
+            } else {
+              resolve(output || 'No response from Claude');
+            }
           }
         });
 
@@ -816,6 +1802,48 @@ class ClaudeProxy {
     }
   }
 
+  // Comprehensive execution history logging
+  logPipelineExecution(pipelineId, eventType, eventData) {
+    try {
+      const executionLogPath = path.join(this.pipelinesDataDir, `${pipelineId}_execution.json`);
+
+      // Load existing execution log or create new one
+      let executionLog = {
+        pipelineId: pipelineId,
+        startTime: new Date().toISOString(),
+        events: []
+      };
+
+      if (fs.existsSync(executionLogPath)) {
+        const existingData = fs.readFileSync(executionLogPath, 'utf8');
+        executionLog = JSON.parse(existingData);
+      }
+
+      // Add new event
+      const event = {
+        timestamp: new Date().toISOString(),
+        eventType: eventType,
+        ...eventData
+      };
+
+      executionLog.events.push(event);
+      executionLog.lastUpdated = new Date().toISOString();
+
+      // Save updated log
+      fs.writeFileSync(executionLogPath, JSON.stringify(executionLog, null, 2));
+      console.log(`[PROXY] [EXECUTION-LOG] ${pipelineId}: ${eventType}`);
+
+      // Update real-time infographic
+      const infographic = this.pipelineInfographics.get(pipelineId);
+      if (infographic) {
+        infographic.processEvent(event);
+        console.log(`[PROXY] [INFOGRAPHIC] Updated HTML infographic for ${pipelineId}`);
+      }
+    } catch (error) {
+      console.error(`[PROXY] Error logging pipeline execution for ${pipelineId}:`, error);
+    }
+  }
+
   loadPipelineData(pipelineId) {
     try {
       const filePath = path.join(this.pipelinesDataDir, `${pipelineId}.json`);
@@ -830,17 +1858,39 @@ class ClaudeProxy {
   }
 
   deletePipelineData(pipelineId) {
+    let deleted = false;
     try {
+      // Delete from proxy/pipelines directory
       const filePath = path.join(this.pipelinesDataDir, `${pipelineId}.json`);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         console.log(`[PROXY] Deleted pipeline data file: ${pipelineId}`);
-        return true;
+        deleted = true;
+      }
+
+      // Also delete from proxy/pipeline-states directory
+      const baseDir = this.baseDirectory || '/mnt/c/github/claudeplus';
+      const stateFilePath = path.join(baseDir, 'proxy/pipeline-states', `${pipelineId}.json`);
+      if (fs.existsSync(stateFilePath)) {
+        fs.unlinkSync(stateFilePath);
+        console.log(`[PROXY] Deleted pipeline state file: ${pipelineId}`);
+        deleted = true;
+      }
+
+      // If this was current.json, also delete it
+      const currentFilePath = path.join(baseDir, 'proxy/pipeline-states', 'current.json');
+      if (fs.existsSync(currentFilePath)) {
+        const currentState = JSON.parse(fs.readFileSync(currentFilePath, 'utf8'));
+        if (currentState.id === pipelineId) {
+          fs.unlinkSync(currentFilePath);
+          console.log(`[PROXY] Deleted current pipeline state`);
+          deleted = true;
+        }
       }
     } catch (error) {
       console.error(`[PROXY] Error deleting pipeline data for ${pipelineId}:`, error);
     }
-    return false;
+    return deleted;
   }
 
   loadActivePipelines() {
@@ -1023,6 +2073,45 @@ class ClaudeProxy {
     }
   }
 
+  parsePipelineGenerationResponse(response) {
+    console.log(`[PROXY] Parsing pipeline generation response...`);
+
+    const results = {
+      template: null,
+      agents: []
+    };
+
+    try {
+      // Extract template section
+      const templateMatch = response.match(/=== TEMPLATE ===\s*([\s\S]*?)(?=\n=== AGENT:|$)/);
+      if (templateMatch && templateMatch[1]) {
+        const templateJson = templateMatch[1].trim();
+        results.template = JSON.parse(templateJson);
+        console.log(`[PROXY] Parsed template: ${results.template.id}`);
+      }
+
+      // Extract all agent sections
+      const agentMatches = response.matchAll(/=== AGENT: ([\w_-]+) ===\s*([\s\S]*?)(?=\n=== AGENT:|$)/g);
+      for (const match of agentMatches) {
+        const agentId = match[1];
+        const agentJson = match[2].trim();
+        try {
+          const agent = JSON.parse(agentJson);
+          results.agents.push(agent);
+          console.log(`[PROXY] Parsed agent: ${agentId}`);
+        } catch (err) {
+          console.error(`[PROXY] Failed to parse agent ${agentId}:`, err);
+        }
+      }
+
+      console.log(`[PROXY] Parsing complete: ${results.template ? 'template OK' : 'no template'}, ${results.agents.length} agents`);
+      return results;
+    } catch (error) {
+      console.error(`[PROXY] Error parsing pipeline generation response:`, error);
+      return results;
+    }
+  }
+
   async generateCommentary(context, workingDir) {
     try {
       const commentatorPrompt = `You are providing real-time status updates for a pipeline execution system.
@@ -1134,6 +2223,30 @@ Your commentary:`;
     }
   }
 
+  async executePipeline(pipelineName, userPrompt, workingDir, ws) {
+    console.log(`[PROXY] Loading and executing pipeline: ${pipelineName}`);
+
+    try {
+      // Load the pipeline template
+      const templatePath = path.join(this.templatesDir, `${pipelineName}.json`);
+
+      if (!fs.existsSync(templatePath)) {
+        throw new Error(`Pipeline template not found: ${pipelineName}`);
+      }
+
+      const pipelineTemplate = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
+
+      console.log(`[PROXY] Loaded pipeline template: ${pipelineTemplate.name}`);
+
+      // Execute the pipeline with the user prompt as context
+      return await this.executePipelineStages(pipelineTemplate, userPrompt, workingDir, ws);
+
+    } catch (error) {
+      console.error(`[PROXY] Failed to execute pipeline ${pipelineName}:`, error);
+      throw error;
+    }
+  }
+
   async executePipelineStages(pipeline, userContext, workingDir, ws) {
     console.log(`[PROXY] Executing ${pipeline.stages?.length || 0} stages for pipeline: ${pipeline.name}`);
 
@@ -1143,6 +2256,7 @@ Your commentary:`;
       name: pipeline.name,
       startTime: new Date().toISOString(),
       stages: pipeline.stages,
+      connections: pipeline.flow?.connections || pipeline.connections || [],
       userContext,
       workingDir,
       currentStageIndex: 0,
@@ -1153,6 +2267,33 @@ Your commentary:`;
 
     // Save initial pipeline state
     await this.savePipelineState(pipelineState);
+
+    // Initialize infographic generator for real-time HTML reporting
+    const infographic = new InfographicGenerator(pipelineState.id, pipeline.name);
+    this.pipelineInfographics.set(pipelineState.id, infographic);
+    console.log(`[PROXY] Infographic initialized: ${infographic.getInfographicPath()}`);
+
+    // Generate index page for all runs of this pipeline
+    const indexPath = InfographicGenerator.generatePipelineIndex(pipelineState.id);
+    if (indexPath) {
+      console.log(`[PROXY] Pipeline index updated: ${indexPath}`);
+    }
+
+    // Send infographic URL to client
+    ws.send(JSON.stringify({
+      type: 'infographic-ready',
+      pipelineId: pipelineState.id,
+      infographicPath: infographic.getInfographicPath(),
+      infographicUrl: `file://${infographic.getInfographicPath()}`
+    }));
+
+    // Send pipeline started notification for game dev studio
+    ws.send(JSON.stringify({
+      type: 'pipeline-started',
+      pipelineId: pipelineState.id,
+      pipelineName: pipeline.name,
+      totalStages: pipeline.stages?.length || 0
+    }));
 
     // Send initial commentary
     await this.sendCommentaryUpdate(ws, `A new pipeline execution is starting: "${pipeline.name}" with ${pipeline.stages?.length || 0} stages. The system is about to begin processing.`, workingDir);
@@ -1176,11 +2317,21 @@ Your commentary:`;
     }
 
     const results = {};
-    
+
+    // Log pipeline initialization
+    this.logPipelineExecution(pipelineState.id, 'pipeline_initialized', {
+      pipelineName: pipeline.name,
+      userContext: userContext,
+      workingDir: workingDir,
+      totalStages: pipeline.stages.length,
+      stageNames: pipeline.stages.map(s => s.name),
+      connections: pipeline.flow?.connections || pipeline.connections || []
+    });
+
     // Execute stages with conditional flow
     const stageMap = {};
     pipeline.stages.forEach(stage => stageMap[stage.id] = stage);
-    
+
     let currentStageId = pipeline.stages[0]?.id; // Start with first stage
     let executionCount = 0;
     const maxExecutions = 20; // Prevent infinite loops
@@ -1192,7 +2343,18 @@ Your commentary:`;
       executionCount++;
       try {
         console.log(`[PROXY] Executing stage: ${stage.name} (${stage.agent})`);
-        
+
+        // Log stage start
+        this.logPipelineExecution(pipelineState.id, 'stage_started', {
+          executionNumber: executionCount,
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          stageType: stage.type,
+          description: stage.description,
+          inputs: stage.inputs || []
+        });
+
         // Update pipeline state
         pipelineState.currentStageIndex = executionCount - 1;
         pipelineState.currentStage = stage.name;
@@ -1243,10 +2405,90 @@ Your commentary:`;
           });
         }
 
+        // CHECK FOR SUB-PIPELINE EXECUTION
+        if (stage.type === 'sub_pipeline' && stage.config && stage.config.pipeline) {
+          console.log(`[PROXY] Sub-pipeline detected: ${stage.config.pipeline}`);
+
+          // Load the sub-pipeline template
+          const subPipelinePath = path.join(__dirname, '..', 'templates', `${stage.config.pipeline}.json`);
+          if (!fs.existsSync(subPipelinePath)) {
+            throw new Error(`Sub-pipeline template not found: ${stage.config.pipeline}`);
+          }
+
+          const subPipelineTemplate = JSON.parse(fs.readFileSync(subPipelinePath, 'utf8'));
+          console.log(`[PROXY] Loaded sub-pipeline: ${subPipelineTemplate.name} with ${subPipelineTemplate.stages.length} stages`);
+
+          // Send notification that we're entering sub-pipeline
+          ws.send(JSON.stringify({
+            type: 'pipeline-status',
+            content: {
+              timestamp: new Date().toISOString(),
+              agent: 'SUB_PIPELINE',
+              type: 'sub-pipeline-start',
+              message: `Entering sub-pipeline: ${subPipelineTemplate.name}`,
+              subPipeline: subPipelineTemplate.name,
+              style: 'focused'
+            }
+          }));
+
+          await this.sendCommentaryUpdate(ws, `🔀 Entering sub-pipeline: "${subPipelineTemplate.name}". This pipeline has ${subPipelineTemplate.stages.length} stages and will execute nested within the current pipeline.`, workingDir);
+
+          // Execute the sub-pipeline recursively with inherited context
+          const subPipelineContext = stage.config.inheritContext ? stageInput : userContext;
+          const subPipelineResult = await this.executePipelineStages(subPipelineTemplate, subPipelineContext, workingDir, ws);
+
+          // Store sub-pipeline result
+          results[stage.id] = JSON.stringify({
+            subPipeline: subPipelineTemplate.name,
+            subPipelineId: subPipelineTemplate.id,
+            result: subPipelineResult,
+            status: 'completed'
+          });
+
+          // Send notification that sub-pipeline completed
+          ws.send(JSON.stringify({
+            type: 'pipeline-status',
+            content: {
+              timestamp: new Date().toISOString(),
+              agent: 'SUB_PIPELINE',
+              type: 'sub-pipeline-complete',
+              message: `Sub-pipeline completed: ${subPipelineTemplate.name}`,
+              subPipeline: subPipelineTemplate.name,
+              style: 'success'
+            }
+          }));
+
+          await this.sendCommentaryUpdate(ws, `✅ Sub-pipeline "${subPipelineTemplate.name}" completed successfully. Returning to meta-pipeline.`, workingDir);
+
+          // Log sub-pipeline execution
+          this.logPipelineExecution(pipelineState.id, 'sub_pipeline_completed', {
+            executionNumber: executionCount,
+            stageId: stage.id,
+            stageName: stage.name,
+            subPipelineId: subPipelineTemplate.id,
+            subPipelineName: subPipelineTemplate.name,
+            subPipelineStages: subPipelineTemplate.stages.length
+          });
+
+          // Mark stage completed
+          pipelineState.completedStages.push(stage.id);
+          await this.savePipelineState(pipelineState);
+
+          // Continue to next stage based on "complete" decision
+          const decision = 'complete';
+          const connections = pipeline.flow?.connections || pipeline.connections || [];
+          const matchingConnection = connections.find(conn =>
+            conn.from === stage.id && conn.condition === decision
+          );
+
+          currentStageId = matchingConnection?.to || null;
+          continue; // Skip to next iteration
+        }
+
         // Load agent config
         const agentPath = path.join(__dirname, '..', 'agents', `${stage.agent}.json`);
         let agentPrompt = `You are ${stage.agent.toUpperCase()}. Complete your task.`;
-        
+
         if (fs.existsSync(agentPath)) {
           const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
           
@@ -1297,10 +2539,24 @@ Your commentary:`;
 
         // DEBUG: Log what prompt is being sent
         console.log(`[PROXY] [DEBUG] Agent ${stage.agent} final prompt (${agentPrompt.length} chars): ${agentPrompt.substring(0, 300)}...`);
-        
-        // Execute Claude with MCP
-        const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir);
+
+        // Execute Claude with MCP, passing pipeline state to save PID
+        const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
         results[stage.id] = result;
+
+        // Log stage completion with full output and prompt
+        this.logPipelineExecution(pipelineState.id, 'stage_completed', {
+          executionNumber: executionCount,
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          prompt: agentPrompt,  // Full prompt sent to agent
+          promptLength: agentPrompt.length,
+          outputLength: result?.length || 0,
+          output: result,  // Full output stored for analysis
+          completedStagesCount: pipelineState.completedStages.length + 1,
+          totalExecutions: executionCount
+        });
 
         // Send agent output to UI
         ws.send(JSON.stringify({
@@ -1331,6 +2587,17 @@ Your commentary:`;
           }
         }));
 
+        // Send pipeline update for game dev studio
+        ws.send(JSON.stringify({
+          type: 'pipeline-update',
+          message: `Completed: ${stage.name}`,
+          progress: {
+            current: pipelineState.completedStages.length,
+            total: pipeline.stages.length,
+            currentStage: stage.name
+          }
+        }));
+
         // Send commentator update for stage completion
         await this.sendCommentaryUpdate(ws, `Stage completed: ${stage.name} finished successfully. Output length: ${result?.length || 0} characters. Moving to next stage.`, workingDir);
 
@@ -1339,14 +2606,32 @@ Your commentary:`;
         console.log(`[PROXY] [FLOW] Stage result length: ${result?.length || 0} characters`);
         console.log(`[PROXY] [FLOW] Stage result preview: ${result?.substring(0, 200)}...`);
         
+        const decision = this.extractDecision(result);
         const nextStageId = this.determineNextStage(pipeline, stage.id, result);
         console.log(`[PROXY] [FLOW] Next stage determined: ${nextStageId}`);
-        
+
+        // Log routing decision
+        this.logPipelineExecution(pipelineState.id, 'stage_routed', {
+          fromStage: stage.id,
+          toStage: nextStageId,
+          decision: decision,
+          reasoning: decision ? `Decision "${decision}" matched connection condition` : 'No decision found, using default routing'
+        });
+
         currentStageId = nextStageId;
         
       } catch (error) {
         console.error(`[PROXY] Stage ${stage.name} failed:`, error);
-        
+
+        // Log stage error
+        this.logPipelineExecution(pipelineState.id, 'stage_error', {
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          error: error.message,
+          stack: error.stack
+        });
+
         ws.send(JSON.stringify({
           type: 'pipeline-status',
           content: {
@@ -1357,7 +2642,7 @@ Your commentary:`;
             style: 'critical'
           }
         }));
-        
+
         throw error;
       }
     }
@@ -1366,6 +2651,23 @@ Your commentary:`;
     pipelineState.status = 'completed';
     pipelineState.endTime = new Date().toISOString();
     await this.savePipelineState(pipelineState);
+
+    // Send pipeline completed notification for game dev studio
+    ws.send(JSON.stringify({
+      type: 'pipeline-completed',
+      pipelineId: pipelineState.id,
+      pipelineName: pipeline.name,
+      totalStages: pipelineState.completedStages.length,
+      duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime)
+    }));
+
+    // Log pipeline completion
+    this.logPipelineExecution(pipelineState.id, 'pipeline_completed', {
+      totalStagesRun: pipelineState.completedStages.length,
+      completedStages: pipelineState.completedStages,
+      duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime),
+      finalResults: Object.keys(results)
+    });
 
     return Object.values(results).join('\n\n---\n\n');
   }
@@ -1449,7 +2751,8 @@ Your commentary:`;
       console.log(`[PROXY] [FLOW] Line ${i}: "${line}"`);
       
       // Handle both plain and markdown-formatted decisions
-      const match = line.match(/^\*{0,2}\s*DECISION:\s*(.+?)\*{0,2}$/i);
+      // Extract only the decision keyword (stops at first non-word character like space, parenthesis, etc.)
+      const match = line.match(/^\*{0,2}\s*DECISION:\s*(\w+)/i);
       if (match) {
         const decision = match[1].trim().toUpperCase();
         console.log(`[PROXY] [FLOW] ✅ Found decision: "${decision}"`);
@@ -1461,7 +2764,7 @@ Your commentary:`;
     return null;
   }
 
-  async executeClaudeWithMCP(agentName, prompt, input, workingDir) {
+  async executeClaudeWithMCP(agentName, prompt, input, workingDir, pipelineState = null) {
     return new Promise((resolve, reject) => {
       const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
         cwd: workingDir,
@@ -1472,6 +2775,15 @@ Your commentary:`;
           AGENT_NAME: agentName.toUpperCase()
         }
       });
+
+      // Save PID to pipeline state if provided
+      if (pipelineState && claude.pid) {
+        pipelineState.pid = claude.pid;
+        this.savePipelineState(pipelineState).catch(err => {
+          console.error('[PROXY] Failed to save PID to pipeline state:', err);
+        });
+        console.log(`[PROXY] Saved PID ${claude.pid} for pipeline ${pipelineState.id}`);
+      }
 
       let output = '';
       let errorOutput = '';
