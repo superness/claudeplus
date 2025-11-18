@@ -1,0 +1,44 @@
+## Framework Fix Complete
+
+### Problem Identified
+The WebSocket automation framework had a **client identification mismatch** between the game browser bridge and the reproduction script:
+
+- **TestingBrowserBridge.js** connected to `ws://localhost:8765` without query parameters
+- **Reproduction script** expected clients to identify themselves via URL query parameter `?client=game` or `?client=test`
+- Without the query parameter, the reproduction script couldn't identify the game client, leaving `gameClientConnection` as null
+- Commands from the test client had nowhere to be forwarded, causing immediate failures
+
+### Root Cause
+```javascript
+// BEFORE (TestingBrowserBridge.js:12)
+constructor(gameInterface, serverUrl = 'ws://localhost:8765') {
+```
+
+The reproduction script checked:
+```javascript
+// reproduce_ship_movement_bug_fixed.js:170
+const clientType = url.searchParams.get('client');
+if (clientType === 'game') {
+  gameClientConnection = ws;
+```
+
+Since no `?client=game` parameter was sent, `clientType` was always `null`, the game was never registered, and command routing failed.
+
+### Fix Applied
+Updated **js/testing/TestingBrowserBridge.js:12** to include the client identification parameter:
+
+```javascript
+// AFTER
+constructor(gameInterface, serverUrl = 'ws://localhost:8765?client=game') {
+```
+
+### Impact
+- Game client will now properly identify itself to the reproduction script
+- WebSocket server can correctly route commands: Test Client → Game Client
+- Game responses will be properly forwarded back: Game Client → Test Client
+- The reproduction test can now execute commands and capture ship movement evidence
+
+### Next Step
+The framework is now fixed. The reproduction test should be retried to properly diagnose the actual ship movement bug (if it exists) or confirm that ship movement is working correctly.
+
+**DECISION: framework_fixed_retry_reproduction**

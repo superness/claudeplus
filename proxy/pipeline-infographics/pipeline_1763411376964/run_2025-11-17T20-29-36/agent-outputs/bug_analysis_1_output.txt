@@ -1,0 +1,33 @@
+Based on my analysis of the ship movement and throttle control code, I can now provide a comprehensive bug analysis:
+
+```json
+{
+  "bugSummary": "Ships instantly jump to target throttle speed instead of accelerating/decelerating gradually through exponential acceleration curve",
+  "expectedBehavior": "Ships should smoothly accelerate from 0 to target speed over time using EVE Online's exponential acceleration formula: V(t) = V_max × (1 - e^(-t/τ)), where acceleration should be gradual and momentum-based. Ships should also smoothly decelerate when throttle is reduced.",
+  "actualBehavior": "Ships are instantly setting velocity to target speed without smooth acceleration/deceleration transition. The exponential acceleration curve (applyExponentialAcceleration) is implemented correctly but may not be working due to instant velocity assignment elsewhere or improper deltaTime values causing the exponential factor to approach 1.0 instantly.",
+  "affectedSystems": [
+    "ShipPhysics.js - EVE-style ship physics implementation",
+    "Ship.js - Ship entity update and navigation",
+    "Throttle control input system",
+    "EVEPhysics.js - Main physics engine"
+  ],
+  "severity": "HIGH",
+  "reproductionSteps": [
+    "Step 1: Open the game in browser (index.html)",
+    "Step 2: Select any ship (Atron, Condor, Caracal, or Raven)",
+    "Step 3: Press W key to increase throttle or use navigation commands to set speed",
+    "Step 4: Observe ship velocity in HUD - ship should accelerate gradually but instead instantly jumps to target speed",
+    "Step 5: Press S key to decrease throttle",
+    "Step 6: Observe ship velocity - ship should decelerate gradually but instead instantly drops to new target speed"
+  ],
+  "likelyFiles": [
+    "/mnt/c/github/superstarships/js/physics/ShipPhysics.js",
+    "/mnt/c/github/superstarships/js/entities/Ship.js",
+    "/mnt/c/github/superstarships/js/core/InputManager.js",
+    "/mnt/c/github/superstarships/js/SpaceshipSimulator.js"
+  ],
+  "hypothesis": "The exponential acceleration formula is correctly implemented in ShipPhysics.js:158-166 (applyExponentialAcceleration method), but the bug likely stems from one of these root causes:\n\n1. **DeltaTime Issue**: The deltaTime value passed to updatePhysics() may be too large (>1 second) or unstable, causing the exponential factor (1 - Math.exp(-k * deltaTime)) to approach 1.0, which makes velocity instantly jump to targetVelocity. With the time constant τ = 0.6912s for Atron, if deltaTime >= 3*τ (~2 seconds), the ship reaches >95% of target speed in a single frame.\n\n2. **Direct Velocity Assignment**: Somewhere in the code path, velocity might be directly assigned to targetVelocity instead of using the exponential acceleration curve. This could happen in Ship.js navigation commands or input processing.\n\n3. **Time Constant Too Small**: The time constant (τ = agility / 5000000) results in very fast acceleration. For Atron with agility 3,456,000, τ = 0.6912s. If the game loop has frame drops or long delta times, ships will appear to accelerate instantly.\n\n4. **Velocity Clipping**: The velocity might be getting clamped or set directly during navigation updates in Ship.js:200-386 (updateWithNavigation method).\n\nRecommended investigation: Check deltaTime values in console logs, verify the exponential factor never equals 1.0, and trace all velocity assignments to ensure none bypass the exponential acceleration."
+}
+```
+
+DECISION: analysis_complete

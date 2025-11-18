@@ -1,0 +1,85 @@
+I can see the issue now. The WebSocket communication protocol has a mismatch - the test client is receiving `{type: 'command'}` messages when it expects `{type: 'response'}`. This is a test infrastructure problem, not a game bug.
+
+Looking at the evidence, the test is failing at the infrastructure level because:
+1. Test client sends command to automation server
+2. Automation server should forward to game
+3. Game should execute and respond with `{type: 'response'}`
+4. Instead, test client is receiving the echoed command back
+
+This is a FRAMEWORK_ERROR - the WebSocket automation framework has a message routing problem.
+
+## Execution Report
+
+```json
+{
+  "executionStatus": "framework_error",
+  "exitCode": null,
+  "scriptKilled": true,
+  "devServerRunning": true,
+  "websocketServerStarted": true,
+  "gameConnected": true,
+  "testClientConnected": true,
+  "commandsExecuted": 0,
+  "evidenceCaptured": [
+    {
+      "type": "evidence_file",
+      "path": "ship_movement_bug_evidence_1763340450559.json",
+      "status": "ERROR",
+      "content": {
+        "error": "Game disconnected unexpectedly",
+        "status": "ERROR",
+        "finalTimestamp": "2025-11-17T00:47:30.559Z"
+      }
+    },
+    {
+      "type": "evidence_file",
+      "path": "ship_movement_bug_evidence_1763340323393.json",
+      "status": "COMMAND_FAILED",
+      "content": {
+        "commands": [
+          {
+            "command": "getShipState",
+            "response": {
+              "type": "command",
+              "command": {"id": "1", "command": "getShipState"}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "console_output",
+      "lines": [
+        "WebSocket automation server started on port 8765",
+        "Game connected to automation server",
+        "Test client connected",
+        "Test client ready",
+        "STARTING TEST SEQUENCE",
+        "Get initial ship state and position",
+        "⚠️ Received non-response message: command"
+      ]
+    }
+  ],
+  "observations": [
+    "Dev server confirmed running on http://localhost:8080 (status 200)",
+    "WebSocket server started successfully on port 8765",
+    "Game connected to automation server",
+    "Test client connected successfully",
+    "Test client registered and ready",
+    "First command sent: getShipState",
+    "FRAMEWORK ERROR: Test client receiving {type: 'command'} instead of {type: 'response'}",
+    "Message routing failure between automation server and game client",
+    "Script stuck in infinite wait - killed manually after 30 seconds",
+    "Previous test runs show same COMMAND_FAILED status with identical routing issue",
+    "Recent evidence file shows 'Game disconnected unexpectedly' error"
+  ],
+  "rootCause": "WebSocket message routing protocol mismatch in automation framework",
+  "details": {
+    "issue": "Test client sends command → Automation server forwards to game → Game should respond with {type: 'response'} → Instead, test client receives echoed {type: 'command'} message",
+    "location": "Message forwarding logic in reproduce_ship_movement_bug.js lines 171-182 and 198-209",
+    "impact": "Prevents any automation commands from executing - complete infrastructure failure"
+  }
+}
+```
+
+DECISION: FRAMEWORK_ERROR

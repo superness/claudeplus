@@ -1,0 +1,264 @@
+# Expectation Validator Report: Hover-to-Hold RadialHUD Feature
+
+## 1. Test Plan Expectations Review
+
+### Expected Behaviors (From Test Plan)
+```json
+{
+  "TC-001": "RadialHUD remains hidden after brief hover (<500ms)",
+  "TC-002": "Progress indicator visible and increases from 0% to ~80% over 400ms",
+  "TC-003": "RadialHUD opens after 500ms±50ms, progress indicator disappears",
+  "TC-004": "Progress value increases to ~50% at 250ms checkpoint",
+  "TC-005": "HUD does NOT open when hover interrupted before 500ms",
+  "TC-008": "Click on ship during hover immediately opens HUD (timer bypass)"
+}
+```
+
+### Core Functionality Requirements
+1. **Hover Timer System**: 0.5s threshold before HUD opens
+2. **Visual Progress Indicator**: DOM element showing hover completion (0-100%)
+3. **State Management**: Timer cancellation on hover exit
+4. **Interaction Override**: Click bypass for immediate HUD access
+
+---
+
+## 2. Observer's Findings Review
+
+### Observed Behaviors (From Test Execution)
+```json
+{
+  "TC-001": {
+    "action": "Mouse hovered for 100ms",
+    "observed": {"hud_visible": true},
+    "expected": {"hud_visible": false},
+    "result": "FAILED"
+  },
+  "TC-002": {
+    "action": "Check for progress indicator DOM element",
+    "observed": {"progress_container_found": false},
+    "expected": {"progress_container_found": true},
+    "result": "FAILED"
+  },
+  "TC-003": {
+    "action": "Mouse hovered for 507.5ms",
+    "observed": {"hud_visible": true, "duration": 507.5},
+    "expected": {"hud_visible": true, "duration": "500±50ms"},
+    "result": "PASSED"
+  },
+  "TC-004": {
+    "action": "Check hoverProgress at 250ms",
+    "observed": {"hover_progress_at_250ms": 0},
+    "expected": {"hover_progress_at_250ms": "40-60%"},
+    "result": "FAILED"
+  },
+  "TC-005": {
+    "action": "Hover 200ms, cancel, check HUD",
+    "observed": {"hud_visible_after_cancellation": true},
+    "expected": {"hud_visible_after_cancellation": false},
+    "result": "FAILED"
+  },
+  "TC-008": {
+    "action": "Click ship during hover",
+    "observed": {"hud_visible_after_click": true},
+    "expected": {"hud_visible_after_click": true},
+    "result": "PASSED"
+  }
+}
+```
+
+### Additional Evidence
+- **`hoverProgress` value**: Always returned `0` across all test cases
+- **Progress indicator DOM**: `querySelector('.hover-progress-container')` returned `null`
+- **RadialHUD state**: Property `visible` was `true` in all observations
+- **Console errors**: 1 warning (ship type not found), 0 critical errors
+- **JavaScript exceptions**: 0 thrown during execution
+
+---
+
+## 3. Systematic Comparison
+
+### Acceptance Criteria Validation
+
+| Criteria | Expected | Observed | Status | Evidence |
+|----------|----------|----------|--------|----------|
+| **AC-1**: HUD does not open on brief hover (<500ms) | `hud_visible: false` after 100ms | `hud_visible: true` after 100ms | ✗ **MISSING** | TC-001 FAILED - HUD opened immediately |
+| **AC-2**: Progress indicator DOM element exists | `.hover-progress-container` found | DOM query returned `null` | ✗ **MISSING** | TC-002 FAILED - No visual indicator |
+| **AC-3**: Progress value increases during hover | `hoverProgress: 0.5` at 250ms | `hoverProgress: 0` at 250ms | ✗ **MISSING** | TC-004 FAILED - Progress tracking not implemented |
+| **AC-4**: HUD opens after 500ms continuous hover | `hud_visible: true` at ~500ms | `hud_visible: true` at 507.5ms | ✓ **MET** | TC-003 PASSED - Timing accurate |
+| **AC-5**: Timer cancels on hover exit | HUD closed after 200ms hover + exit | HUD remained open | ✗ **MISSING** | TC-005 FAILED - No cancellation logic |
+| **AC-6**: Click bypass opens HUD immediately | `hud_visible: true` on click | `hud_visible: true` on click | ✓ **MET** | TC-008 PASSED - Click override works |
+
+### Results Summary
+- **Acceptance Criteria Met**: 2 / 6 (33%)
+- **Acceptance Criteria Missing**: 4 / 6 (67%)
+- **Overall Result**: **INCOMPLETE**
+
+---
+
+## 4. Detailed Gap Analysis
+
+### Gap 1: Instant HUD Opening (Critical)
+**Criteria**: AC-1 - HUD should not open on brief hover  
+**Expected**: HUD remains hidden for <500ms hover  
+**Observed**: HUD opens immediately on any hover  
+**Evidence**:
+```json
+{
+  "test": "TC-001",
+  "hover_duration_ms": 100,
+  "hud_visible": true,
+  "expected_visible": false
+}
+```
+**Root Cause**: Hover timer system not integrated with RadialHUD opening logic. Current implementation likely triggers on `mouseenter` event without delay.  
+**Severity**: **High** - Core feature not implemented  
+**Next Step**: Implement `HoverTimerSystem` integration in `RadialHUD.js` to gate `show()` method behind 500ms threshold.
+
+---
+
+### Gap 2: Missing Visual Progress Indicator (Critical)
+**Criteria**: AC-2 - Progress indicator should display and update  
+**Expected**: DOM element `.hover-progress-container` visible during hover  
+**Observed**: DOM query returned `null`  
+**Evidence**:
+```json
+{
+  "test": "TC-002",
+  "query": "document.querySelector('.hover-progress-container')",
+  "result": null
+}
+```
+**Root Cause**: HTML/CSS for progress indicator not created or not injected into DOM.  
+**Severity**: **High** - Visual feedback component missing  
+**Next Step**: Create `HoverProgressIndicator` component with DOM injection in `RadialHUD.js` or new file `js/ui/HoverProgressIndicator.js`.
+
+---
+
+### Gap 3: Progress Tracking Not Functional (Critical)
+**Criteria**: AC-3 - `hoverProgress` property should increment over time  
+**Expected**: `hoverProgress: 0.5` at 250ms checkpoint  
+**Observed**: `hoverProgress: 0` at all checkpoints  
+**Evidence**:
+```json
+{
+  "test": "TC-004",
+  "hover_progress_at_250ms": 0,
+  "expected_range": "40-60%"
+}
+```
+**Root Cause**: `HoverTimerSystem.hoverProgress` property exists but not updating. Likely missing `update()` method or animation loop integration.  
+**Severity**: **High** - Core timer logic not working  
+**Next Step**: Implement `requestAnimationFrame` loop in `HoverTimerSystem` to update `hoverProgress` from 0 to 1 over 500ms.
+
+---
+
+### Gap 4: Hover Cancellation Not Implemented (High)
+**Criteria**: AC-5 - Timer should reset when mouse exits before completion  
+**Expected**: HUD closed after hover interruption at 200ms  
+**Observed**: HUD remained open after cancellation  
+**Evidence**:
+```json
+{
+  "test": "TC-005",
+  "hud_visible_after_cancellation": true,
+  "expected_visible": false
+}
+```
+**Root Cause**: No `mouseleave` event handler to reset timer and hide progress indicator.  
+**Severity**: **Medium** - User experience issue (HUD can't be canceled mid-hover)  
+**Next Step**: Add `mouseleave` listener to cancel timer, reset `hoverProgress`, and hide indicator.
+
+---
+
+## 5. Working Features (Validation)
+
+### Feature 1: 500ms Hover Opens HUD ✓
+**Criteria**: AC-4  
+**Evidence**:
+```json
+{
+  "test": "TC-003",
+  "hover_duration_ms": 507.5,
+  "threshold_ms": 500,
+  "tolerance_ms": 50,
+  "hud_visible": true,
+  "result": "PASSED"
+}
+```
+**Status**: **WORKING** - Timing threshold accurate within tolerance.
+
+---
+
+### Feature 2: Click Bypass ✓
+**Criteria**: AC-6  
+**Evidence**:
+```json
+{
+  "test": "TC-008",
+  "action": "Click ship during hover (<500ms)",
+  "hud_visible_after_click": true,
+  "result": "PASSED"
+}
+```
+**Status**: **WORKING** - Click event bypasses hover timer as expected.
+
+---
+
+## 6. Recommendations
+
+### Priority 1: Implement Missing Core Functionality
+1. **Integrate HoverTimerSystem with RadialHUD**
+   - Block `RadialHUD.show()` until `hoverProgress === 1.0`
+   - File: `js/ui/RadialHUD.js:150` (approx.)
+
+2. **Create Progress Indicator Component**
+   - Build DOM element (circular fill or progress bar)
+   - Inject into DOM on hover start
+   - File: Create `js/ui/HoverProgressIndicator.js`
+
+3. **Fix Progress Tracking**
+   - Implement `update(deltaTime)` method in `HoverTimerSystem`
+   - Call from main game loop or `requestAnimationFrame`
+   - File: Likely `js/ui/HoverTimerSystem.js` (if exists)
+
+4. **Add Hover Cancellation**
+   - Listen for `mouseleave` event
+   - Reset timer, clear progress, hide indicator
+   - File: `js/ui/RadialHUD.js` or `js/core/InputManager.js`
+
+### Priority 2: Edge Case Testing
+Once core gaps are fixed, re-run:
+- TC-006: HUD already open behavior
+- TC-007: Rapid hover spam prevention
+- Edge cases (ship destroyed during hover, camera angle changes)
+
+---
+
+## 7. Final Decision
+
+### Test Results Summary
+- **Tests Passed**: 2 / 6 (33%)
+- **Tests Failed**: 4 / 6 (67%)
+- **Critical Gaps**: 4 (instant opening, missing indicator, broken progress, no cancellation)
+- **Working Features**: 2 (500ms threshold, click bypass)
+
+### Evidence Quality
+- **Console Logs**: 1,330 entries collected ✓
+- **DOM Queries**: Executed successfully ✓
+- **State Tracking**: `hoverProgress` consistently returned 0 ✓
+- **Timing Accuracy**: 507.5ms measurement within tolerance ✓
+
+### Implementation Status
+The hover-to-hold feature has **partial implementation**:
+- ✓ Timing threshold (500ms) works
+- ✓ Click bypass works
+- ✗ Hover delay blocking not implemented
+- ✗ Visual progress indicator missing
+- ✗ Progress tracking non-functional
+- ✗ Cancellation logic missing
+
+---
+
+**DECISION: INCOMPLETE**
+
+**Reason**: 4 of 6 acceptance criteria not met. Core functionality (hover delay blocking, progress indicator, timer tracking, cancellation) is missing or non-functional. While the 500ms threshold and click bypass work, the primary feature goal—preventing instant HUD opening and showing visual feedback—is not achieved. The feature requires significant additional implementation before it meets the original user request.

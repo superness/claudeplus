@@ -1,0 +1,449 @@
+# Implementation Plan: Hover-to-Open RadialHUD with Progress Indicator
+
+## Architecture Overview
+
+This feature requires implementing a **hover timer system** with visual feedback that integrates with the existing RadialHUD. The architecture will follow a **state machine pattern** for hover tracking and use **requestAnimationFrame** for smooth progress animation.
+
+### Core Components
+
+```
+HoverTimerSystem (New)
+├── State Management
+│   ├── isHovering: boolean
+│   ├── hoverStartTime: number | null
+│   ├── hoverProgress: number (0-1)
+│   └── hoverTarget: Ship | null
+├── Timer Logic
+│   ├── startHover(ship)
+│   ├── updateHover(currentTime)
+│   ├── cancelHover()
+│   └── completeHover()
+└── Progress Indicator
+    ├── HoverProgressIndicator (New UI Component)
+    ├── render(progress, position)
+    └── hide()
+
+RadialHUD (Modified)
+├── Integration Point
+│   └── openMenu() - Called by HoverTimerSystem after completion
+└── State Check
+    └── isVisible() - Prevents re-trigger when already open
+```
+
+## Detailed Architecture
+
+### 1. New Classes
+
+#### **HoverTimerSystem** (`js/ui/HoverTimerSystem.js`)
+**Responsibility**: Manages hover state, timer logic, and triggers RadialHUD opening
+
+**Properties**:
+```javascript
+{
+  HOVER_DURATION: 500, // milliseconds
+  isHovering: false,
+  hoverStartTime: null,
+  hoverProgress: 0,
+  hoverTarget: null,
+  progressIndicator: HoverProgressIndicator,
+  animationFrameId: null
+}
+```
+
+**Methods**:
+- `startHover(ship, mousePosition)` - Initializes hover timer
+- `updateHover()` - Called every frame to update progress
+- `cancelHover()` - Resets timer when hover interrupted
+- `completeHover()` - Opens RadialHUD after 0.5s
+- `getProgress()` - Returns current progress (0-1)
+- `isHoveringShip(ship)` - Checks if currently hovering specific ship
+
+#### **HoverProgressIndicator** (`js/ui/HoverProgressIndicator.js`)
+**Responsibility**: Renders circular progress indicator near cursor/ship
+
+**Properties**:
+```javascript
+{
+  container: HTMLElement,
+  progressCircle: SVGElement,
+  isVisible: false,
+  position: {x: 0, y: 0}
+}
+```
+
+**Methods**:
+- `show(position)` - Displays indicator at position
+- `hide()` - Removes indicator
+- `updateProgress(progress)` - Updates circular fill (0-1)
+- `updatePosition(position)` - Moves indicator to follow cursor
+
+**Visual Design**: SVG circular progress indicator (similar to loading spinners)
+```html
+<div id="hover-progress-indicator" class="hover-progress-indicator">
+  <svg width="40" height="40">
+    <circle class="progress-bg" cx="20" cy="20" r="18" />
+    <circle class="progress-fill" cx="20" cy="20" r="18" 
+            stroke-dasharray="113" stroke-dashoffset="113" />
+  </svg>
+</div>
+```
+
+### 2. Modified Classes
+
+#### **RadialHUD** (`js/ui/RadialHUD.js`)
+**Changes**:
+- Remove immediate `show()` call on ship hover (if exists)
+- Add public `isVisible()` method for state checking
+- Add `openViaHover()` method as clean integration point
+
+**Integration**:
+```javascript
+// Current behavior (to be removed/modified):
+// onShipHover() { this.show(); }
+
+// New behavior:
+// HoverTimerSystem handles timing, calls RadialHUD.openViaHover() after 0.5s
+```
+
+#### **SpaceshipSimulator** (`js/SpaceshipSimulator.js`)
+**Changes**:
+- Initialize `HoverTimerSystem` in constructor
+- Pass hover events from raycasting to HoverTimerSystem
+- Update render loop to call `hoverTimerSystem.updateHover()`
+
+**Integration Points**:
+```javascript
+constructor() {
+  // ...existing code...
+  this.hoverTimerSystem = new HoverTimerSystem(this.radialHUD);
+}
+
+handleMouseMove(event) {
+  // ...raycasting logic...
+  if (hoveredShip) {
+    this.hoverTimerSystem.startHover(hoveredShip, mousePosition);
+  } else {
+    this.hoverTimerSystem.cancelHover();
+  }
+}
+
+animate() {
+  // ...existing animation loop...
+  this.hoverTimerSystem.updateHover();
+}
+```
+
+#### **InputManager** (if hover detection happens here)
+**Changes**:
+- Route hover enter/exit events to HoverTimerSystem
+- Ensure raycasting detects ship under cursor
+
+## File Structure
+
+### Files to Create
+
+1. **`/mnt/c/github/superstarships/js/ui/HoverTimerSystem.js`**
+   - Core hover timer logic
+   - State machine for hover tracking
+   - Integration with RadialHUD
+
+2. **`/mnt/c/github/superstarships/js/ui/HoverProgressIndicator.js`**
+   - Visual progress indicator rendering
+   - SVG-based circular progress
+   - Position tracking and updates
+
+3. **`/mnt/c/github/superstarships/css/hover-progress.css`**
+   - Styling for progress indicator
+   - Animations (smooth circular fill)
+   - Positioning and z-index
+
+### Files to Modify
+
+1. **`/mnt/c/github/superstarships/js/ui/RadialHUD.js`**
+   - Add `isVisible()` method
+   - Add `openViaHover()` method
+   - Remove/modify instant-open logic
+
+2. **`/mnt/c/github/superstarships/js/SpaceshipSimulator.js`**
+   - Initialize HoverTimerSystem
+   - Route mouse events to hover system
+   - Call updateHover() in animation loop
+
+3. **`/mnt/c/github/superstarships/index.html`**
+   - Add `<script>` tags for new modules
+   - Add container `<div>` for progress indicator
+
+## Implementation Steps
+
+### Phase 1: Core Timer System (Estimated: 2 hours)
+
+#### Step 1.1: Create HoverTimerSystem skeleton
+- **File**: `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - Create class with state properties
+  - Implement `startHover()`, `cancelHover()`, `completeHover()`
+  - Add debug logging for state transitions
+- **Dependencies**: None
+- **Testing**: Console logs confirm timer starts/cancels correctly
+
+#### Step 1.2: Implement timer update logic
+- **File**: `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - Implement `updateHover()` with timestamp-based progress calculation
+  - Calculate `hoverProgress = (currentTime - hoverStartTime) / HOVER_DURATION`
+  - Trigger `completeHover()` when progress >= 1.0
+- **Dependencies**: Step 1.1
+- **Testing**: Timer completes after exactly 500ms
+
+#### Step 1.3: Integrate with SpaceshipSimulator
+- **File**: `js/SpaceshipSimulator.js`
+- **Tasks**:
+  - Initialize HoverTimerSystem in constructor
+  - Call `hoverTimerSystem.updateHover()` in animate() loop
+  - Route mouse move events to startHover()/cancelHover()
+- **Dependencies**: Step 1.2
+- **Testing**: Hover timer activates when mouse over ship, cancels when mouse exits
+
+### Phase 2: Progress Indicator (Estimated: 2 hours)
+
+#### Step 2.1: Create HoverProgressIndicator component
+- **File**: `js/ui/HoverProgressIndicator.js`
+- **Tasks**:
+  - Create SVG-based circular progress indicator
+  - Implement `show()`, `hide()`, `updateProgress()`
+  - Add DOM element creation and styling
+- **Dependencies**: None
+- **Testing**: Indicator appears and fills when progress updated manually
+
+#### Step 2.2: Style progress indicator
+- **File**: `css/hover-progress.css`
+- **Tasks**:
+  - Style SVG circles (background + progress fill)
+  - Add smooth stroke-dashoffset animation
+  - Position indicator (fixed at cursor or near ship)
+  - Set z-index above game canvas but below modals
+- **Dependencies**: Step 2.1
+- **Testing**: Visual appearance matches design, smooth animation
+
+#### Step 2.3: Integrate progress indicator with timer
+- **File**: `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - Initialize HoverProgressIndicator in constructor
+  - Call `progressIndicator.show()` in `startHover()`
+  - Call `progressIndicator.updateProgress(progress)` in `updateHover()`
+  - Call `progressIndicator.hide()` in `cancelHover()` and `completeHover()`
+- **Dependencies**: Steps 1.3, 2.1, 2.2
+- **Testing**: Progress indicator appears during hover, fills smoothly, disappears on completion/cancellation
+
+### Phase 3: RadialHUD Integration (Estimated: 1 hour)
+
+#### Step 3.1: Add helper methods to RadialHUD
+- **File**: `js/ui/RadialHUD.js`
+- **Tasks**:
+  - Add `isVisible()` method
+  - Add `openViaHover()` method (calls existing `show()` logic)
+  - Ensure no instant-open behavior on hover
+- **Dependencies**: None
+- **Testing**: RadialHUD can be queried for visibility state
+
+#### Step 3.2: Connect HoverTimerSystem to RadialHUD
+- **File**: `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - Store reference to RadialHUD in constructor
+  - In `completeHover()`, check `!radialHUD.isVisible()` before opening
+  - Call `radialHUD.openViaHover()` after 0.5s hover completion
+- **Dependencies**: Steps 1.3, 3.1
+- **Testing**: RadialHUD opens only after 0.5s hover, not immediately
+
+### Phase 4: Edge Cases & Polish (Estimated: 1.5 hours)
+
+#### Step 4.1: Prevent re-trigger when HUD already open
+- **File**: `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - In `startHover()`, check `radialHUD.isVisible()`
+  - If HUD already open, skip timer initialization
+- **Dependencies**: Step 3.2
+- **Testing**: Hovering ship when HUD open does not show progress indicator
+
+#### Step 4.2: Handle rapid hover spam
+- **File**: `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - Ensure `cancelHover()` fully resets state
+  - Test rapid enter/exit cycles don't cause memory leaks
+- **Dependencies**: Step 3.2
+- **Testing**: Rapid mouse movement over/off ship does not trigger HUD
+
+#### Step 4.3: Cursor position tracking for indicator
+- **File**: `js/ui/HoverProgressIndicator.js`, `js/ui/HoverTimerSystem.js`
+- **Tasks**:
+  - Track mouse position in `startHover()`
+  - Update indicator position in `updateHover()` to follow cursor
+  - Alternative: Position indicator at ship screen coordinates (more stable)
+- **Dependencies**: Step 2.3
+- **Testing**: Progress indicator follows cursor or stays near ship
+
+#### Step 4.4: Click bypass (optional feature)
+- **File**: `js/SpaceshipSimulator.js` or `js/core/InputManager.js`
+- **Tasks**:
+  - Detect click on ship during hover
+  - If hover in progress, immediately call `hoverTimerSystem.completeHover()`
+  - Else use existing click behavior
+- **Dependencies**: Step 3.2
+- **Testing**: Clicking ship during hover opens HUD immediately
+
+### Phase 5: Testing & Validation (Estimated: 2 hours)
+
+#### Step 5.1: Manual testing
+- **Tasks**:
+  - Test all 8 test cases from test plan manually
+  - Verify visual appearance and timing
+  - Test across different ships and camera angles
+- **Dependencies**: All previous steps
+- **Testing**: Visual confirmation of behavior
+
+#### Step 5.2: Automated browser testing
+- **File**: `tests/test_hover_radial_hud.js`
+- **Tasks**:
+  - Implement automated test script (see test plan)
+  - Use browser automation (Puppeteer) for interaction
+  - Capture evidence JSON files
+- **Dependencies**: Step 5.1
+- **Testing**: All automated tests pass, evidence captured
+
+#### Step 5.3: Performance validation
+- **Tasks**:
+  - Measure hover detection latency (<50ms)
+  - Verify progress indicator runs at 60fps
+  - Check timer accuracy (500ms ± 50ms)
+  - Test with multiple ships on screen
+- **Dependencies**: Step 5.2
+- **Testing**: Performance metrics meet requirements
+
+## Technical Considerations
+
+### Performance
+- **Timer Updates**: Use `requestAnimationFrame` instead of `setInterval` for smooth 60fps updates
+- **Progress Calculation**: Timestamp-based calculation ensures accuracy regardless of framerate
+- **Memory**: No continuous intervals or timeouts - only RAF while hovering
+- **SVG Rendering**: Hardware-accelerated CSS transforms for smooth animation
+
+### State Management
+```javascript
+// State machine transitions:
+IDLE → HOVERING (on mouse enter ship)
+HOVERING → IDLE (on mouse exit)
+HOVERING → COMPLETE (after 0.5s)
+COMPLETE → IDLE (after opening HUD)
+
+// Edge case: HUD already open
+IDLE → IDLE (hover ignored if HUD visible)
+```
+
+### Browser Compatibility
+- **SVG**: Supported in all modern browsers (Chrome, Firefox, Edge, Safari)
+- **stroke-dasharray/offset**: Standard SVG attributes, widely supported
+- **requestAnimationFrame**: Standard in all modern browsers
+- **No dependencies**: Pure vanilla JavaScript, no external libraries
+
+### Code Reusability
+- **HoverTimerSystem**: Generic enough to be reused for other hover mechanics
+- **HoverProgressIndicator**: Could be extended for other loading/progress scenarios
+- **Pattern**: Can be applied to stations, anomalies, or other interactive objects
+
+## Risks & Mitigations
+
+### Risk 1: Performance impact on animation loop
+**Mitigation**: 
+- Only run `updateHover()` when `isHovering === true`
+- Use early returns to minimize calculations
+- Profile with 10+ ships on screen to ensure <1ms overhead
+
+### Risk 2: Progress indicator z-index conflicts
+**Mitigation**:
+- Use high z-index (9000+) for progress indicator
+- Test with all UI panels open
+- Add CSS `pointer-events: none` to prevent click blocking
+
+### Risk 3: Raycasting detecting wrong ship when overlapping
+**Mitigation**:
+- Use existing ship selection logic (first raycast hit)
+- Ensure hover target matches selected ship
+- Document behavior in code comments
+
+### Risk 4: Timer inaccuracy at low framerates
+**Mitigation**:
+- Use `performance.now()` timestamps, not frame counting
+- Timer completes based on elapsed time, not frame count
+- Test at 30fps, 15fps to verify accuracy
+
+### Risk 5: Progress indicator position jumps with camera movement
+**Mitigation**:
+- Option A: Position at cursor (follows mouse, stable relative to screen)
+- Option B: Position at ship screen coordinates (requires recalculating every frame)
+- **Recommendation**: Cursor positioning for simplicity and stability
+
+## Implementation Order Summary
+
+```
+1. Create HoverTimerSystem.js (core logic)           - 1 hour
+2. Integrate with SpaceshipSimulator (events)        - 30 min
+3. Create HoverProgressIndicator.js (visual)         - 1 hour
+4. Style progress indicator (CSS)                    - 30 min
+5. Connect indicator to timer system                 - 30 min
+6. Modify RadialHUD (integration points)             - 30 min
+7. Handle edge cases (already open, spam)            - 1 hour
+8. Add cursor position tracking                      - 30 min
+9. Implement click bypass (optional)                 - 30 min
+10. Manual testing                                   - 1 hour
+11. Automated testing setup                          - 1 hour
+12. Performance validation                           - 30 min
+                                          
+Total Estimated Time: 8.5 hours
+```
+
+## Testing Strategy Integration
+
+Following the test plan, automated testing will use:
+
+1. **Browser Automation** (Puppeteer):
+   - Simulate mouse hover over ship
+   - Wait for specific durations (100ms, 500ms, etc.)
+   - Query DOM for progress indicator state
+   - Verify RadialHUD visibility
+
+2. **Evidence Capture**:
+   - JSON files with timestamps, progress values, HUD state
+   - Screenshots of progress indicator at different stages
+   - Console logs of state transitions
+
+3. **WebSocket Integration** (optional):
+   - Send commands to verify game state
+   - Query hover timer state via debug interface
+   - Validate ship positions and states
+
+## Final Deliverables
+
+1. **Code Files**:
+   - `js/ui/HoverTimerSystem.js` (new)
+   - `js/ui/HoverProgressIndicator.js` (new)
+   - `css/hover-progress.css` (new)
+   - `js/ui/RadialHUD.js` (modified)
+   - `js/SpaceshipSimulator.js` (modified)
+   - `index.html` (modified - add script tags)
+
+2. **Test Files**:
+   - `tests/test_hover_radial_hud.js` (automated test suite)
+
+3. **Documentation**:
+   - Code comments explaining hover state machine
+   - JSDoc comments for all public methods
+   - Update CLAUDE.md with new feature notes
+
+4. **Evidence**:
+   - Test results JSON files
+   - Performance metrics report
+   - Screenshots of progress indicator
+
+---
+
+**DECISION: implementation_plan_ready**

@@ -150,6 +150,28 @@ class PipelineDesigner {
     }
   }
 
+  updateNodeVisualState(stageId, state) {
+    // Find node by stage ID and update its visual appearance
+    for (const [nodeId, node] of this.nodes) {
+      if (node.id === stageId || node.agent === stageId) {
+        const element = node.element;
+        if (!element) continue;
+
+        // Remove existing state classes
+        element.classList.remove('node-idle', 'node-running', 'node-completed', 'node-error');
+
+        // Add new state class
+        element.classList.add(`node-${state}`);
+
+        // Update node status property
+        node.status = state;
+
+        console.log(`🎨 Updated node ${stageId} to state: ${state}`);
+        break;
+      }
+    }
+  }
+
   init() {
     this.setupEventListeners();
     this.setupDragAndDrop();
@@ -3151,6 +3173,14 @@ function reconnectToPipeline(pipelineId) {
 
         if (response.type === 'pipeline-reconnected') {
           console.log('✅ Successfully reconnected to pipeline');
+          console.log('📊 Pipeline data:', response.pipelineData);
+          console.log('💬 Chat history length:', response.chatHistory?.length || 0);
+          console.log('💬 Chat history:', response.chatHistory);
+          if (response.chatHistory && response.chatHistory.length > 0) {
+            response.chatHistory.forEach((msg, idx) => {
+              console.log(`  Message ${idx}:`, msg);
+            });
+          }
           closeReconnectBanner();
 
           // Show execution results area
@@ -3158,10 +3188,35 @@ function reconnectToPipeline(pipelineId) {
           if (resultsDiv) {
             resultsDiv.style.display = 'block';
 
-            // Generate chat history HTML
+            // Generate chat history HTML with expandable outputs
             let chatHistoryHTML = '';
             if (response.chatHistory && response.chatHistory.length > 0) {
-              chatHistoryHTML = response.chatHistory.map(msg => `
+              chatHistoryHTML = response.chatHistory.map((msg, idx) => {
+                let outputSection = '';
+                if (msg.output) {
+                  const outputId = `output-${idx}`;
+                  outputSection = `
+                    <div class="message-output-section">
+                      <button class="message-output-toggle" onclick="toggleOutput('${outputId}')">
+                        📄 View Output (${msg.output.length} chars)
+                      </button>
+                      <pre class="message-output" id="${outputId}" style="display: none;">${escapeHtml(msg.output)}</pre>
+                    </div>
+                  `;
+                }
+                let promptSection = '';
+                if (msg.prompt) {
+                  const promptId = `prompt-${idx}`;
+                  promptSection = `
+                    <div class="message-prompt-section">
+                      <button class="message-prompt-toggle" onclick="toggleOutput('${promptId}')">
+                        📝 View Prompt (${msg.prompt.length} chars)
+                      </button>
+                      <pre class="message-prompt" id="${promptId}" style="display: none;">${escapeHtml(msg.prompt)}</pre>
+                    </div>
+                  `;
+                }
+                return `
                 <div class="chat-message ${msg.type}">
                   <div class="message-icon">${getMessageIcon(msg.type)}</div>
                   <div class="message-content">
@@ -3171,9 +3226,15 @@ function reconnectToPipeline(pipelineId) {
                     </div>
                     <div class="message-text">${msg.message}</div>
                     ${msg.details ? `<div class="message-details">${msg.details}</div>` : ''}
+                    ${promptSection}
+                    ${outputSection}
                   </div>
                 </div>
-              `).join('');
+                `;
+              }).join('');
+              console.log('📝 Generated chat history HTML length:', chatHistoryHTML.length);
+            } else {
+              console.log('⚠️ No chat history to display');
             }
 
             const pipelineInfo = response.pipelineData ? response.pipelineData : {};
@@ -3210,8 +3271,63 @@ function reconnectToPipeline(pipelineId) {
 
             // Set up the global designer variable to point to existing chat container
             if (window.designer) {
+              console.log('✅ Designer exists, setting up reconnect...');
               window.designer.chatContainer = document.getElementById('chatContainer');
               window.designer.currentPipelineId = pipelineId;
+
+              // Load the pipeline template into the visual grid
+              if (response.pipelineData) {
+                console.log('🎨 Loading pipeline template into grid...');
+                console.log('📊 Pipeline data stages:', response.pipelineData.stages?.length);
+
+                // Clear existing nodes first
+                console.log('🧹 Clearing existing nodes before reconnect...');
+                window.designer.nodes.forEach(node => {
+                  if (node.element && node.element.parentNode) {
+                    node.element.parentNode.removeChild(node.element);
+                  }
+                });
+                window.designer.nodes.clear();
+                window.designer.connections = [];
+
+                // Now load the reconnected pipeline
+                window.designer.loadTemplateFromConfig(response.pipelineData);
+
+                // Update node visual states based on completed stages
+                if (response.pipelineData.completedStages) {
+                  response.pipelineData.completedStages.forEach(stageId => {
+                    window.designer.updateNodeVisualState(stageId, 'completed');
+                  });
+                }
+
+                // Mark current stage as running
+                if (response.pipelineData.currentStage) {
+                  const currentStageId = response.pipelineData.stages.find(
+                    s => s.name === response.pipelineData.currentStage
+                  )?.id;
+                  if (currentStageId) {
+                    window.designer.updateNodeVisualState(currentStageId, 'running');
+                  }
+                }
+
+                // Attach stage outputs to nodes if available
+                if (response.stageOutputs) {
+                  for (const [stageId, output] of Object.entries(response.stageOutputs)) {
+                    for (const [nodeId, node] of window.designer.nodes) {
+                      if (node.id === stageId) {
+                        node.output = output.output;
+                        node.prompt = output.prompt;
+                        console.log(`📎 Attached output to node ${stageId}`);
+                        break;
+                      }
+                    }
+                  }
+                }
+              } else {
+                console.error('❌ No pipelineData in response!');
+              }
+            } else {
+              console.error('❌ window.designer not found!');
             }
           }
 
@@ -3221,6 +3337,47 @@ function reconnectToPipeline(pipelineId) {
           console.error('❌ Failed to reconnect:', response.error);
           alert(`Failed to reconnect to pipeline: ${response.error}`);
           ws.close();
+
+        } else if (response.type === 'pipeline-status') {
+          // Handle stage status updates
+          console.log('📊 Pipeline status update:', response.content?.message);
+          if (window.designer && window.designer.chatContainer) {
+            const content = response.content;
+            const messageType = content.style === 'success' ? 'success' :
+                               content.style === 'error' ? 'error' : 'info';
+            window.designer.addChatMessage(
+              messageType,
+              content.agent || 'Pipeline',
+              content.message,
+              null,
+              content.type === 'stage-start' ? '▶️' :
+              content.type === 'stage-complete' ? '✅' : '📊'
+            );
+
+            // Update node visual state
+            if (content.agent) {
+              const agentLower = content.agent.toLowerCase();
+              if (content.type === 'stage-start') {
+                window.designer.updateNodeVisualState(agentLower, 'running');
+              } else if (content.type === 'stage-complete') {
+                window.designer.updateNodeVisualState(agentLower, 'completed');
+              }
+            }
+          }
+
+        } else if (response.type === 'pipeline-commentary') {
+          // Handle commentator updates
+          console.log('💬 Commentary:', response.content?.message);
+          if (window.designer && window.designer.chatContainer) {
+            const content = response.content;
+            window.designer.addChatMessage(
+              'info',
+              content.agent || 'COMMENTATOR',
+              content.message,
+              null,
+              '💬'
+            );
+          }
 
         } else if (response.type === 'pipeline-update' || response.type === 'pipeline-stage-update') {
           // Handle ongoing pipeline updates after reconnection
@@ -4248,6 +4405,7 @@ function executeCurrentPipeline() {
 
 // Initialize the designer
 const designer = new PipelineDesigner();
+window.designer = designer; // Expose for reconnect functionality
 
 // Function to load templates from server and populate the sidebar
 async function loadTemplatesFromServer() {
@@ -4916,11 +5074,34 @@ function restoreState() {
 function setupAutoSave() {
   // Override node movement to trigger saves
   const originalHandlers = [];
-  
+
   // Save state on any significant change
   setInterval(() => {
     if (designer && designer.nodes.size > 0) {
       saveState();
     }
   }, 30000); // Auto-save every 30 seconds
+}
+
+// Toggle properties panel collapse/expand
+function togglePropertiesPanel() {
+  const panel = document.getElementById('propertiesPanel');
+  if (panel) {
+    panel.classList.toggle('collapsed');
+  }
+}
+
+// Toggle output/prompt visibility in chat
+function toggleOutput(elementId) {
+  const element = document.getElementById(elementId);
+  if (element) {
+    element.style.display = element.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+// Escape HTML for safe display
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }

@@ -48,6 +48,7 @@
       "inputs": ["create_reproduction"],
       "decisions": [
         {"choice": "execution_complete", "description": "Reproduction test executed, evidence collected"},
+        {"choice": "NO_SCRIPT_TO_RUN", "description": "No reproduction script found - reproduction_creator may need command implementation"},
         {"choice": "FRAMEWORK_ERROR", "description": "Test infrastructure failure detected"}
       ]
     },
@@ -124,6 +125,30 @@
         {"choice": "framework_fixed_retry_validation", "description": "Test infrastructure fixed, retry validation test"},
         {"choice": "cannot_fix", "description": "Framework issue requires manual intervention"}
       ]
+    },
+    {
+      "id": "finalize_tests",
+      "name": "Finalize Bug Fix Tests",
+      "type": "validator",
+      "agent": "qa_tester",
+      "description": "Ensure all reproduction and validation tests are properly named, documented, and ready for the test library",
+      "inputs": ["validate_fix", "create_reproduction", "run_validation"],
+      "decisions": [
+        {"choice": "tests_finalized", "description": "Tests are properly documented and ready for collection"}
+      ]
+    },
+    {
+      "id": "collect_tests_to_library",
+      "name": "Collect Tests to Library",
+      "type": "executor",
+      "agent": "test_librarian",
+      "description": "Scan for test files, validate them, copy to test library, create metadata, and commit to git",
+      "inputs": ["finalize_tests", "create_reproduction", "run_validation"],
+      "decisions": [
+        {"choice": "tests_collected_and_committed", "description": "Tests collected, validated, and committed to git"},
+        {"choice": "no_tests_found", "description": "No test files found in working directory"},
+        {"choice": "all_tests_invalid", "description": "Tests found but all failed validation"}
+      ]
     }
   ],
   "flow": {
@@ -165,6 +190,12 @@
         "to": "verify_bug",
         "condition": "execution_complete",
         "description": "Evidence collected, verify bug exists"
+      },
+      {
+        "from": "run_reproduction",
+        "to": "create_reproduction",
+        "condition": "NO_SCRIPT_TO_RUN",
+        "description": "No script found, return to reproduction_creator to create one"
       },
       {
         "from": "run_reproduction",
@@ -222,9 +253,9 @@
       },
       {
         "from": "validate_fix",
-        "to": null,
+        "to": "finalize_tests",
         "condition": "FIX_VERIFIED",
-        "description": "Fix verified successful - PIPELINE ENDS"
+        "description": "Fix verified, finalize tests for library"
       },
       {
         "from": "validate_fix",
@@ -255,6 +286,30 @@
         "to": null,
         "condition": "cannot_fix",
         "description": "Framework issue requires manual intervention - PIPELINE ENDS"
+      },
+      {
+        "from": "finalize_tests",
+        "to": "collect_tests_to_library",
+        "condition": "tests_finalized",
+        "description": "Tests finalized, collect to library"
+      },
+      {
+        "from": "collect_tests_to_library",
+        "to": null,
+        "condition": "tests_collected_and_committed",
+        "description": "Tests collected and committed - PIPELINE ENDS"
+      },
+      {
+        "from": "collect_tests_to_library",
+        "to": null,
+        "condition": "no_tests_found",
+        "description": "No tests to collect - PIPELINE ENDS"
+      },
+      {
+        "from": "collect_tests_to_library",
+        "to": null,
+        "condition": "all_tests_invalid",
+        "description": "All tests invalid - PIPELINE ENDS"
       }
     ]
   },

@@ -1,0 +1,505 @@
+I'll create a comprehensive test plan for the Radial HUD hover delay feature with WebSocket-based automation.
+
+```json
+{
+  "testPlan": {
+    "feature": "Radial HUD Hover Delay with Progress Indicator",
+    "automationType": "WebSocket (ws://localhost:8765) + Browser Automation",
+    "totalTestCases": 8,
+    "testStrategy": "Combine WebSocket commands with browser interaction simulation to verify hover behavior, timing accuracy, and visual feedback"
+  },
+  "testCases": [
+    {
+      "id": "TC-001",
+      "description": "Verify menu does NOT open on instant cursor hover (< 0.5s)",
+      "automationSequence": [
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": false}}
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 200,
+          "description": "Hover for 200ms then move away"
+        },
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": false}},
+          "assertion": "Menu should remain closed"
+        }
+      ],
+      "evidenceToCapture": [
+        "Screenshot showing no radial HUD after 200ms hover",
+        "evidence.json with HUD state queries",
+        "Timestamp log showing hover duration < 500ms"
+      ],
+      "successCriteria": "radialHUDVisible remains false after short hover"
+    },
+    {
+      "id": "TC-002",
+      "description": "Verify menu DOES open after 0.5s continuous hover",
+      "automationSequence": [
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": false}}
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 550,
+          "description": "Hover for 550ms (>0.5s threshold)"
+        },
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": true}},
+          "assertion": "Menu should be open after delay"
+        },
+        {
+          "command": "getHUDElements",
+          "expectedResponse": {"success": true, "data": {"elements": ["approach", "orbit", "dock", "warp"]}}
+        }
+      ],
+      "evidenceToCapture": [
+        "Screenshot showing radial HUD opened at ~500ms mark",
+        "evidence.json with state transition (false → true)",
+        "Performance timing showing 500ms ± 50ms tolerance"
+      ],
+      "successCriteria": "radialHUDVisible transitions to true within 450-550ms window"
+    },
+    {
+      "id": "TC-003",
+      "description": "Verify progress indicator appears and animates during hover",
+      "automationSequence": [
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 0,
+          "description": "Start hovering"
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {
+              "visible": true,
+              "progress": 0.0
+            }
+          },
+          "timing": "Immediately after hover starts"
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {
+              "visible": true,
+              "progress": {"min": 0.4, "max": 0.6}
+            }
+          },
+          "timing": "At 250ms mark (50% progress)"
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {
+              "visible": true,
+              "progress": {"min": 0.9, "max": 1.0}
+            }
+          },
+          "timing": "At 500ms mark (100% progress)"
+        }
+      ],
+      "evidenceToCapture": [
+        "Screenshots at 0ms, 250ms, 500ms showing progress fill",
+        "Progress values logged at each checkpoint",
+        "Visual comparison showing fill animation"
+      ],
+      "successCriteria": "Progress indicator visible throughout hover, fills from 0% to 100% smoothly"
+    },
+    {
+      "id": "TC-004",
+      "description": "Verify timer resets when hover is interrupted before 0.5s",
+      "automationSequence": [
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 300,
+          "description": "Hover for 300ms"
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {"progress": {"min": 0.5, "max": 0.7}}
+          },
+          "timing": "At 300ms (60% progress)"
+        },
+        {
+          "action": "simulateMouseOut",
+          "description": "Move cursor away"
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {"visible": false, "progress": 0.0}
+          },
+          "timing": "After mouse out"
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 550,
+          "description": "Re-hover for full 550ms"
+        },
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": true}},
+          "assertion": "Menu opens only after FULL second hover, not partial"
+        }
+      ],
+      "evidenceToCapture": [
+        "Timeline showing: hover(300ms) → reset → hover(550ms) → open",
+        "Progress values reset to 0 after interruption",
+        "evidence.json showing state transitions"
+      ],
+      "successCriteria": "Timer resets completely on interruption; menu requires full 0.5s on re-hover"
+    },
+    {
+      "id": "TC-005",
+      "description": "Verify no performance impact (60 FPS maintained during hover)",
+      "automationSequence": [
+        {
+          "command": "startPerformanceMonitoring",
+          "params": {"duration": 2000},
+          "expectedResponse": {"success": true}
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 1000,
+          "description": "Hover for 1 second while monitoring FPS"
+        },
+        {
+          "command": "getPerformanceMetrics",
+          "expectedResponse": {
+            "success": true,
+            "data": {
+              "averageFPS": {"min": 58, "max": 62},
+              "frameDrops": {"max": 2},
+              "worstFrameTime": {"max": 20}
+            }
+          }
+        }
+      ],
+      "evidenceToCapture": [
+        "FPS graph over 2-second window",
+        "Frame timing data during hover period",
+        "Performance report showing <2 frame drops"
+      ],
+      "successCriteria": "Average FPS ≥ 58, no sustained frame drops, smooth animation"
+    },
+    {
+      "id": "TC-006",
+      "description": "Verify rapid hover on/off behavior (spam test)",
+      "automationSequence": [
+        {
+          "action": "simulateRapidHoverCycle",
+          "params": {
+            "cycles": 10,
+            "hoverDuration": 100,
+            "gapDuration": 50
+          },
+          "description": "Hover for 100ms, leave for 50ms, repeat 10 times"
+        },
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": false}},
+          "assertion": "Menu should NOT open from rapid partial hovers"
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 550,
+          "description": "Final sustained hover"
+        },
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": true}},
+          "assertion": "Menu opens normally after spam test"
+        }
+      ],
+      "evidenceToCapture": [
+        "Log of all 10 hover cycles with durations",
+        "Confirmation HUD stayed closed during rapid cycles",
+        "Final successful open after spam test"
+      ],
+      "successCriteria": "Rapid partial hovers don't trigger menu; system remains stable and responsive"
+    },
+    {
+      "id": "TC-007",
+      "description": "Verify menu doesn't re-trigger hover when already open",
+      "automationSequence": [
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 550,
+          "description": "Initial hover to open menu"
+        },
+        {
+          "command": "getHUDState",
+          "expectedResponse": {"success": true, "data": {"radialHUDVisible": true}}
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {"visible": false}
+          },
+          "assertion": "Progress indicator should disappear once menu is open"
+        },
+        {
+          "action": "simulateMouseOut",
+          "description": "Move cursor away from ship"
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 100,
+          "description": "Brief re-hover on open menu"
+        },
+        {
+          "command": "getProgressIndicatorState",
+          "expectedResponse": {
+            "success": true,
+            "data": {"visible": false}
+          },
+          "assertion": "No hover timer when menu already open"
+        }
+      ],
+      "evidenceToCapture": [
+        "Screenshots showing no progress indicator when menu open",
+        "State logs confirming no timer restart"
+      ],
+      "successCriteria": "Hover timer only active when menu is closed; no indicator when menu already visible"
+    },
+    {
+      "id": "TC-008",
+      "description": "Verify timing accuracy across different frame rates",
+      "automationSequence": [
+        {
+          "command": "setTargetFrameRate",
+          "params": {"fps": 30},
+          "description": "Simulate lower-end hardware"
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 550
+        },
+        {
+          "command": "getHoverTiming",
+          "expectedResponse": {
+            "success": true,
+            "data": {"actualDuration": {"min": 450, "max": 550}}
+          },
+          "assertion": "Timer accurate even at 30 FPS"
+        },
+        {
+          "command": "setTargetFrameRate",
+          "params": {"fps": 120},
+          "description": "Simulate high-refresh display"
+        },
+        {
+          "action": "simulateMouseOver",
+          "target": "ship",
+          "duration": 550
+        },
+        {
+          "command": "getHoverTiming",
+          "expectedResponse": {
+            "success": true,
+            "data": {"actualDuration": {"min": 450, "max": 550}}
+          },
+          "assertion": "Timer accurate even at 120 FPS"
+        }
+      ],
+      "evidenceToCapture": [
+        "Timing logs at 30 FPS and 120 FPS",
+        "Comparison showing consistent 500ms threshold",
+        "Frame-independent timing verification"
+      ],
+      "successCriteria": "Timer uses timestamp-based timing (not frame counting); accurate within ±50ms regardless of FPS"
+    }
+  ],
+  "requiredWebSocketCommands": [
+    {
+      "command": "getHUDState",
+      "description": "Returns current RadialHUD visibility state",
+      "expectedFormat": {"success": true, "data": {"radialHUDVisible": boolean}}
+    },
+    {
+      "command": "getHUDElements",
+      "description": "Returns list of visible HUD menu options",
+      "expectedFormat": {"success": true, "data": {"elements": ["string array"]}}
+    },
+    {
+      "command": "getProgressIndicatorState",
+      "description": "Returns hover progress indicator state and progress value",
+      "expectedFormat": {
+        "success": true,
+        "data": {
+          "visible": boolean,
+          "progress": number
+        }
+      }
+    },
+    {
+      "command": "startPerformanceMonitoring",
+      "description": "Begins FPS/frame time tracking",
+      "params": {"duration": number},
+      "expectedFormat": {"success": true}
+    },
+    {
+      "command": "getPerformanceMetrics",
+      "description": "Returns performance data from monitoring period",
+      "expectedFormat": {
+        "success": true,
+        "data": {
+          "averageFPS": number,
+          "frameDrops": number,
+          "worstFrameTime": number
+        }
+      }
+    },
+    {
+      "command": "getHoverTiming",
+      "description": "Returns actual hover duration measured by system",
+      "expectedFormat": {"success": true, "data": {"actualDuration": number}}
+    },
+    {
+      "command": "setTargetFrameRate",
+      "description": "Simulates different frame rates for testing",
+      "params": {"fps": number},
+      "expectedFormat": {"success": true}
+    }
+  ],
+  "browserAutomationActions": [
+    {
+      "action": "simulateMouseOver",
+      "description": "Moves cursor over ship and holds for specified duration",
+      "params": {
+        "target": "ship identifier",
+        "duration": "milliseconds to hover"
+      }
+    },
+    {
+      "action": "simulateMouseOut",
+      "description": "Moves cursor away from ship"
+    },
+    {
+      "action": "simulateRapidHoverCycle",
+      "description": "Rapidly hovers on/off for stress testing",
+      "params": {
+        "cycles": "number of on/off cycles",
+        "hoverDuration": "ms per hover",
+        "gapDuration": "ms between hovers"
+      }
+    }
+  ],
+  "automatedTestScript": "/mnt/c/github/superstarships/tests/test_hover_delay_radial_hud.js",
+  "evidenceOutputDirectory": "/mnt/c/github/superstarships/test-evidence/hover-delay/",
+  "successCriteria": {
+    "overall": "All 8 test cases pass with evidence captured",
+    "timing": "Menu opens at 500ms ± 50ms tolerance",
+    "visual": "Progress indicator animates smoothly 0-100%",
+    "interruption": "Timer resets completely when hover interrupted",
+    "performance": "No FPS impact (≥58 FPS maintained)",
+    "stability": "Handles rapid hover spam without errors"
+  },
+  "testExecution": {
+    "setup": [
+      "Start game with WebSocket automation enabled",
+      "Ensure ship is in open space (not docked)",
+      "Clear any existing HUD state",
+      "Initialize performance monitoring"
+    ],
+    "cleanup": [
+      "Close any open HUDs",
+      "Stop performance monitoring",
+      "Save all evidence files",
+      "Generate test report JSON"
+    ]
+  }
+}
+```
+
+## Implementation Notes for Test Script
+
+The test script (`tests/test_hover_delay_radial_hud.js`) should:
+
+1. **Use Puppeteer/Playwright** for browser automation to simulate precise mouse movements
+2. **Combine WebSocket commands** with browser DOM inspection for comprehensive validation
+3. **Capture timestamps** at critical points (hover start, 250ms, 500ms, menu open)
+4. **Screenshot capture** at each test phase for visual evidence
+5. **Performance monitoring** using browser Performance API
+6. **Evidence collection** in structured JSON format with all test data
+
+## Example Test Script Structure
+
+```javascript
+const puppeteer = require('puppeteer');
+const WebSocket = require('ws');
+
+class HoverDelayTester {
+  constructor() {
+    this.ws = null;
+    this.browser = null;
+    this.evidence = [];
+  }
+
+  async setup() {
+    // Connect WebSocket
+    this.ws = new WebSocket('ws://localhost:8765');
+    
+    // Launch browser
+    this.browser = await puppeteer.launch({headless: false});
+    this.page = await this.browser.newPage();
+    await this.page.goto('http://localhost:8080');
+  }
+
+  async testCase001_NoInstantOpen() {
+    const startTime = Date.now();
+    
+    // Get ship position via WebSocket
+    const shipPos = await this.sendCommand('getShipPosition');
+    
+    // Hover for 200ms using Puppeteer
+    await this.page.mouse.move(shipPos.x, shipPos.y);
+    await this.page.waitForTimeout(200);
+    await this.page.mouse.move(0, 0); // Move away
+    
+    // Check HUD state
+    const hudState = await this.sendCommand('getHUDState');
+    
+    this.evidence.push({
+      testCase: 'TC-001',
+      hoverDuration: 200,
+      menuOpened: hudState.data.radialHUDVisible,
+      expected: false,
+      passed: !hudState.data.radialHUDVisible
+    });
+  }
+
+  async sendCommand(cmd, params = {}) {
+    return new Promise((resolve) => {
+      this.ws.send(JSON.stringify({command: cmd, ...params}));
+      this.ws.once('message', (data) => resolve(JSON.parse(data)));
+    });
+  }
+}
+```
+
+DECISION: test_plan_ready

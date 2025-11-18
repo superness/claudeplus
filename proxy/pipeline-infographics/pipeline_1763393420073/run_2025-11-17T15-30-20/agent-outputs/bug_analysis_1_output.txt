@@ -1,0 +1,35 @@
+Based on my analysis of the ship movement system, I can now provide a complete bug analysis:
+
+```json
+{
+  "bugSummary": "Ship throttle controls (W/S keys) do not affect ship velocity - ship remains stationary despite throttle input and navigation commands",
+  "expectedBehavior": "When player adjusts throttle using W/S keys or sets navigation targets, the ship should accelerate and move in the specified direction at the requested speed. Ship orientation should rotate to face the direction of travel.",
+  "actualBehavior": "Ship remains stationary (velocity stays at 0) even when throttle is increased via W/S keys. Ship orientation does not update when it should be moving. Throttle input is received by InputManager but does not result in actual ship movement.",
+  "affectedSystems": [
+    "InputManager (throttle input handling)",
+    "Ship entity (navigation and thrust calculation)",
+    "ShipPhysics (velocity application)",
+    "SceneManager (visual position updates)",
+    "SpaceshipSimulator (main update loop)"
+  ],
+  "severity": "CRITICAL",
+  "reproductionSteps": [
+    "Step 1: Open game in browser (index.html)",
+    "Step 2: Press 'W' key to increase throttle (observe throttle level logged to console)",
+    "Step 3: Observe ship HUD - throttle percentage should increase (0% → 10% → 20%...)",
+    "Step 4: Observe ship position/velocity in debug info - ship should move but remains at velocity 0",
+    "Step 5: Alternatively, double-click on empty space to set navigation target",
+    "Step 6: Observe that ship still does not move toward target despite navigation command being set",
+    "Step 7: Check console logs - should see navigation commands with speedSetting > 0 but ship velocity remains 0"
+  ],
+  "likelyFiles": [
+    "/mnt/c/github/superstarships/js/core/InputManager.js",
+    "/mnt/c/github/superstarships/js/entities/Ship.js",
+    "/mnt/c/github/superstarships/js/physics/ShipPhysics.js",
+    "/mnt/c/github/superstarships/js/SpaceshipSimulator.js"
+  ],
+  "hypothesis": "Data flow break between InputManager throttle input → Ship thrust calculation → ShipPhysics velocity application. Possible causes:\n\n1. InputManager.getThrustMagnitude() returns throttle value but this may not be properly converted to thrust vector\n2. Ship.updateWithNavigation() calculates thrustVector but may have magnitude field corruption/loss during object spread operations\n3. ShipPhysics.updatePhysics() receives thrustVector but may not properly apply it to targetVelocity calculation\n4. Explicit safeguard in ShipPhysics line 124-128 checks for null thrustInput and sets targetVelocity to zero - this may be triggering incorrectly\n5. Bug fix comment at ShipPhysics:76-92 mentions 'BUGFIX: Explicitly preserve magnitude field' suggesting previous magnitude loss issues\n6. Ship.js:352-359 has another BUGFIX checking for magnitude corruption and restoring it from navigationCommand.speedSetting\n\nMost likely: thrustVector.magnitude is being lost or set to 0 somewhere in the data flow between Ship calculating it and ShipPhysics receiving it, causing ShipPhysics to think there's no thrust input and set targetVelocity to zero."
+}
+```
+
+DECISION: analysis_complete

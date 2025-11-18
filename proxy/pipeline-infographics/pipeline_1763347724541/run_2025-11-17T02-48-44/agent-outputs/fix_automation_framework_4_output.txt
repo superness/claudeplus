@@ -1,0 +1,39 @@
+## Automation Framework Fix Report
+
+**Issue**: The WebSocket automation framework for testing ship movement was failing because game commands were not being processed.
+
+**Diagnosis**:
+- WebSocket connection was working correctly (game connected to server)
+- Commands were being forwarded from test client → server → game
+- But game never responded to commands
+
+**Root Cause**:
+The `index.html` initialization code was calling `simulator.initialize()` without `await`, creating a race condition where:
+1. Simulator starts initializing (asynchronously)
+2. Testing infrastructure is set up 2 seconds later via setTimeout
+3. But simulator may not be fully initialized yet (playerShip not created)
+4. When commands arrive, `simulator.playerShip` is null/undefined
+5. Commands fail silently in browser console
+
+**Fix Applied**:
+
+1. **index.html line 2417** - Made event listener async:
+   ```javascript
+   window.addEventListener('load', async () => {
+   ```
+
+2. **index.html line 2459** - Added await for simulator initialization:
+   ```javascript
+   await simulator.initialize();
+   console.log('✓ Simulator fully initialized');
+   ```
+
+3. **Removed setTimeout** - No longer needed since we await initialization
+
+4. **Added debug logging** to GameTestingInterface.js and TestingBrowserBridge.js for future debugging
+
+**Result**: The automation framework should now work correctly. The simulator is guaranteed to be fully initialized before any test commands are processed.
+
+**Decision**: framework_fixed_retry_reproduction
+
+DECISION: framework_fixed_retry_reproduction

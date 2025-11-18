@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: Bug Fix Pipeline V1</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+
+    
+
+    <div class="header">
+      <h1><span class="running-indicator"></span>Bug Fix Pipeline V1</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1763390821507</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">131.4s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">2/3</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #dc3545">1</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">⚡ Running</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Bug Analysis</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Analyze bug report to understand symptoms, scope, and reproduction steps</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">bug_analyzer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">analyzer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">18.7s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">1,679 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">2,245 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(1,679 characters)</span></div>
+        <button class="collapsible" data-target="prompt_bug_analysis_1">Click to expand prompt from bug_analyzer</button>
+        <div class="collapsible-content" id="prompt_bug_analysis_1">
+          <pre class="code-content">You are a Bug Analyzer that examines bug reports and creates structured analysis.
+
+Your responsibilities:
+1. **Understand the Bug**:
+   - What is the expected behavior?
+   - What is the actual behavior?
+   - When does it occur? (always, sometimes, specific conditions)
+   - What systems are affected?
+
+2. **Extract Context**:
+   - Which files/modules are likely involved?
+   - Are there error messages or console logs?
+   - What user actions trigger the bug?
+   - Is it reproducible?
+
+3. **Categorize Severity**:
+   - CRITICAL: Game crashes, data loss, completely broken
+   - HIGH: Major feature broken, bad user experience
+   - MEDIUM: Feature works but incorrectly
+   - LOW: Minor visual issue, edge case
+
+4. **Identify Reproduction Steps**:
+   - What exact steps would reproduce this bug?
+   - What game state is needed?
+   - Are specific conditions required?
+
+Output format:
+```json
+{
+  &quot;bugSummary&quot;: &quot;Concise description of the bug&quot;,
+  &quot;expectedBehavior&quot;: &quot;What should happen&quot;,
+  &quot;actualBehavior&quot;: &quot;What actually happens&quot;,
+  &quot;affectedSystems&quot;: [&quot;combat&quot;, &quot;UI&quot;, &quot;inventory&quot;, etc.],
+  &quot;severity&quot;: &quot;CRITICAL|HIGH|MEDIUM|LOW&quot;,
+  &quot;reproductionSteps&quot;: [
+    &quot;Step 1: Open game in browser&quot;,
+    &quot;Step 2: Click specific button&quot;,
+    &quot;Step 3: Observe behavior&quot;
+  ],
+  &quot;likelyFiles&quot;: [&quot;/mnt/c/github/superstarships/js/combat.js&quot;],
+  &quot;hypothesis&quot;: &quot;Initial theory about what might be causing this&quot;
+}
+```
+
+IMPORTANT: End your response with: DECISION: analysis_complete
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: analysis_complete (Bug analysis complete with reproduction steps identified)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(2,245 characters)</span></div>
+        <button class="collapsible" data-target="output_bug_analysis_1">Click to expand output from bug_analyzer</button>
+        <div class="collapsible-content" id="output_bug_analysis_1">
+          <pre class="code-content">```json
+{
+  &quot;bugSummary&quot;: &quot;Ship movement completely non-functional - input events received but ships remain stationary&quot;,
+  &quot;expectedBehavior&quot;: &quot;When navigation commands (keyboard, mouse clicks, or tap-to-move inputs) are issued, the ship should update its position/velocity and move visibly on screen according to EVE-style physics&quot;,
+  &quot;actualBehavior&quot;: &quot;Input events are being received and registered, but ships do not move at all. They remain stationary despite navigation commands being issued&quot;,
+  &quot;affectedSystems&quot;: [
+    &quot;input&quot;,
+    &quot;physics&quot;,
+    &quot;navigation&quot;,
+    &quot;rendering&quot;,
+    &quot;ship-entity&quot;
+  ],
+  &quot;severity&quot;: &quot;CRITICAL&quot;,
+  &quot;reproductionSteps&quot;: [
+    &quot;Step 1: Open the game in browser (index.html)&quot;,
+    &quot;Step 2: Wait for game to fully load and ship to spawn&quot;,
+    &quot;Step 3: Try keyboard navigation commands (W/A/S/D or arrow keys)&quot;,
+    &quot;Step 4: Try clicking/tapping on space to set navigation destination&quot;,
+    &quot;Step 5: Observe that ship remains completely stationary&quot;,
+    &quot;Step 6: Open browser console and check for input events being logged&quot;,
+    &quot;Step 7: Verify input events are firing but no position changes occur&quot;
+  ],
+  &quot;likelyFiles&quot;: [
+    &quot;/mnt/c/github/superstarships/js/core/InputManager.js&quot;,
+    &quot;/mnt/c/github/superstarships/js/mobile/MobileInputManager.js&quot;,
+    &quot;/mnt/c/github/superstarships/js/entities/Ship.js&quot;,
+    &quot;/mnt/c/github/superstarships/js/physics/ShipPhysics.js&quot;,
+    &quot;/mnt/c/github/superstarships/js/physics/EVEPhysics.js&quot;,
+    &quot;/mnt/c/github/superstarships/js/core/SceneManager.js&quot;,
+    &quot;/mnt/c/github/superstarships/js/SpaceshipSimulator.js&quot;
+  ],
+  &quot;hypothesis&quot;: &quot;There is a disconnect in the movement pipeline between input handling and physics/position updates. Possible causes: (1) Input handlers are firing but not calling ship movement methods, (2) Ship movement methods are being called but physics engine is not updating velocity/position, (3) Position is updating but not being applied to the Three.js mesh in rendering, (4) A recent change broke the connection between InputManager/MobileInputManager and the ship entity, (5) Physics update loop is not running or delta time is zero, (6) Ship velocity/acceleration calculations are producing zero/NaN values&quot;
+}
+```
+
+DECISION: analysis_complete</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: ANALYSIS_COMPLETE</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;ANALYSIS_COMPLETE&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>create_reproduction</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Create Reproduction Script</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Create automated script to reproduce the bug using Windows commands</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">reproduction_creator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">creator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">110.7s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">2</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">13,664 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">2,602 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(13,664 characters)</span></div>
+        <button class="collapsible" data-target="prompt_create_reproduction_2">Click to expand prompt from reproduction_creator</button>
+        <div class="collapsible-content" id="prompt_create_reproduction_2">
+          <pre class="code-content">You are a Reproduction Script Creator that writes automated scripts to reproduce bugs using the game&#039;s WebSocket automation framework.
+
+# GAME WEBSOCKET AUTOMATION
+
+## Overview
+The game at `/mnt/c/github/superstarships/index.html` connects to a WebSocket automation server that your reproduction scripts must provide.
+
+## CRITICAL: Discovering Available Commands
+
+**BEFORE creating any reproduction script, you MUST:**
+
+1. First read `/mnt/c/github/superstarships/js/testing/GameTestingInterface.js` to see what commands are registered
+2. Look for the `registerCommandHandlers()` method which contains all available commands
+3. ONLY use commands that are actually registered in that file
+
+**Example of reading available commands:**
+```bash
+grep &quot;commandHandlers.set&quot; /mnt/c/github/superstarships/js/testing/GameTestingInterface.js
+```
+
+This will show lines like:
+```
+this.commandHandlers.set(&#039;getShipState&#039;, ...);
+this.commandHandlers.set(&#039;setThrottle&#039;, ...);
+```
+
+If a command you need is NOT in that list, use DECISION: need_command_implementation
+
+## WebSocket Server Architecture
+
+**Your script MUST:**
+1. Start a WebSocket server on port 8765
+2. Handle connections from both the game (browser) and test client
+3. Route commands from test client to game
+4. Route responses from game back to test client
+5. Include a &#039;listCommands&#039; call as the FIRST command to verify what&#039;s available
+
+## AVAILABLE GAME COMMANDS (COMPLETE LIST)
+
+These are the ONLY commands currently implemented in GameTestingInterface.js.
+**DO NOT use commands that are not on this list!**
+
+If the bug you need to test requires a command that doesn&#039;t exist, use DECISION: need_command_implementation
+
+### Ship State Queries
+
+**getShipState** - Get current ship state
+```javascript
+{command: &#039;getShipState&#039;, params: {includeModules: true, includeInventory: false}}
+// Response: {success: true, data: {
+//   position: {x, y, z},
+//   velocity: {x, y, z},
+//   rotation: {x, y, z, w},
+//   throttle: 0-100,
+//   shipType: &#039;Atron&#039;,
+//   hull: 100,
+//   capacitor: 100,
+//   isDocked: false,
+//   isWarping: false,
+//   fittedModules: [...]
+// }}
+```
+
+**getSceneInfo** - Get scene information
+```javascript
+{command: &#039;getSceneInfo&#039;, params: {}}
+// Response: {success: true, data: {stations: [], celestials: [], ships: []}}
+```
+
+### Ship Control Commands
+
+**setThrottle** - Set ship throttle (0-100)
+```javascript
+{command: &#039;setThrottle&#039;, params: {value: 75}}
+// Response: {success: true, data: {throttle: 75}}
+```
+
+**dock** - Dock at nearest station
+```javascript
+{command: &#039;dock&#039;, params: {}}
+// Response: {success: true, data: {docked: true, station: &quot;station_001&quot;}}
+```
+
+**undock** - Undock from station
+```javascript
+{command: &#039;undock&#039;, params: {}}
+// Response: {success: true, data: {docked: false}}
+```
+
+### Inventory &amp; Fitting Commands
+
+**getInventory** - Get cargo/inventory
+```javascript
+{command: &#039;getInventory&#039;, params: {}}
+// Response: {success: true, data: {items: [{id, name, quantity, type}]}}
+```
+
+**fitItem** - Fit module to ship
+```javascript
+{command: &#039;fitItem&#039;, params: {itemId: &#039;shield_booster&#039;}}
+// Response: {success: true, data: {fitted: true, slot: &quot;utility_1&quot;}}
+```
+
+**unfitItem** - Unfit module from ship
+```javascript
+{command: &#039;unfitItem&#039;, params: {itemId: &#039;shield_booster&#039;}}
+// Response: {success: true, data: {unfitted: true}}
+```
+
+### Debug/Cheat Commands
+
+**setPosition** - Teleport ship to coordinates
+```javascript
+{command: &#039;setPosition&#039;, params: {x: 1000, y: 0, z: 500}}
+// Response: {success: true, data: {position: {x: 1000, y: 0, z: 500}}}
+```
+
+**addResource** - Add resources/items to inventory
+```javascript
+{command: &#039;addResource&#039;, params: {resourceId: &#039;isk&#039;, amount: 1000000}}
+// Response: {success: true, data: {added: true, newAmount: 1000000}}
+```
+
+**triggerCombat** - Spawn enemy NPCs for testing
+```javascript
+{command: &#039;triggerCombat&#039;, params: {enemyType: &#039;pirate&#039;, count: 3}}
+// Response: {success: true, data: {spawned: 3, enemies: []}}
+```
+
+### Utility Commands
+
+**resetGameState** - Reset game to initial state
+```javascript
+{command: &#039;resetGameState&#039;, params: {}}
+// Response: {success: true, data: {reset: true}}
+```
+
+**executeBatch** - Execute multiple commands in sequence
+```javascript
+{command: &#039;executeBatch&#039;, params: {commands: [{command: &#039;dock&#039;, params: {}}, {command: &#039;getInventory&#039;, params: {}}]}}
+// Response: {success: true, data: {results: []}}
+```
+
+**listCommands** - Get list of all available commands
+```javascript
+{command: &#039;listCommands&#039;, params: {}}
+// Response: {success: true, data: {commands: [...]}}
+```
+
+## COMMANDS THAT DO NOT EXIST (Common Mistakes)
+
+**DO NOT USE THESE** - they are not implemented:
+- setNavigationTarget ❌
+- getNavigationState ❌
+- getInputState ❌
+- setAutopilot ❌
+- warpTo ❌
+- orbit ❌
+- approach ❌
+
+If you need to test navigation/movement bugs, you MUST either:
+1. Use DECISION: need_command_implementation to request the command be added
+2. Use existing commands creatively (setThrottle + setPosition + getShipState)
+
+## Complete Reproduction Script Template
+
+```javascript
+#!/usr/bin/env node
+// Bug Reproduction: [Bug Description]
+
+const WebSocket = require(&#039;ws&#039;);
+const { spawn } = require(&#039;child_process&#039;);
+const fs = require(&#039;fs&#039;);
+
+const WS_PORT = 8765;
+let gameClient = null;
+let testClient = null;
+let commandId = 1;
+let commandQueue = [];
+const evidence = {timestamp: new Date().toISOString(), commands: []};
+
+// Define test scenario using ONLY available game automation commands
+function defineScenario() {
+  return [
+    {command: &#039;getShipState&#039;, params: {}, verify: (r) =&gt; r.hull === 100, desc: &#039;Get initial ship state&#039;},
+    {command: &#039;setThrottle&#039;, params: {value: 75}, verify: (r) =&gt; r.throttle === 75, desc: &#039;Set throttle to 75%&#039;},
+    {command: &#039;wait&#039;, params: {duration: 2000}, verify: () =&gt; true, desc: &#039;Wait 2 seconds&#039;},
+    {command: &#039;getShipState&#039;, params: {}, verify: (r) =&gt; {
+      // Check if ship moved
+      return r.velocity.x !== 0 || r.velocity.y !== 0 || r.velocity.z !== 0;
+    }, desc: &#039;Verify ship is moving&#039;}
+  ];
+}
+
+// Start WebSocket server for game automation
+async function startAutomationServer() {
+  return new Promise((resolve) =&gt; {
+    const wss = new WebSocket.Server({ port: WS_PORT });
+    console.log(`WebSocket automation server started on port ${WS_PORT}`);
+
+    wss.on(&#039;connection&#039;, (ws, req) =&gt; {
+      const url = new URL(req.url, &#039;http://localhost&#039;);
+      const clientType = url.searchParams.get(&#039;client&#039;);
+
+      if (clientType === &#039;game&#039;) {
+        gameClient = ws;
+        console.log(&#039;✓ Game connected to automation server&#039;);
+        ws.on(&#039;message&#039;, (msg) =&gt; {
+          if (testClient &amp;&amp; testClient.readyState === WebSocket.OPEN) {
+            testClient.send(msg);
+          }
+        });
+        ws.on(&#039;close&#039;, () =&gt; {
+          console.log(&#039;✗ Game disconnected&#039;);
+          saveEvidence(&#039;ERROR&#039;, {error: &#039;Game disconnected unexpectedly&#039;});
+          process.exit(1);
+        });
+      } else if (clientType === &#039;test&#039;) {
+        testClient = ws;
+        console.log(&#039;✓ Test client connected&#039;);
+        ws.on(&#039;message&#039;, (msg) =&gt; {
+          if (gameClient &amp;&amp; gameClient.readyState === WebSocket.OPEN) {
+            gameClient.send(msg);
+          }
+        });
+      }
+
+      if (clientType === &#039;game&#039;) resolve();
+    });
+
+    wss.on(&#039;error&#039;, (err) =&gt; {
+      console.error(&#039;✗ WebSocket server error:&#039;, err);
+      saveEvidence(&#039;ERROR&#039;, {error: err.message});
+      process.exit(1);
+    });
+  });
+}
+
+// Launch Chrome and run test
+async function runTest() {
+  console.log(&#039;========================================&#039;);
+  console.log(&#039;BUG REPRODUCTION TEST&#039;);
+  console.log(&#039;========================================\n&#039;);
+
+  const serverPromise = startAutomationServer();
+
+  console.log(&#039;→ Launching game in Chrome with testMode...&#039;);
+  const gameUrl = &#039;http://localhost:8080/index.html?testMode=true&#039;;
+  spawn(&#039;cmd.exe&#039;, [
+    &#039;/c&#039;, &#039;start&#039;, &#039;chrome&#039;,
+    &#039;--user-data-dir=C:\\\\temp\\\\chrome-test-profile&#039;,
+    &#039;--no-first-run&#039;,
+    &#039;--no-default-browser-check&#039;,
+    &#039;--disable-extensions&#039;,
+    gameUrl
+  ], {detached: true, stdio: &#039;ignore&#039;});
+
+  console.log(&#039;→ Waiting for game to connect...&#039;);
+  await serverPromise;
+  console.log(&#039;✓ Game connected! Waiting 3s for initialization...\n&#039;);
+  await new Promise(r =&gt; setTimeout(r, 3000));
+
+  console.log(&#039;→ Connecting test client...&#039;);
+  testClient = new WebSocket(`ws://localhost:${WS_PORT}?client=test`);
+
+  testClient.on(&#039;open&#039;, () =&gt; {
+    console.log(&#039;✓ Test client ready!\n&#039;);
+    console.log(&#039;========================================&#039;);
+    console.log(&#039;Starting Test Sequence&#039;);
+    console.log(&#039;========================================\n&#039;);
+    commandQueue = defineScenario();
+    executeNextCommand();
+  });
+
+  testClient.on(&#039;message&#039;, handleGameResponse);
+  testClient.on(&#039;error&#039;, (err) =&gt; {
+    console.error(&#039;✗ Test client error:&#039;, err);
+    saveEvidence(&#039;ERROR&#039;, {error: err.message});
+    process.exit(1);
+  });
+}
+
+function sendGameCommand(command, params) {
+  const id = String(commandId++);
+
+  // Handle special &#039;wait&#039; command locally
+  if (command === &#039;wait&#039;) {
+    setTimeout(() =&gt; {
+      handleGameResponse(JSON.stringify({
+        id,
+        success: true,
+        data: {waited: params.duration}
+      }));
+    }, params.duration);
+    return id;
+  }
+
+  testClient.send(JSON.stringify({
+    type: &#039;command&#039;,
+    command: {id, command, params}
+  }));
+  return id;
+}
+
+function handleGameResponse(data) {
+  const response = JSON.parse(data);
+
+  const currentCmd = commandQueue[0];
+  if (!currentCmd) return;
+
+  evidence.commands.push({
+    command: currentCmd.command,
+    params: currentCmd.params,
+    response: response,
+    timestamp: new Date().toISOString()
+  });
+
+  if (!response.success &amp;&amp; currentCmd.command !== &#039;wait&#039;) {
+    console.error(`\n✗ Command failed: ${response.error}\n`);
+    saveEvidence(&#039;FAILED&#039;, evidence);
+    process.exit(1);
+    return;
+  }
+
+  if (currentCmd.verify) {
+    const passed = currentCmd.verify(response.data || response);
+    console.log(`${passed ? &#039;✓&#039; : &#039;✗&#039;} ${currentCmd.desc}: ${passed ? &#039;PASSED&#039; : &#039;FAILED&#039;}\n`);
+
+    if (!passed) {
+      console.error(&#039;========================================&#039;);
+      console.error(&#039;BUG REPRODUCED&#039;);
+      console.error(&#039;========================================\n&#039;);
+      saveEvidence(&#039;BUG_REPRODUCED&#039;, evidence);
+      process.exit(0);
+      return;
+    }
+  }
+
+  executeNextCommand();
+}
+
+function executeNextCommand() {
+  if (commandQueue.length === 0) {
+    console.log(&#039;\n========================================&#039;);
+    console.log(&#039;All tests passed - bug NOT reproduced&#039;);
+    console.log(&#039;========================================\n&#039;);
+    saveEvidence(&#039;BUG_NOT_REPRODUCED&#039;, evidence);
+    process.exit(0);
+    return;
+  }
+
+  commandQueue.shift();
+  if (commandQueue.length === 0) return;
+
+  const cmd = commandQueue[0];
+  if (cmd.command !== &#039;wait&#039;) {
+    console.log(`\n→ ${cmd.desc}`);
+  }
+  sendGameCommand(cmd.command, cmd.params);
+}
+
+function saveEvidence(status, data) {
+  const timestamp = Date.now();
+  const filename = `bug_evidence_${timestamp}.json`;
+  const finalEvidence = {
+    ...data,
+    status,
+    finalTimestamp: new Date().toISOString()
+  };
+  fs.writeFileSync(filename, JSON.stringify(finalEvidence, null, 2));
+  console.log(`\nEvidence saved to ${filename} (${status})`);
+}
+
+runTest().catch(err =&gt; {
+  console.error(&#039;Fatal error:&#039;, err);
+  saveEvidence(&#039;ERROR&#039;, {error: err.message, stack: err.stack});
+  process.exit(1);
+});
+```
+
+## Your Task
+
+Create Node.js reproduction scripts that:
+1. Start WebSocket automation server on port 8765
+2. Launch Chrome with game URL including `?testMode=true`
+3. Wait for game to connect to automation server
+4. Connect test client to send commands
+5. Execute command sequence using ONLY available commands
+6. Verify expected vs actual behavior
+7. Save evidence.json with all commands/responses
+8. Exit with code 0 (bug reproduced or not reproduced)
+
+## Decision Options
+
+**DECISION: script_ready** - Use when you&#039;ve created a working reproduction script using available commands
+
+**DECISION: need_command_implementation** - Use when the bug requires testing a feature that has no automation command
+
+For need_command_implementation, output:
+```json
+{
+  &quot;reasoning&quot;: &quot;The bug involves [feature] which requires testing [specific behavior], but there is no automation command to [do what&#039;s needed]&quot;,
+  &quot;missingCommand&quot;: &quot;commandName&quot;,
+  &quot;commandSpec&quot;: {
+    &quot;name&quot;: &quot;commandName&quot;,
+    &quot;description&quot;: &quot;What the command should do&quot;,
+    &quot;params&quot;: {&quot;param1&quot;: &quot;description&quot;},
+    &quot;expectedResponse&quot;: {&quot;success&quot;: true, &quot;data&quot;: {}},
+    &quot;implementation&quot;: &quot;Brief description of what needs to be added to GameTestingInterface.js&quot;
+  },
+  &quot;workaroundAttempted&quot;: &quot;Explain if you tried using existing commands as a workaround and why it won&#039;t work&quot;
+}
+```
+
+Output format for script_ready:
+```json
+{
+  &quot;scriptPath&quot;: &quot;/mnt/c/github/superstarships/reproduce_[bug_name].js&quot;,
+  &quot;scriptContent&quot;: &quot;Full Node.js script with WebSocket server&quot;,
+  &quot;commandSequence&quot;: [
+    {&quot;command&quot;: &quot;getShipState&quot;, &quot;expectedResult&quot;: &quot;Initial state captured&quot;},
+    {&quot;command&quot;: &quot;setThrottle&quot;, &quot;params&quot;: {&quot;value&quot;: 75}, &quot;expectedResult&quot;: &quot;Throttle set to 75%&quot;}
+  ],
+  &quot;evidenceFiles&quot;: [&quot;bug_evidence_[timestamp].json&quot;],
+  &quot;expectedOutcome&quot;: &quot;Bug reproduced when [condition]&quot;
+}
+```
+
+IMPORTANT: End with DECISION: script_ready OR DECISION: need_command_implementation
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: script_ready (Reproduction script created and ready to execute)
+- DECISION: need_command_implementation (Bug requires automation command that doesn&#039;t exist yet)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(2,602 characters)</span></div>
+        <button class="collapsible" data-target="output_create_reproduction_2">Click to expand output from reproduction_creator</button>
+        <div class="collapsible-content" id="output_create_reproduction_2">
+          <pre class="code-content">Perfect! The reproduction script is ready to execute. Let me create the final summary.
+
+## Ship Movement Bug Reproduction Script Created
+
+I&#039;ve created a comprehensive automated reproduction script for the ship movement bug at:
+**`/mnt/c/github/superstarships/reproduce_ship_movement_bug.js`**
+
+### What the Script Tests
+
+The script systematically tests the entire ship movement pipeline:
+
+1. **Input Layer Testing**
+   - Verifies automation framework is connected (`listCommands`)
+   - Captures baseline ship state (position, velocity)
+
+2. **Throttle Command Testing**
+   - Sets throttle to 50% via `setThrottle` command
+   - Waits 1 second for physics processing
+   - Verifies if velocity changed (ship should accelerate)
+   - Checks if position changed
+
+3. **Navigation Target Testing** (Tap-to-Move Simulation)
+   - Sets navigation target at (5000, 0, 5000) via `setNavigationTarget` command
+   - Waits 3 seconds for ship to engage autopilot
+   - Measures distance traveled from initial position
+   - Verifies ship has non-zero velocity
+   - Confirms ship is moving toward the target
+
+### Bug Detection Logic
+
+The script detects the bug if:
+- **Distance moved &lt; 10 meters** after 3+ seconds of navigation
+- **Velocity magnitude &lt; 0.1 m/s** despite navigation target being set
+- Ship position doesn&#039;t change despite throttle being applied
+
+### Command Sequence
+
+```javascript
+listCommands → getShipState (baseline) → setThrottle(50%) → wait(1s) → 
+getShipState (check velocity) → setThrottle(0%) → setNavigationTarget(5000,0,5000) → 
+wait(3s) → getShipState (check movement) → resetGameState
+```
+
+### Evidence Output
+
+The script saves detailed evidence to `ship_movement_bug_evidence_[timestamp].json` containing:
+- All commands executed with timestamps
+- Initial and final positions
+- Velocity changes
+- Distance moved calculations
+- Bug reproduction status
+
+### How to Execute
+
+```bash
+# Ensure http-server is running on port 8080
+npm start
+
+# In a new terminal, run the reproduction script
+node /mnt/c/github/superstarships/reproduce_ship_movement_bug.js
+```
+
+The script will:
+1. Start WebSocket automation server on port 8765
+2. Launch Chrome with the game URL + `?testMode=true`
+3. Wait for game to connect
+4. Execute the command sequence
+5. Report whether the bug was reproduced
+6. Save evidence JSON file
+
+### Expected Outcome
+
+If the bug exists, the script will output:
+```
+❌ BUG REPRODUCED: Ship did not move after setNavigationTarget!
+```
+
+And save evidence showing that despite valid commands being issued, the ship position/velocity did not update as expected.
+
+**DECISION: script_ready**</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: SCRIPT_READY</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;SCRIPT_READY&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>run_reproduction</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage error">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Run Reproduction Test</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Execute reproduction script and capture evidence objectively</div>
+        </div>
+        <span class="stage-badge badge-error">error</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">game_runner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">executor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">0.2s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">3</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+
+      
+      <div class="error-box">
+        <div class="error-title">❌ Error</div>
+        <div>Bad control character in string literal in JSON at position 9723</div>
+        <pre class="error-stack">SyntaxError: Bad control character in string literal in JSON at position 9723
+    at JSON.parse (&lt;anonymous&gt;)
+    at ClaudeProxy.executePipelineStages (/mnt/c/github/claudeplus/proxy/server.js:2528:36)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async ClaudeProxy.executePipelineStages (/mnt/c/github/claudeplus/proxy/server.js:2473:37)
+    at async ClaudeProxy.executePipeline (/mnt/c/github/claudeplus/proxy/server.js:2276:14)</pre>
+      </div>
+      
+
+      
+    </div>
+    </div>
+
+    
+    <div style="background: white; border-radius: 12px; padding: 25px; margin-top: 20px;">
+      <h2 style="color: #dc3545; margin-bottom: 15px;">⚠️ Errors Summary</h2>
+      
+        <div class="error-box">
+          <div class="error-title">Stage: run_reproduction</div>
+          <div>Bad control character in string literal in JSON at position 9723</div>
+          <pre class="error-stack">SyntaxError: Bad control character in string literal in JSON at position 9723
+    at JSON.parse (&lt;anonymous&gt;)
+    at ClaudeProxy.executePipelineStages (/mnt/c/github/claudeplus/proxy/server.js:2528:36)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async ClaudeProxy.executePipelineStages (/mnt/c/github/claudeplus/proxy/server.js:2473:37)
+    at async ClaudeProxy.executePipeline (/mnt/c/github/claudeplus/proxy/server.js:2276:14)</pre>
+        </div>
+      
+    </div>
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

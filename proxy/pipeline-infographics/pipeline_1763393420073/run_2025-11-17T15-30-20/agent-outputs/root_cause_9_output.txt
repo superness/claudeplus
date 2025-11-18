@@ -1,0 +1,175 @@
+Now let me trace through the code execution flow to identify the root cause:
+
+## ROOT CAUSE ANALYSIS
+
+I've traced the execution flow and identified the root cause of why ship throttle controls don't affect ship velocity.
+
+### Evidence Flow Analysis
+
+**1. InputManager receives throttle input (W/S keys) ✓**
+- `InputManager.handleKeyDown()` (lines 515-557): Successfully increments `this.thrustLevel` when W/S pressed
+- `getThrustMagnitude()` (lines 784-786): Returns `this.thrustLevel` correctly
+- **This part works**: Console logs show throttle values changing (0% → 10% → 20%...)
+
+**2. Ship.updateWithNavigation() calls physics with thrust vector ✓**
+- `Ship.updateWithNavigation()` (lines 198-384): Calculates `thrustVector` with proper magnitude from `inputManager.getThrustMagnitude()`
+- Line 367: `this.physics.updatePhysics(deltaTime, thrustVector)`
+- **This part works**: Thrust vector is calculated and passed
+
+**3. ShipPhysics receives thrust input ⚠️ ISSUE DETECTED**
+- `ShipPhysics.updatePhysics()` (lines 73-117): Receives `inputThrustVector`
+- Lines 76-81: Copies thrust input to `this.thrustInput`
+- Lines 84-93: Logs show thrust is received correctly
+- **This part works**: Thrust input is stored
+
+**4. ShipPhysics.updateTargetVelocity() ❌ ROOT CAUSE FOUND**
+- Line 96: `this.updateTargetVelocity()` is called
+- Lines 122-153: This method calculates target velocity
+- **Line 130: `const magnitude = this.thrustInput.magnitude || 0;`**
+- **Line 132: `if (magnitude > 0) {` - This condition determines if ship should move**
+
+### Root Cause Identified
+
+**File**: `/mnt/c/github/superstarships/js/physics/ShipPhysics.js`  
+**Lines**: 122-153  
+**Problem**: `updateTargetVelocity()` checks `this.thrustInput.magnitude` but this field may be lost or corrupted during object operations
+
+### Execution Flow Breakdown
+
+```
+InputManager.getThrustMagnitude() → returns 0.5 (50% throttle)
+    ↓
+Ship.updateWithNavigation() → calculates thrustVector = {x: 0, y: 0, z: 0, magnitude: 0.5}
+    ↓
+Ship.physics.updatePhysics(deltaTime, thrustVector) → receives thrustVector
+    ↓
+ShipPhysics.updatePhysics() → copies to this.thrustInput = {...thrustVector}
+    ↓ 
+ShipPhysics.updateTargetVelocity() → reads this.thrustInput.magnitude
+    ↓
+if (magnitude > 0) → FALSE because magnitude is 0 or undefined
+    ↓
+this.targetVelocity = {x: 0, y: 0, z: 0} → Ship doesn't move!
+```
+
+### Why `thrustInput.magnitude` is Zero
+
+Looking at `Ship.js:215-218`:
+
+```javascript
+let thrustVector = { x: 0, y: 0, z: 0, magnitude: 0 };
+```
+
+The issue is that when **no navigation target is set**, the thrustVector is initialized with `magnitude: 0` and never updated when manual throttle is applied.
+
+**Ship.js lines 327-343** (manual thrust without navigation):
+```javascript
+} else {
+    // No navigation target - use manual thrust in forward direction only
+    const thrustMagnitude = inputManager.getThrustMagnitude();
+    if (thrustMagnitude > 0) {
+        const forward = this.physics.getForwardVector();
+        thrustVector = {
+            x: forward.x * thrustMagnitude,
+            y: forward.y * thrustMagnitude,
+            z: forward.z * thrustMagnitude,
+            magnitude: thrustMagnitude  // ← magnitude IS set here
+        };
+        // ... logging ...
+    }
+}
+```
+
+This shows magnitude SHOULD be set... Let me check if there's a navigation command active that's taking a different code path.
+
+Looking at **Ship.js lines 220-326** (navigation target code path):
+```javascript
+if (navigationCommand && navigationCommand.target && navigationCommand.speedSetting > 0) {
+    // Navigation controls direction, W/S controls speed
+    const thrustMagnitude = inputManager.getThrustMagnitude();
+    const effectiveSpeed = thrustMagnitude > 0 ? thrustMagnitude : navigationCommand.speedSetting;
+    // ... calculates thrustVector ...
+    thrustVector = {
+        x: direction.x * targetSpeed,
+        y: direction.y * targetSpeed,
+        z: direction.z * targetSpeed,
+        magnitude: targetSpeed  // ← magnitude set to targetSpeed, not thrustMagnitude
+    };
+}
+```
+
+### THE ACTUAL ROOT CAUSE
+
+**When no navigation command is active** (`navigationCommand.speedSetting === 0` or `navigationCommand.target === null`):
+- The code goes to line 327 (manual thrust mode)
+- **BUT** if `thrustMagnitude === 0` initially, the `if (thrustMagnitude > 0)` condition on line 329 fails
+- This means `thrustVector` remains at its initialization value: `{x: 0, y: 0, z: 0, magnitude: 0}`
+
+**The root cause**: When the player first starts the game and presses W to increase throttle from 0% → 10%, there is NO navigation command active, so the ship tries to use manual thrust mode. However, the manual thrust calculation depends on having a **ship orientation** to determine forward direction.
+
+Let me verify the ship orientation issue by checking `ShipPhysics.getForwardVector()`:
+
+**ShipPhysics.js lines 388-394**:
+```javascript
+getForwardVector() {
+    return {
+        x: -Math.sin(this.rotation.y) * Math.cos(this.rotation.x),
+        y: Math.sin(this.rotation.x),
+        z: -Math.cos(this.rotation.y) * Math.cos(this.rotation.x)
+    };
+}
+```
+
+At game start, `this.rotation = {x: 0, y: 0, z: 0}` (line 42), so:
+- `getForwardVector()` returns `{x: 0, y: 0, z: -1}` (pointing in -Z direction)
+
+This is correct, so orientation is not the issue.
+
+**FINAL ROOT CAUSE**: After re-examining the evidence file, I see:
+
+```json
+{
+  "command": "setThrottle",
+  "throttle": 50,
+  "response": {"success": true, "message": "Throttle set to 50%"}
+}
+```
+
+But then ship state shows `"throttle": 0` (not 0.5).
+
+The WebSocket automation command `setThrottle` is being acknowledged but NOT actually updating the `InputManager.thrustLevel` value. The command succeeds, but the internal game state doesn't change.
+
+```json
+{
+  "rootCause": "InputManager.thrustLevel is not being updated by WebSocket automation commands. The setThrottle command returns success but does not actually modify the internal InputManager.thrustLevel property, causing the ship to remain stationary even when throttle commands are sent.",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/core/InputManager.js",
+      "lineNumbers": [102, 784-786],
+      "currentCode": "this.thrustLevel = 0; ... getThrustMagnitude() { return this.thrustLevel; }",
+      "problem": "thrustLevel property exists but WebSocket automation has no API to modify it"
+    },
+    {
+      "path": "WebSocket automation command handler (likely in server or automation script)",
+      "lineNumbers": "Unknown - not in client code",
+      "currentCode": "setThrottle command handler returns success without actually calling InputManager methods",
+      "problem": "Command acknowledges success but doesn't execute the actual throttle change"
+    }
+  ],
+  "executionFlow": [
+    "WebSocket automation sends setThrottle(50) command",
+    "Command handler receives command and returns {success: true}",
+    "BUT: InputManager.thrustLevel remains at 0 (never updated)",
+    "Ship.updateWithNavigation() calls inputManager.getThrustMagnitude()",
+    "getThrustMagnitude() returns 0 (unchanged thrustLevel)",
+    "Ship calculates thrustVector with magnitude = 0",
+    "ShipPhysics.updateTargetVelocity() sees magnitude = 0",
+    "Target velocity set to zero vector",
+    "Ship does not move"
+  ],
+  "whyItHappens": "The WebSocket automation system (used for browser testing) sends setThrottle commands that return success responses but don't actually invoke the InputManager.thrustLevel setter. The command is acknowledged at the API layer but never propagates to the game engine's internal state. This creates a disconnect between the automation framework thinking throttle is set and the actual game state where throttle remains at zero.",
+  "proposedFix": "The WebSocket automation command handler for 'setThrottle' needs to actually call InputManager methods to update thrustLevel. The fix should either: (1) Add a public setter method to InputManager like setThrustLevel(value) and call it from the automation handler, OR (2) Simulate actual W/S key presses by calling InputManager.handleKeyDown() with synthetic KeyW/KeyS events, OR (3) Modify the WebSocket handler to directly access window.simulator.inputManager.thrustLevel = value/100."
+}
+```
+
+DECISION: root_cause_found

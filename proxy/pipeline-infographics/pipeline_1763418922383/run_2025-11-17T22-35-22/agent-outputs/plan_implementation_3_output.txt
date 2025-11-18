@@ -1,0 +1,471 @@
+# Implementation Plan: Radial HUD Hover Delay with Progress Indicator
+
+Based on the feature definition and test plan, here's the comprehensive technical implementation plan:
+
+```json
+{
+  "architecture": {
+    "newClasses": [
+      {
+        "name": "HoverTimerSystem",
+        "responsibility": "Manages hover timing logic using timestamp-based tracking",
+        "location": "Integrated into RadialHUD class (not separate file)",
+        "methods": [
+          "startHover(timestamp)",
+          "updateHover(timestamp)",
+          "cancelHover()",
+          "getProgress()",
+          "isComplete()",
+          "reset()"
+        ],
+        "properties": [
+          "hoverStartTime: number | null",
+          "HOVER_THRESHOLD_MS: 500",
+          "isHovering: boolean",
+          "currentProgress: number (0-1)"
+        ]
+      },
+      {
+        "name": "HoverProgressIndicator",
+        "responsibility": "Renders visual progress feedback during hover",
+        "location": "Integrated into RadialHUD rendering (CSS-based solution preferred)",
+        "methods": [
+          "show()",
+          "hide()",
+          "updateProgress(progress)",
+          "render()"
+        ],
+        "renderingApproach": "CSS-based circular arc with SVG, animated via style updates"
+      }
+    ],
+    "modifiedClasses": [
+      {
+        "name": "RadialHUD",
+        "file": "js/ui/RadialHUD.js",
+        "changes": [
+          "Add HoverTimerSystem integration",
+          "Modify show() method to only trigger after timer completion",
+          "Add update() method called from game loop for timer progress",
+          "Add mouse enter/leave event handlers for hover tracking",
+          "Integrate progress indicator rendering",
+          "Add state management for hover vs open states"
+        ],
+        "newMethods": [
+          "onShipHoverStart()",
+          "onShipHoverEnd()",
+          "updateHoverProgress(deltaTime)",
+          "renderProgressIndicator()",
+          "checkHoverState()"
+        ]
+      },
+      {
+        "name": "SpaceshipSimulator (or main game loop)",
+        "file": "js/SpaceshipSimulator.js",
+        "changes": [
+          "Call RadialHUD.updateHoverProgress() in game loop",
+          "Pass mouse position/ship hover state to RadialHUD"
+        ]
+      }
+    ],
+    "patterns": [
+      "State Machine: Idle → Hovering → Opening → Open",
+      "Observer: RadialHUD observes mouse position changes",
+      "Timestamp-based timing: Uses performance.now() for frame-independent accuracy",
+      "CSS-driven animation: Leverage CSS transitions for smooth progress fill"
+    ],
+    "integrationPoints": {
+      "inputSystem": "Hook into existing mouse move/enter/leave events",
+      "renderingPipeline": "Add progress indicator to HUD rendering layer",
+      "gameLoop": "Update timer state every frame via update() call"
+    }
+  },
+  "fileStructure": {
+    "modify": [
+      "/mnt/c/github/superstarships/js/ui/RadialHUD.js",
+      "/mnt/c/github/superstarships/css/radial-hud.css",
+      "/mnt/c/github/superstarships/js/SpaceshipSimulator.js"
+    ],
+    "create": [
+      "/mnt/c/github/superstarships/tests/test_hover_delay_radial_hud.js"
+    ],
+    "reference": [
+      "/mnt/c/github/superstarships/js/ui/RadialHUD.js (read existing implementation first)"
+    ]
+  },
+  "implementationSteps": [
+    {
+      "order": 1,
+      "task": "Read existing RadialHUD.js implementation to understand current show/hide logic",
+      "estimatedTime": "15 minutes",
+      "dependencies": [],
+      "files": ["js/ui/RadialHUD.js"],
+      "deliverable": "Understanding of current mouse interaction handling"
+    },
+    {
+      "order": 2,
+      "task": "Add HoverTimerSystem state management to RadialHUD class",
+      "estimatedTime": "30 minutes",
+      "dependencies": [1],
+      "implementation": {
+        "addProperties": [
+          "this.hoverStartTime = null",
+          "this.HOVER_THRESHOLD_MS = 500",
+          "this.isHovering = false",
+          "this.hoverProgress = 0"
+        ],
+        "addMethods": [
+          "startHoverTimer(timestamp)",
+          "cancelHoverTimer()",
+          "getHoverProgress(currentTimestamp)"
+        ]
+      },
+      "files": ["js/ui/RadialHUD.js"],
+      "deliverable": "Timer state management infrastructure"
+    },
+    {
+      "order": 3,
+      "task": "Modify RadialHUD mouse event handlers to track hover state",
+      "estimatedTime": "30 minutes",
+      "dependencies": [2],
+      "implementation": {
+        "modifyEventHandlers": [
+          "onMouseEnterShip() - call startHoverTimer(performance.now())",
+          "onMouseLeaveShip() - call cancelHoverTimer()",
+          "Prevent immediate show() call on mouse enter"
+        ],
+        "addEventListeners": "Ensure ship hover detection is properly wired"
+      },
+      "files": ["js/ui/RadialHUD.js"],
+      "deliverable": "Hover state tracking on mouse enter/leave"
+    },
+    {
+      "order": 4,
+      "task": "Implement updateHoverProgress() method called from game loop",
+      "estimatedTime": "30 minutes",
+      "dependencies": [2, 3],
+      "implementation": {
+        "method": "updateHoverProgress(currentTimestamp)",
+        "logic": [
+          "If not hovering, return early",
+          "Calculate elapsed = currentTimestamp - hoverStartTime",
+          "Update hoverProgress = Math.min(elapsed / HOVER_THRESHOLD_MS, 1.0)",
+          "If progress >= 1.0, trigger show() and cancel timer",
+          "Update progress indicator visual state"
+        ]
+      },
+      "files": ["js/ui/RadialHUD.js"],
+      "deliverable": "Frame-by-frame hover progress calculation"
+    },
+    {
+      "order": 5,
+      "task": "Create CSS-based progress indicator component",
+      "estimatedTime": "45 minutes",
+      "dependencies": [1],
+      "implementation": {
+        "htmlStructure": "<div class='radial-hud-hover-progress'><svg>...</svg></div>",
+        "cssProperties": [
+          "Circular arc using SVG <path> or <circle> with stroke-dasharray",
+          "Position: absolute, centered on ship cursor position",
+          "Opacity transition for smooth show/hide",
+          "stroke-dashoffset animated based on progress (0-100%)"
+        ],
+        "colorScheme": "Semi-transparent cyan (#00ffff40), glowing effect"
+      },
+      "files": [
+        "js/ui/RadialHUD.js (add DOM element creation)",
+        "css/radial-hud.css (add styles)"
+      ],
+      "deliverable": "Visual progress indicator that fills 0-100%"
+    },
+    {
+      "order": 6,
+      "task": "Integrate progress indicator rendering with hover state",
+      "estimatedTime": "30 minutes",
+      "dependencies": [4, 5],
+      "implementation": {
+        "showIndicator": "On startHoverTimer(), make indicator visible and set progress to 0",
+        "updateIndicator": "In updateHoverProgress(), update SVG stroke-dashoffset based on hoverProgress",
+        "hideIndicator": "On cancelHoverTimer() or menu open, hide indicator"
+      },
+      "files": ["js/ui/RadialHUD.js"],
+      "deliverable": "Progress indicator synchronized with hover timer"
+    },
+    {
+      "order": 7,
+      "task": "Hook updateHoverProgress() into main game loop",
+      "estimatedTime": "20 minutes",
+      "dependencies": [4],
+      "implementation": {
+        "location": "SpaceshipSimulator.js animate() or update() method",
+        "code": "if (this.radialHUD) { this.radialHUD.updateHoverProgress(performance.now()); }"
+      },
+      "files": ["js/SpaceshipSimulator.js"],
+      "deliverable": "Timer updates every frame via game loop"
+    },
+    {
+      "order": 8,
+      "task": "Add WebSocket command handlers for testing",
+      "estimatedTime": "45 minutes",
+      "dependencies": [6],
+      "implementation": {
+        "commands": [
+          "getHUDState() - returns {radialHUDVisible: boolean}",
+          "getProgressIndicatorState() - returns {visible: boolean, progress: number}",
+          "getHoverTiming() - returns {actualDuration: number}"
+        ],
+        "location": "Existing WebSocket automation infrastructure"
+      },
+      "files": [
+        "js/testing/TestingBrowserBridge.js or similar",
+        "js/ui/RadialHUD.js (expose state via public methods)"
+      ],
+      "deliverable": "Automation API for testing hover behavior"
+    },
+    {
+      "order": 9,
+      "task": "Create automated test script using WebSocket + browser automation",
+      "estimatedTime": "1.5 hours",
+      "dependencies": [8],
+      "implementation": {
+        "framework": "Puppeteer or Playwright for mouse simulation",
+        "testCases": "Implement all 8 test cases from test plan",
+        "evidenceCapture": "Screenshots, timing logs, JSON evidence files"
+      },
+      "files": ["tests/test_hover_delay_radial_hud.js"],
+      "deliverable": "Automated test suite validating all acceptance criteria"
+    },
+    {
+      "order": 10,
+      "task": "Manual testing and refinement",
+      "estimatedTime": "30 minutes",
+      "dependencies": [7],
+      "testScenarios": [
+        "Quick cursor swipe across ship (should NOT open)",
+        "Deliberate hover for 0.5s (should open smoothly)",
+        "Interrupt at 0.3s, re-hover (should reset and require full 0.5s)",
+        "Test at 30 FPS and 120 FPS (verify timing accuracy)",
+        "Visual polish: indicator color, size, position"
+      ],
+      "deliverable": "Polished, user-tested feature"
+    },
+    {
+      "order": 11,
+      "task": "Run automated test suite and capture evidence",
+      "estimatedTime": "30 minutes",
+      "dependencies": [9, 10],
+      "execution": "node tests/test_hover_delay_radial_hud.js",
+      "deliverable": "Test evidence in /test-evidence/hover-delay/ directory"
+    },
+    {
+      "order": 12,
+      "task": "Code cleanup and documentation",
+      "estimatedTime": "20 minutes",
+      "dependencies": [11],
+      "tasks": [
+        "Add JSDoc comments to new methods",
+        "Update RadialHUD class documentation",
+        "Add inline comments explaining timer logic",
+        "Document CSS class structure"
+      ],
+      "deliverable": "Clean, documented code ready for commit"
+    }
+  ],
+  "technicalConsiderations": {
+    "performance": {
+      "concern": "Progress indicator updates every frame (60 FPS)",
+      "solution": "Use CSS transform for animation (GPU-accelerated), avoid DOM manipulation per frame",
+      "optimization": "Only update stroke-dashoffset CSS property, not full re-render",
+      "expectedImpact": "<0.5ms per frame, negligible on modern hardware"
+    },
+    "timing": {
+      "concern": "Accurate 500ms delay regardless of frame rate",
+      "solution": "Use performance.now() timestamps, not frame counting",
+      "implementation": "elapsed = currentTime - startTime; progress = elapsed / 500",
+      "tolerance": "±50ms acceptable (1-3 frames at 60 FPS)"
+    },
+    "memory": {
+      "concern": "Additional state tracking for hover timer",
+      "impact": "Minimal: 4 properties (~32 bytes), no memory leaks",
+      "cleanup": "Reset timer on hover cancel, no persistent allocations"
+    },
+    "compatibility": {
+      "browsers": "Chrome, Firefox, Edge (all support performance.now() and SVG)",
+      "fallback": "None needed - feature degrades gracefully if not supported",
+      "mobile": "Touch events handled separately (no hover on mobile)"
+    },
+    "stateManagement": {
+      "states": [
+        "IDLE: Menu closed, no hover",
+        "HOVERING: Timer active, progress indicator visible",
+        "OPENING: Timer complete, triggering show()",
+        "OPEN: Menu visible, timer inactive"
+      ],
+      "transitions": [
+        "IDLE → HOVERING: onMouseEnterShip()",
+        "HOVERING → IDLE: onMouseLeaveShip() (before 500ms)",
+        "HOVERING → OPENING: updateHoverProgress() detects >= 1.0",
+        "OPENING → OPEN: show() completes",
+        "OPEN → IDLE: hide() or user interaction"
+      ]
+    }
+  },
+  "visualDesign": {
+    "progressIndicator": {
+      "type": "Circular arc (SVG)",
+      "appearance": "360° circle around ship cursor position",
+      "fillDirection": "Clockwise from 12 o'clock (0°)",
+      "size": "60px diameter (30px radius)",
+      "strokeWidth": "3px",
+      "color": "rgba(0, 255, 255, 0.6) (cyan with transparency)",
+      "glow": "drop-shadow(0 0 4px rgba(0, 255, 255, 0.8))",
+      "animation": "Smooth linear fill over 500ms"
+    },
+    "positioning": {
+      "strategy": "Absolute position relative to ship screen coordinates",
+      "updateFrequency": "Every frame (follow ship if moving)",
+      "zIndex": "Above RadialHUD base layer, below menu items"
+    }
+  },
+  "codeStructure": {
+    "radialHUDAdditions": {
+      "constructor": [
+        "Initialize hover timer properties",
+        "Create progress indicator DOM element",
+        "Append to HUD container"
+      ],
+      "hoverTimerMethods": [
+        "startHoverTimer(timestamp)",
+        "cancelHoverTimer()",
+        "updateHoverProgress(timestamp)",
+        "getHoverProgress()"
+      ],
+      "progressIndicatorMethods": [
+        "showProgressIndicator()",
+        "hideProgressIndicator()",
+        "updateProgressIndicator(progress)"
+      ],
+      "stateQueries": [
+        "isRadialHUDVisible()",
+        "getProgressIndicatorState()",
+        "getHoverTiming()"
+      ]
+    }
+  },
+  "testingIntegration": {
+    "automationCommands": [
+      {
+        "command": "getHUDState",
+        "implementation": "Return {radialHUDVisible: this.visible}",
+        "location": "RadialHUD.getState() method"
+      },
+      {
+        "command": "getProgressIndicatorState",
+        "implementation": "Return {visible: this.progressIndicator.visible, progress: this.hoverProgress}",
+        "location": "RadialHUD.getProgressIndicatorState() method"
+      },
+      {
+        "command": "getHoverTiming",
+        "implementation": "Return {actualDuration: this.hoverStartTime ? performance.now() - this.hoverStartTime : 0}",
+        "location": "RadialHUD.getHoverTiming() method"
+      }
+    ],
+    "browserAutomation": {
+      "mouseSimulation": "Puppeteer page.mouse.move(x, y) to ship coordinates",
+      "timingControl": "page.waitForTimeout(duration) for precise hover durations",
+      "screenshotCapture": "page.screenshot() at critical test points"
+    }
+  },
+  "risks": [
+    {
+      "risk": "Progress indicator z-index conflicts with existing UI",
+      "mitigation": "Carefully test z-index layering, ensure indicator is above background but below menu items",
+      "likelihood": "Low"
+    },
+    {
+      "risk": "Timer inaccuracy at low frame rates (<30 FPS)",
+      "mitigation": "Use timestamp-based timing (not frame counting), test at 30 FPS",
+      "likelihood": "Very Low"
+    },
+    {
+      "risk": "Progress indicator not visible against certain backgrounds",
+      "mitigation": "Add subtle glow/shadow, test in various space biomes",
+      "likelihood": "Medium",
+      "testRequired": true
+    },
+    {
+      "risk": "Hover state not resetting properly on edge cases",
+      "mitigation": "Thorough testing of interruption scenarios (TC-004, TC-006)",
+      "likelihood": "Medium"
+    }
+  ],
+  "acceptanceCriteria": [
+    "Menu does NOT open on cursor swipe (<500ms hover)",
+    "Menu opens at exactly 500ms ± 50ms",
+    "Progress indicator visible and animates 0-100%",
+    "Timer resets completely on hover interruption",
+    "No FPS impact (≥58 FPS maintained)",
+    "Visual indicator clear and unobtrusive",
+    "All 8 automated tests pass with evidence",
+    "Works at 30 FPS and 120 FPS",
+    "Handles rapid hover spam without errors"
+  ],
+  "estimatedEffort": {
+    "total": "5.5 hours",
+    "breakdown": {
+      "coreImplementation": "3 hours (steps 1-7)",
+      "testingInfrastructure": "1.5 hours (steps 8-9)",
+      "validation": "1 hour (steps 10-11)",
+      "cleanup": "0.5 hours (step 12)"
+    }
+  },
+  "deliverables": [
+    "Modified js/ui/RadialHUD.js with hover delay logic",
+    "Updated css/radial-hud.css with progress indicator styles",
+    "Modified js/SpaceshipSimulator.js with game loop integration",
+    "New tests/test_hover_delay_radial_hud.js automated test suite",
+    "Test evidence in /test-evidence/hover-delay/ directory",
+    "Updated documentation in code comments"
+  ]
+}
+```
+
+## Implementation Summary
+
+### Architecture Overview
+The implementation integrates hover delay functionality directly into the existing `RadialHUD` class rather than creating separate modules. This approach:
+- Minimizes file changes (2 core files modified)
+- Keeps hover logic co-located with menu display logic
+- Avoids unnecessary abstraction for a focused feature
+
+### Key Technical Decisions
+
+1. **Timestamp-based Timing**: Uses `performance.now()` for frame-rate-independent accuracy
+2. **CSS-driven Animation**: Leverages GPU-accelerated CSS transforms for smooth progress fill
+3. **State Machine Pattern**: Clean state transitions (Idle → Hovering → Opening → Open)
+4. **Integrated Testing**: WebSocket commands + Puppeteer automation for comprehensive validation
+
+### Critical Implementation Points
+
+1. **Timer Accuracy**: Must use timestamps, not frame counting
+2. **Progress Indicator**: SVG circular arc with stroke-dashoffset animation
+3. **Reset Behavior**: Complete timer reset on hover interruption (no partial credit)
+4. **Performance**: <0.5ms per frame overhead, no FPS impact
+5. **Visual Feedback**: Progress indicator provides clear user feedback
+
+### Testing Strategy
+
+- **8 automated test cases** covering timing, visuals, interruption, performance, edge cases
+- **Browser automation** using Puppeteer for precise mouse simulation
+- **WebSocket commands** for state inspection and validation
+- **Evidence capture** with screenshots, timing logs, and JSON reports
+
+### Next Steps
+
+1. Read existing `RadialHUD.js` to understand current implementation
+2. Implement hover timer state management (steps 2-4)
+3. Add visual progress indicator (steps 5-6)
+4. Integrate with game loop (step 7)
+5. Build testing infrastructure (steps 8-9)
+6. Validate and polish (steps 10-12)
+
+**DECISION: implementation_plan_ready**

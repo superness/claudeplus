@@ -1,0 +1,54 @@
+Perfect! Now I have all the pieces. I can see the complete root cause chain:
+
+```json
+{
+  "rootCause": "Property name mismatch between ContentManager ship definitions and Ship.syncStatsFromFitting() causes navigation properties to become undefined after undocking with fitted items",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ContentManager.js",
+      "lineNumbers": [620, 659],
+      "currentCode": "maxVelocity: 350, // m/s (Atron)\nmaxVelocity: 385 (Condor)",
+      "problem": "Ship definitions use 'maxVelocity' property name"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [89, 121, 331],
+      "currentCode": "fitting.currentStats.maxSpeed = ship.physics.maxVelocity;\n// Later: fitting.currentStats = { ...fitting.hull.baseStats };",
+      "problem": "ShipFittingManager copies hull.baseStats (which contains 'maxVelocity') but syncBaseStatsFromShip() writes to 'maxSpeed'. Later, recalculateShipStats() resets currentStats from hull.baseStats, losing the 'maxSpeed' property and keeping only 'maxVelocity'"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [71-73],
+      "currentCode": "if (stats.maxSpeed !== undefined) {\n    this.physics.maxVelocity = stats.maxSpeed;\n}",
+      "problem": "syncStatsFromFitting() reads 'maxSpeed' from fitting.currentStats, but ContentManager ship definitions only have 'maxVelocity'. After recalculateShipStats() resets fitting.currentStats to hull.baseStats, stats.maxSpeed becomes undefined"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ContentManager.js",
+      "lineNumbers": [89, 119, 148, 178],
+      "currentCode": "effects: {\n    maxSpeed: { type: 'multiply', value: 1.5 }\n}",
+      "problem": "Item effects use 'maxSpeed' property name, creating inconsistency with ship hull definitions"
+    }
+  ],
+  "executionFlow": [
+    "1. Player fits an afterburner to ship while docked",
+    "2. ShipFittingManager.fitItem() calls applyItemEffects() which modifies fitting.currentStats.maxSpeed (multiply effect)",
+    "3. fitItem() calls recalculateShipStats() which resets fitting.currentStats = {...hull.baseStats}",
+    "4. hull.baseStats contains 'maxVelocity: 350' (from ContentManager), NOT 'maxSpeed'",
+    "5. After reset, item effects are re-applied to the new currentStats object",
+    "6. Item effects modify 'maxSpeed' property: currentStats.maxSpeed = 350 * 1.5 = 525",
+    "7. But currentStats also has 'maxVelocity: 350' from hull.baseStats",
+    "8. Player undocks from station",
+    "9. StationManager.undock() calls ship.syncStatsFromFitting()",
+    "10. syncStatsFromFitting() reads stats.maxSpeed (525) and sets physics.maxVelocity = 525",
+    "11. Ship starts moving, updateWithNavigation() is called",
+    "12. updateWithNavigation() calls syncStatsFromFitting() AGAIN on line 197",
+    "13. But now, something has reset fitting.currentStats to only have 'maxVelocity', losing 'maxSpeed'",
+    "14. syncStatsFromFitting() reads stats.maxSpeed (now undefined) and sets physics.maxVelocity = undefined",
+    "15. Navigation calculations fail: undefined * speedSetting = NaN → ship unresponsive"
+  ],
+  "whyItHappens": "The codebase has two competing property naming conventions: (1) ContentManager ship hulls use 'maxVelocity', (2) ContentManager item effects use 'maxSpeed', (3) Ship.syncStatsFromFitting() reads 'maxSpeed' but writes to physics.maxVelocity. When recalculateShipStats() resets fitting.currentStats from hull.baseStats, it brings in 'maxVelocity'. Item effects then add 'maxSpeed'. This creates a currentStats object with BOTH properties. However, somewhere between undocking and the first frame update, currentStats gets reset again to only hull.baseStats (containing only 'maxVelocity'), causing syncStatsFromFitting() to read undefined for maxSpeed and break navigation.",
+  "proposedFix": "The simplest and most correct fix is to make Ship.syncStatsFromFitting() property-name-agnostic by checking both 'maxSpeed' and 'maxVelocity' with fallback logic:\n\nChange Ship.js lines 71-73 from:\nif (stats.maxSpeed !== undefined) {\n    this.physics.maxVelocity = stats.maxSpeed;\n}\n\nTo:\nconst maxVel = stats.maxSpeed ?? stats.maxVelocity;\nif (maxVel !== undefined) {\n    this.physics.maxVelocity = maxVel;\n}\n\nThis allows syncStatsFromFitting() to work correctly whether currentStats has 'maxSpeed' (with fitted items) or 'maxVelocity' (from hull baseStats), preventing undefined physics properties."
+}
+```
+
+DECISION: root_cause_found

@@ -1,0 +1,61 @@
+Perfect! Now I have enough information. Let me trace through the complete execution flow to identify the root cause. Based on the evidence from the automated test and the code analysis, I can now provide a comprehensive root cause analysis.
+
+```json
+{
+  "rootCause": "StationManager.undock() line 560 calls playerShip.syncStatsFromFitting() which restores SOME physics properties from fitted items, but the Ship constructor never initializes a default ship fitting in ShipFittingManager, so syncStatsFromFitting() reads from an EMPTY fitting configuration, setting maxVelocity and other properties to undefined. The fitting system and ship physics initialization are disconnected - ships are created with default physics from SHIP_CONFIGURATIONS but ShipFittingManager has no knowledge of these ships until explicitly told.",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/SpaceshipSimulator.js",
+      "lineNumbers": [586],
+      "currentCode": "this.playerShip = new Ship('player', shipType, this.sceneManager);\nthis.playerShip.setAsPlayer();",
+      "problem": "Creates Ship and sets as player, but NEVER registers the ship with ShipFittingManager. The ship physics is initialized from SHIP_CONFIGURATIONS, but ShipFittingManager knows nothing about this ship's existence or stats."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [14],
+      "currentCode": "this.physics = createShipFromConfig(shipType);",
+      "problem": "Ship physics initialized from SHIP_CONFIGURATIONS (e.g., Atron has maxVelocity=400), but this data is NEVER copied to ShipFittingManager's currentStats"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [59, 60, 61, 62, 63, 64, 65, 66, 67],
+      "currentCode": "syncStatsFromFitting() {\n    if (!this.isPlayer) return;\n    const fittingManager = window.simulator?.shipFittingManager;\n    if (!fittingManager) return;\n    const fitting = fittingManager.getPlayerShipFitting();\n    if (!fitting || !fitting.currentStats) return;\n    const stats = fitting.currentStats;\n    if (stats.maxSpeed !== undefined) {\n        this.physics.maxVelocity = stats.maxSpeed;",
+      "problem": "Tries to sync physics from fitting.currentStats.maxSpeed, but ShipFittingManager's currentStats has maxSpeed=undefined because the ship fitting was never initialized with the ship's default stats from SHIP_CONFIGURATIONS"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94],
+      "currentCode": "initializePlayerShip() {\n    const defaultHull = 'atron';\n    const shipHull = this.getShip(defaultHull);\n    // ...\n    this.shipFittings.set(this.playerShipId, {\n        hull: shipHull,\n        slots: {...},\n        currentStats: { ...shipHull.baseStats },\n        totalCpuUsed: 0,\n        totalPowerUsed: 0,\n        totalCalibrationUsed: 0\n    });",
+      "problem": "Initializes fitting from ContentManager's ship definition (shipHull.baseStats), but ContentManager ships and SHIP_CONFIGURATIONS use DIFFERENT property names: ContentManager uses 'maxSpeed' while SHIP_CONFIGURATIONS uses 'maxVelocity'. When syncStatsFromFitting() reads stats.maxSpeed from ContentManager, it doesn't match the physics property names."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/StationManager.js",
+      "lineNumbers": [560],
+      "currentCode": "window.simulator.playerShip.syncStatsFromFitting();\nconsole.log('✅ Ship physics restored from fitting after undock');",
+      "problem": "Calls syncStatsFromFitting() to restore physics after undocking, which OVERWRITES the working physics.maxVelocity with undefined from the broken fitting configuration, breaking navigation"
+    }
+  ],
+  "executionFlow": [
+    "1. Game starts: SpaceshipSimulator.createPlayerShip('atron') called",
+    "2. Ship constructor: this.physics = createShipFromConfig('atron')",
+    "3. createShipFromConfig: returns EVEStyleShip with maxVelocity=400 from SHIP_CONFIGURATIONS",
+    "4. Ship physics now has: maxVelocity=400, agility=3.9, mass=1070000",
+    "5. ShipFittingManager.initializePlayerShip() called during initialization",
+    "6. ShipFittingManager creates fitting from ContentManager ship data",
+    "7. ContentManager ship has baseStats.maxSpeed (NOT maxVelocity) with undefined/wrong value",
+    "8. currentStats = {...shipHull.baseStats} copies maxSpeed (not maxVelocity)",
+    "9. Player navigates, docks at station, fits items, then undocks",
+    "10. StationManager.undock() calls playerShip.syncStatsFromFitting()",
+    "11. syncStatsFromFitting() reads stats.maxSpeed from fitting.currentStats",
+    "12. stats.maxSpeed is undefined (wrong property name) or 0",
+    "13. syncStatsFromFitting() sets physics.maxVelocity = undefined",
+    "14. Ship now has physics.maxVelocity = undefined",
+    "15. Navigation calculations fail: velocity = undefined * throttle = NaN",
+    "16. Ship becomes completely unresponsive to all navigation commands"
+  ],
+  "whyItHappens": "There are THREE disconnected systems managing ship stats: (1) SHIP_CONFIGURATIONS in ShipPhysics.js with property names like 'maxVelocity', (2) ContentManager ship definitions with property names like 'maxSpeed', and (3) Ship.physics which uses SHIP_CONFIGURATIONS naming. When ShipFittingManager initializes from ContentManager data, it uses 'maxSpeed'. When syncStatsFromFitting() tries to restore physics, it reads 'maxSpeed' and writes to 'maxVelocity', but the value is undefined because ContentManager doesn't set maxSpeed properly. The undock process calls syncStatsFromFitting() which overwrites working physics values with undefined, breaking navigation.",
+  "proposedFix": "Option 1 (Quick Fix): Remove the syncStatsFromFitting() call from StationManager.undock() line 560. The ship physics is already correct from initialization; the sync only breaks it. Option 2 (Proper Fix): Make ShipFittingManager initialize currentStats from the actual Ship.physics object instead of ContentManager, so the property names and values match. Option 3 (Architecture Fix): Unify SHIP_CONFIGURATIONS and ContentManager ship definitions to use consistent property names, and ensure ShipFittingManager properly copies ALL physics properties when initializing."
+}
+```
+
+**DECISION: root_cause_found**

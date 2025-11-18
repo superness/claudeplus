@@ -1,0 +1,52 @@
+**AH! I found the problem!** 
+
+Look at lines 210-214 and 223-227. The WebSocket server is acting as a simple relay:
+- When the game client sends a message, it forwards it to the test client
+- When the test client sends a message, it forwards it to the game client
+
+The problem is on line 211-213: When the GAME sends a message (which should be a RESPONSE), it's forwarded to `testClient.send(msg)` - but `testClient` is NOT the same as the one that receives it!
+
+The test client sends a command, it goes to the game, the game processes it and sends back a response, but that response goes to `testClient.send(msg)` which just sends the raw message. However, the test client has set up a handler on line 278: `testClient.on('message', handleGameResponse)` which should receive it.
+
+**Wait**, actually looking more carefully, the flow is:
+1. Test client sends command → server → game client
+2. Game client (browser) processes and sends response → server → test client
+
+The issue is that the evidence shows the response is the COMMAND echoed back, not the actual response. This suggests the browser is sending the command back instead of the response.
+
+Let me check if there's an issue with how the browser is handling the command. The problem might be that `TestingBrowserBridge` is not correctly waiting for `gameInterface.handleCommand` to complete before sending the response.
+
+Looking at the evidence file again:
+```json
+"response": {
+  "type": "command",
+  "command": {
+    "id": "1",
+    "command": "getShipState",
+    ...
+  }
+}
+```
+
+This looks like the browser is echoing back the command message it received, not sending the actual response. This is a **FRAMEWORK_ERROR** - the command execution layer is broken.
+
+## Summary
+
+**EXECUTION RESULTS:**
+
+1. **Test script executed successfully** - WebSocket server started, Chrome launched, connections established
+2. **Framework error detected** - Commands are sent to the browser but responses are not returned correctly
+3. **Evidence captured** in `ship_movement_bug_evidence_1763396347276.json`
+
+**ROOT CAUSE:**
+The test infrastructure has a critical bug where the browser's `TestingBrowserBridge` or `GameTestingInterface` is not correctly sending responses back to the test server. Instead of receiving the actual `getShipState` response with ship position/velocity data, the test receives an echo of the command itself.
+
+**IMPACT:**
+Unable to reproduce the ship navigation bug because the test framework itself is broken. The automation commands cannot get actual game state data.
+
+**NEXT STEPS NEEDED:**
+1. Fix the TestingBrowserBridge/GameTestingInterface response handling
+2. Ensure responses are properly formatted and sent back through WebSocket
+3. Re-run the reproduction script once framework is fixed
+
+DECISION: FRAMEWORK_ERROR

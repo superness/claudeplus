@@ -1,0 +1,388 @@
+# Test Plan: Hover-to-Open RadialHUD with Progress Indicator
+
+## Feature Overview
+Implement a hover timer system requiring 0.5 seconds of continuous hovering over a ship before the RadialHUD menu opens, with a visual progress indicator showing completion percentage.
+
+## WebSocket Automation Strategy
+
+This feature involves **UI interaction mechanics** that require testing the following behaviors:
+1. Hover detection and timer initialization
+2. Progress indicator visual updates (0% → 100% over 0.5s)
+3. Timer cancellation when hover is interrupted
+4. RadialHUD opening only after completion
+5. State reset on hover exit
+
+## Test Plan Structure
+
+```json
+{
+  "testPlan": {
+    "feature": "Hover-to-Open RadialHUD with Progress Indicator",
+    "automationType": "WebSocket (ws://localhost:8765) + Browser Automation",
+    "totalTestCases": 8,
+    "testingApproach": "Hybrid - WebSocket commands for state setup, browser automation for interaction testing"
+  },
+  "testCases": [
+    {
+      "id": "TC-001",
+      "description": "RadialHUD does NOT open on immediate hover without delay",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true, "data": {"position": {"x": 0, "y": 0, "z": 0}}}},
+        {"browserAction": "mouseEnterShip", "duration": "100ms"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "hidden"},
+        {"browserAction": "mouseExitShip"}
+      ],
+      "evidenceToCapture": [
+        "radial_hud_state.json - HUD visibility state after 100ms hover",
+        "hover_timer_state.json - Timer activation status"
+      ],
+      "successCriteria": "RadialHUD remains hidden after brief hover (<500ms)"
+    },
+    {
+      "id": "TC-002",
+      "description": "Progress indicator appears and updates during hover",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "checkProgressIndicator", "expectedState": "visible", "expectedProgress": "~20%"},
+        {"browserAction": "wait", "duration": "150ms"},
+        {"browserAction": "checkProgressIndicator", "expectedProgress": "~50%"},
+        {"browserAction": "wait", "duration": "150ms"},
+        {"browserAction": "checkProgressIndicator", "expectedProgress": "~80%"},
+        {"browserAction": "mouseExitShip"}
+      ],
+      "evidenceToCapture": [
+        "progress_indicator_snapshots.json - Progress values at 100ms, 250ms, 400ms",
+        "visual_indicator_state.json - Visibility and position data"
+      ],
+      "successCriteria": "Progress indicator visible and increases from 0% to ~80% over 400ms"
+    },
+    {
+      "id": "TC-003",
+      "description": "RadialHUD opens after exactly 0.5 seconds of continuous hover",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "500ms"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "visible"},
+        {"browserAction": "checkProgressIndicator", "expectedState": "hidden"}
+      ],
+      "evidenceToCapture": [
+        "radial_hud_open_timing.json - Timestamp when HUD opened",
+        "hover_completion_evidence.json - Timer completion event"
+      ],
+      "successCriteria": "RadialHUD opens after 500ms±50ms, progress indicator disappears"
+    },
+    {
+      "id": "TC-004",
+      "description": "Timer resets when hover is interrupted before completion",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "300ms"},
+        {"browserAction": "checkProgressIndicator", "expectedProgress": "~60%"},
+        {"browserAction": "mouseExitShip"},
+        {"browserAction": "checkProgressIndicator", "expectedState": "hidden"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "hidden"},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "checkProgressIndicator", "expectedProgress": "~20%"}
+      ],
+      "evidenceToCapture": [
+        "timer_reset_evidence.json - Progress values before/after interruption",
+        "hover_state_transitions.json - Enter → Exit → Re-enter state tracking"
+      ],
+      "successCriteria": "Progress resets to 0% on hover exit, restarts from 0% on re-hover"
+    },
+    {
+      "id": "TC-005",
+      "description": "No RadialHUD open when hover interrupted at 400ms (edge case)",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "400ms"},
+        {"browserAction": "checkProgressIndicator", "expectedProgress": "~80%"},
+        {"browserAction": "mouseExitShip"},
+        {"browserAction": "wait", "duration": "200ms"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "hidden"}
+      ],
+      "evidenceToCapture": [
+        "incomplete_hover_evidence.json - Timer state at interruption",
+        "hud_state_after_timeout.json - HUD remains closed"
+      ],
+      "successCriteria": "HUD does NOT open when hover interrupted before 500ms"
+    },
+    {
+      "id": "TC-006",
+      "description": "RadialHUD does not re-trigger when already open",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "500ms"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "visible"},
+        {"browserAction": "mouseExitShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "checkProgressIndicator", "expectedState": "hidden"}
+      ],
+      "evidenceToCapture": [
+        "hud_already_open_state.json - HUD state during re-hover",
+        "timer_suppression_evidence.json - Timer not restarted when HUD open"
+      ],
+      "successCriteria": "Progress indicator does not appear when HUD already visible"
+    },
+    {
+      "id": "TC-007",
+      "description": "Rapid hover cycles do not trigger HUD (spam prevention)",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "mouseExitShip"},
+        {"browserAction": "wait", "duration": "50ms"},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "mouseExitShip"},
+        {"browserAction": "wait", "duration": "50ms"},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "mouseExitShip"},
+        {"browserAction": "wait", "duration": "100ms"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "hidden"}
+      ],
+      "evidenceToCapture": [
+        "rapid_hover_evidence.json - Timer state during multiple rapid cycles",
+        "hud_spam_prevention.json - HUD never opened during rapid cycles"
+      ],
+      "successCriteria": "HUD remains closed after 3 rapid hover cycles (100ms each)"
+    },
+    {
+      "id": "TC-008",
+      "description": "Click during hover immediately opens HUD (optional bypass)",
+      "automationSequence": [
+        {"command": "getShipState", "expectedResponse": {"success": true}},
+        {"browserAction": "mouseEnterShip"},
+        {"browserAction": "wait", "duration": "200ms"},
+        {"browserAction": "checkProgressIndicator", "expectedProgress": "~40%"},
+        {"browserAction": "clickShip"},
+        {"browserAction": "checkRadialHUDVisible", "expectedState": "visible"}
+      ],
+      "evidenceToCapture": [
+        "click_bypass_evidence.json - HUD opened before timer completion",
+        "interaction_override.json - Click action during hover"
+      ],
+      "successCriteria": "Click on ship during hover immediately opens HUD (timer bypass)"
+    }
+  ],
+  "automatedTestScript": "/mnt/c/github/superstarships/tests/test_hover_radial_hud.js",
+  "testEnvironmentSetup": {
+    "requirements": [
+      "WebSocket server running on ws://localhost:8765",
+      "Browser automation framework (Puppeteer/Playwright) for mouse interaction",
+      "Game loaded with at least one ship in viewport",
+      "RadialHUD feature enabled"
+    ],
+    "setupCommands": [
+      {"command": "getShipState", "purpose": "Verify ship exists and is accessible"},
+      {"browserAction": "ensureShipInView", "purpose": "Position camera so ship is visible"},
+      {"browserAction": "closeAllMenus", "purpose": "Ensure clean state before tests"}
+    ]
+  },
+  "expectedResponses": {
+    "hoverTimerStart": {
+      "event": "hover_started",
+      "data": {
+        "shipId": "string",
+        "timestamp": "number",
+        "hoverDuration": 500
+      }
+    },
+    "progressUpdate": {
+      "event": "hover_progress",
+      "data": {
+        "progress": "0.0 to 1.0",
+        "elapsed": "milliseconds"
+      }
+    },
+    "hoverComplete": {
+      "event": "hover_complete",
+      "data": {
+        "shipId": "string",
+        "totalDuration": 500,
+        "action": "open_radial_hud"
+      }
+    },
+    "hoverCancelled": {
+      "event": "hover_cancelled",
+      "data": {
+        "shipId": "string",
+        "elapsed": "milliseconds",
+        "reason": "mouse_exit"
+      }
+    }
+  },
+  "performanceMetrics": [
+    "Hover detection latency (time from mouse enter to timer start)",
+    "Progress indicator update frequency (should be smooth, 60fps)",
+    "Timer accuracy (HUD opens at 500ms ± 50ms)",
+    "State reset latency (time from hover exit to timer reset)"
+  ],
+  "edgeCaseTests": [
+    "Ship destroyed during hover → Timer cancels, no HUD",
+    "Ship warps away during hover → Timer cancels, no HUD",
+    "Multiple ships overlapping → Timer applies to selected/topmost ship",
+    "Camera angle change during hover → Timer continues if ship still under cursor",
+    "Low framerate performance → Timer uses timestamp-based tracking, not frame-count"
+  ]
+}
+```
+
+## Test Execution Strategy
+
+### Phase 1: Basic Hover Mechanics
+- **TC-001**: Verify instant hover does not trigger HUD
+- **TC-003**: Verify 0.5s hover opens HUD
+- **TC-004**: Verify timer reset on interruption
+
+### Phase 2: Progress Indicator
+- **TC-002**: Verify progress indicator visibility and updates
+- **TC-005**: Verify progress at interruption edge case
+
+### Phase 3: State Management
+- **TC-006**: Verify HUD already open behavior
+- **TC-007**: Verify rapid hover spam prevention
+
+### Phase 4: Interaction Overrides
+- **TC-008**: Verify click bypass (if implemented)
+
+## Test Automation Script Structure
+
+```javascript
+// /mnt/c/github/superstarships/tests/test_hover_radial_hud.js
+
+const WebSocket = require('ws');
+const puppeteer = require('puppeteer'); // or playwright
+
+class HoverRadialHUDTest {
+  constructor() {
+    this.ws = null;
+    this.browser = null;
+    this.page = null;
+  }
+
+  async setup() {
+    // Connect WebSocket
+    this.ws = new WebSocket('ws://localhost:8765');
+    
+    // Launch browser
+    this.browser = await puppeteer.launch({ headless: false });
+    this.page = await this.browser.newPage();
+    await this.page.goto('http://localhost:8080');
+    
+    // Wait for game to load
+    await this.page.waitForSelector('#simulator-canvas');
+  }
+
+  async testCase001_NoInstantOpen() {
+    // Mouse enter ship for 100ms
+    const shipElement = await this.page.$('#ship-canvas-object');
+    await shipElement.hover();
+    await this.page.waitForTimeout(100);
+    
+    // Check HUD not visible
+    const hudVisible = await this.page.evaluate(() => {
+      return window.simulator.radialHUD.isVisible();
+    });
+    
+    return { success: !hudVisible, evidence: { hudVisible } };
+  }
+
+  async testCase003_OpensAfter500ms() {
+    const shipElement = await this.page.$('#ship-canvas-object');
+    await shipElement.hover();
+    
+    const startTime = Date.now();
+    await this.page.waitForTimeout(500);
+    const elapsed = Date.now() - startTime;
+    
+    const hudVisible = await this.page.evaluate(() => {
+      return window.simulator.radialHUD.isVisible();
+    });
+    
+    return { 
+      success: hudVisible && elapsed >= 450 && elapsed <= 600,
+      evidence: { hudVisible, elapsed }
+    };
+  }
+
+  // ... additional test cases ...
+
+  async runAllTests() {
+    const results = [];
+    results.push(await this.testCase001_NoInstantOpen());
+    results.push(await this.testCase003_OpensAfter500ms());
+    // ... run all test cases ...
+    return results;
+  }
+}
+
+// Execute tests
+(async () => {
+  const tester = new HoverRadialHUDTest();
+  await tester.setup();
+  const results = await tester.runAllTests();
+  console.log(JSON.stringify(results, null, 2));
+})();
+```
+
+## Evidence Capture Format
+
+Each test will produce JSON evidence files:
+
+```json
+{
+  "testCase": "TC-003",
+  "timestamp": "2025-01-17T12:34:56.789Z",
+  "evidence": {
+    "hoverStartTime": 1705493696789,
+    "hoverEndTime": 1705493697289,
+    "elapsedTime": 500,
+    "progressIndicatorStates": [
+      {"time": 100, "progress": 0.2},
+      {"time": 250, "progress": 0.5},
+      {"time": 400, "progress": 0.8},
+      {"time": 500, "progress": 1.0}
+    ],
+    "radialHUDOpened": true,
+    "radialHUDOpenTime": 1705493697289
+  },
+  "result": "PASS",
+  "successCriteria": "HUD opened after 500ms ± 50ms"
+}
+```
+
+## Success Criteria Summary
+
+✅ **All 8 test cases must pass:**
+1. No instant open on brief hover
+2. Progress indicator visible and updates smoothly
+3. HUD opens after exactly 0.5s
+4. Timer resets on hover interruption
+5. No HUD open when interrupted before completion
+6. No re-trigger when HUD already open
+7. Rapid hover spam does not trigger HUD
+8. Click bypass opens HUD immediately (if implemented)
+
+✅ **Performance requirements:**
+- Hover detection latency < 50ms
+- Progress indicator updates at 60fps
+- Timer accuracy: 500ms ± 50ms
+
+✅ **No regressions:**
+- Existing RadialHUD functionality unchanged (when opened, all buttons work)
+- No performance degradation during normal gameplay
+
+---
+
+**DECISION: test_plan_ready**

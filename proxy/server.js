@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const InfographicGenerator = require('./infographic-generator');
 const BrowserAutomationService = require('./browser-automation-service');
+const TestLibraryManager = require('./test-library-manager');
 
 // Create log file and override console.log
 const logFile = path.join(__dirname, 'proxy.log');
@@ -39,6 +40,7 @@ class ClaudeProxy {
     this.infographicsDir = path.join(__dirname, 'pipeline-infographics'); // Infographics output directory
     this.browserAutomation = null; // Browser automation service instance
     this.browserSessions = new Map(); // Track browser sessions per pipeline/client
+    this.testLibrary = new TestLibraryManager(); // Test library manager
 
     this.initializePipelineStorage();
     this.initializeTemplateStorage();
@@ -2791,6 +2793,7 @@ Your commentary:`;
     });
 
     // Auto-commit changes if working on a git repository
+    // NOTE: Test collection is now handled by the test_librarian agent in the pipeline
     try {
       const commitHash = await this.autoCommitPipelineChanges(pipelineState, workingDir);
       if (commitHash) {

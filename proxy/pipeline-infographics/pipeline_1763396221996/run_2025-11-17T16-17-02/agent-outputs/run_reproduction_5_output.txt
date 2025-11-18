@@ -1,0 +1,46 @@
+The issue is clear: the test script's relay is forwarding messages directly (raw strings) between clients, but it's not properly handling the `response` messages coming back from the game. Let me check what the TestingBrowserBridge actually sends:
+
+Based on my analysis of the code:
+
+1. **TestingBrowserBridge.js:196-202** sends responses as:
+```javascript
+{
+  type: 'response',
+  response: response  // The actual game response
+}
+```
+
+2. **reproduce_ship_navigation_bug.js:327-339** expects to receive responses with just the response data directly (with `id`, `success`, etc. at the top level)
+
+3. The relay in lines 210-227 just blindly forwards messages without unwrapping the `response` wrapper
+
+This is a **FRAMEWORK_ERROR** - the automation framework response handling is broken.
+
+## Execution Report
+
+**Test Execution Summary:**
+- **Status**: FAILED due to framework error
+- **Root Cause**: WebSocket automation framework response relay broken
+- **Test Phase Reached**: Initial ship state retrieval (step 1 of 8)
+- **Evidence File**: ship_movement_bug_evidence_1763397268673.json
+
+**Framework Failure Analysis:**
+
+1. **Game Connected Successfully**: The game browser instance connected to the WebSocket server
+2. **Test Client Connected**: The test script client connected successfully
+3. **Command Sent**: `getShipState` command was sent to the game
+4. **Response Sent**: TestingBrowserBridge received the command and sent a response wrapped as `{type: 'response', response: {...}}`
+5. **Relay Broken**: The relay in reproduce_ship_navigation_bug.js forwards the wrapped message directly without unwrapping the `response` field
+6. **Handler Fails**: handleGameResponse() expects `{id, success, data, ...}` but receives `{type: 'response', response: {id, success, data, ...}}`
+7. **Test Hangs**: The promise in sendGameCommandAsync() never resolves because the response ID doesn't match
+
+**Technical Details:**
+- TestingBrowserBridge.js:196-202 wraps responses in `{type: 'response', response: actualResponse}`
+- reproduce_ship_navigation_bug.js:327-339 expects unwrapped responses
+- The WebSocket relay (lines 210-227) blindly forwards messages without unwrapping
+- This causes response.id to be undefined, so the promise never resolves
+
+**Impact on Bug Reproduction:**
+Cannot reproduce the ship navigation bug because the test infrastructure itself is broken. The automation framework cannot successfully execute ANY commands, not just navigation-related ones.
+
+DECISION: FRAMEWORK_ERROR

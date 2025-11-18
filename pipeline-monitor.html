@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Monitor - Claude Plus</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #2a2a2a;
+            padding: 1rem 1.5rem;
+            border-bottom: 2px solid #3a3a3a;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            color: #00d4ff;
+            margin-bottom: 0.5rem;
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.85rem;
+            color: #999;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+
+        .status-indicator.active {
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: #222;
+            border-right: 1px solid #3a3a3a;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .live-updates {
+            width: 350px;
+            background: #1e1e1e;
+            border-left: 1px solid #3a3a3a;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .live-updates h3 {
+            font-size: 0.9rem;
+            color: #00d4ff;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .live-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .update-section {
+            background: #252525;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .update-section h4 {
+            font-size: 0.8rem;
+            color: #00d4ff;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .update-content {
+            font-size: 0.75rem;
+            color: #ccc;
+            line-height: 1.5;
+        }
+
+        .update-content .stage {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .update-content .stage:last-child {
+            border-bottom: none;
+        }
+
+        .stage-status {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .stage-status.completed { background: #00ff88; }
+        .stage-status.in-progress {
+            background: #00d4ff;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        .stage-status.pending { background: #666; }
+        .stage-status.error { background: #ff4444; }
+
+        .stage-name {
+            flex: 1;
+            font-size: 0.75rem;
+        }
+
+        .stage-time {
+            font-size: 0.7rem;
+            color: #777;
+        }
+
+        .error-item {
+            background: #3a1a1a;
+            border-left: 3px solid #ff4444;
+            padding: 0.5rem;
+            margin: 0.25rem 0;
+            border-radius: 3px;
+            font-size: 0.75rem;
+        }
+
+        .error-time {
+            color: #ff8888;
+            font-size: 0.7rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .error-message {
+            color: #ffaaaa;
+        }
+
+        .refresh-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            background: #252525;
+            border-radius: 4px;
+        }
+
+        .refresh-control label {
+            font-size: 0.75rem;
+            color: #999;
+        }
+
+        .refresh-control input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        .refresh-interval {
+            font-size: 0.7rem;
+            color: #666;
+        }
+
+        .no-data {
+            color: #666;
+            font-size: 0.75rem;
+            font-style: italic;
+            padding: 0.5rem;
+        }
+
+        .quick-commands {
+            margin-bottom: 1.5rem;
+        }
+
+        .quick-commands h3 {
+            font-size: 0.9rem;
+            color: #00d4ff;
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .quick-btn {
+            display: block;
+            width: 100%;
+            padding: 0.6rem;
+            margin-bottom: 0.5rem;
+            background: #333;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .quick-btn:hover {
+            background: #3a3a3a;
+            border-color: #00d4ff;
+        }
+
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1a1a1a;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .message {
+            padding: 1rem;
+            border-radius: 8px;
+            max-width: 85%;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: #2a4a5a;
+            align-self: flex-end;
+            border: 1px solid #3a5a6a;
+        }
+
+        .message.assistant {
+            background: #2a2a2a;
+            align-self: flex-start;
+            border: 1px solid #3a3a3a;
+        }
+
+        .message.system {
+            background: #3a2a2a;
+            align-self: center;
+            border: 1px solid #4a3a3a;
+            font-size: 0.9rem;
+            font-style: italic;
+            max-width: 95%;
+        }
+
+        .message-header {
+            font-size: 0.75rem;
+            color: #999;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .message-content {
+            line-height: 1.6;
+        }
+
+        .message-content pre {
+            background: #1a1a1a;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+            border: 1px solid #333;
+        }
+
+        .message-content code {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        .input-area {
+            padding: 1rem 1.5rem;
+            background: #2a2a2a;
+            border-top: 1px solid #3a3a3a;
+        }
+
+        .input-container {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        #userInput {
+            flex: 1;
+            padding: 0.75rem;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            resize: none;
+            min-height: 44px;
+            max-height: 150px;
+        }
+
+        #userInput:focus {
+            outline: none;
+            border-color: #00d4ff;
+            box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1);
+        }
+
+        #sendBtn {
+            padding: 0.75rem 1.5rem;
+            background: #00d4ff;
+            color: #1a1a1a;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+        }
+
+        #sendBtn:hover {
+            background: #00b8e6;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3);
+        }
+
+        #sendBtn:disabled {
+            background: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #444;
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Pipeline Monitor</h1>
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-indicator" id="proxyStatus"></div>
+                <span>Proxy Server</span>
+            </div>
+            <div class="status-item">
+                <div class="status-indicator" id="pipelineStatus"></div>
+                <span>Active Pipeline</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <div class="quick-commands">
+                <h3>Quick Commands</h3>
+                <button class="quick-btn" onclick="sendQuickCommand('status')">System Status</button>
+                <button class="quick-btn" onclick="sendQuickCommand('current-pipeline')">Current Pipeline</button>
+                <button class="quick-btn" onclick="sendQuickCommand('recent-errors')">Recent Errors</button>
+                <button class="quick-btn" onclick="sendQuickCommand('execution-history')">Execution History</button>
+                <button class="quick-btn" onclick="sendQuickCommand('list-pipelines')">List All Pipelines</button>
+                <button class="quick-btn" onclick="sendQuickCommand('list-agents')">List Agents</button>
+                <button class="quick-btn" onclick="sendQuickCommand('check-health')">Health Check</button>
+            </div>
+
+            <div class="quick-commands">
+                <h3>Templates</h3>
+                <button class="quick-btn" onclick="sendQuickCommand('list-templates')">Available Templates</button>
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div class="messages" id="messages">
+                <div class="message system">
+                    <div class="message-header">SYSTEM</div>
+                    <div class="message-content">
+                        Pipeline Monitor initialized. I'm ready to help you understand the state of your proxy and pipeline system.
+                        <br><br>
+                        I know where to find:
+                        <br>• Structured execution logs in <code>proxy/pipelines/*_execution.json</code>
+                        <br>• Pipeline states in <code>proxy/pipeline-states/</code>
+                        <br>• Agent definitions in <code>agents/</code>
+                        <br>• Templates in <code>templates/</code>
+                        <br><br>
+                        Ask me anything or use the quick commands on the left!
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea
+                        id="userInput"
+                        placeholder="Ask about pipeline status, errors, executions, or any aspect of the system..."
+                        rows="1"
+                    ></textarea>
+                    <button id="sendBtn" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="live-updates">
+            <div class="refresh-control">
+                <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()">
+                <label for="autoRefresh">Auto-refresh</label>
+                <span class="refresh-interval">(2s)</span>
+            </div>
+
+            <h3><span class="live-indicator"></span> Live Updates</h3>
+
+            <div class="update-section">
+                <h4>Current Pipeline</h4>
+                <div class="update-content" id="currentPipeline">
+                    <div class="no-data">No active pipeline</div>
+                </div>
+            </div>
+
+            <div class="update-section">
+                <h4>Recent Activity</h4>
+                <div class="update-content" id="recentActivity">
+                    <div class="no-data">No recent activity</div>
+                </div>
+            </div>
+
+            <div class="update-section">
+                <h4>Recent Errors</h4>
+                <div class="update-content" id="recentErrors">
+                    <div class="no-data">No errors</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:8081');
+        const messagesDiv = document.getElementById('messages');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const proxyStatus = document.getElementById('proxyStatus');
+        const pipelineStatus = document.getElementById('pipelineStatus');
+
+        let conversationHistory = [];
+        let isProcessing = false;
+
+        // Auto-resize textarea
+        userInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+        });
+
+        // Enter to send, Shift+Enter for newline
+        userInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        ws.onopen = () => {
+            console.log('Connected to proxy');
+            proxyStatus.classList.add('active');
+
+            // Send initial context to Claude
+            const contextMessage = {
+                type: 'pipeline-monitor-init',
+                systemContext: `You are a specialized monitor for the Claude Plus pipeline system.
+
+CRITICAL CONTEXT:
+- Working directory: /mnt/c/github/claudeplus
+- Proxy server runs on port 8081
+- Structured execution logs: proxy/pipelines/<pipeline-id>_execution.json
+- Pipeline states: proxy/pipeline-states/ (current.json is most recent)
+- Agent definitions: agents/*.json
+- Templates: templates/*.json
+- Plain text log (LAST RESORT): proxy/proxy.log
+
+YOUR ROLE:
+- Monitor and explain pipeline/proxy status
+- Parse structured JSON logs intelligently
+- Identify errors from execution logs
+- Explain what's happening in the system
+- Suggest fixes for common issues
+
+IMPORTANT BEHAVIORS:
+- ALWAYS check structured execution logs FIRST (proxy/pipelines/*_execution.json)
+- Use tail -n 100 to read recent log entries
+- Parse JSON for error events, stage completions, routing
+- Only check proxy.log as last resort
+- Be concise and actionable
+- Focus on the specific question asked
+
+Common error patterns:
+- "spawn claude ENOENT": Claude executable not found
+- "stage_error" events: Agent execution failed
+- Missing "stage_completed": Agent hung/crashed
+
+Remember: You're a specialized tool for THIS specific codebase. No generic responses.`
+            };
+
+            ws.send(JSON.stringify(contextMessage));
+        };
+
+        ws.onclose = () => {
+            console.log('Disconnected from proxy');
+            proxyStatus.classList.remove('active');
+            pipelineStatus.classList.remove('active');
+            addMessage('system', 'Disconnected from proxy server. Please restart the proxy.');
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            addMessage('system', 'Connection error. Make sure the proxy server is running on port 8081.');
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'assistant-message') {
+                    addMessage('assistant', data.content);
+                    isProcessing = false;
+                    updateUI();
+                } else if (data.type === 'pipeline-commentary') {
+                    // Display agent commentary as system messages
+                    const commentary = data.content;
+                    const emoji = commentary.type === 'commentary' ? '💬' :
+                                  commentary.type === 'stage-complete' ? '✅' :
+                                  commentary.type === 'stage-start' ? '▶️' : '🔔';
+
+                    const header = `${emoji} ${commentary.agent}`;
+                    const message = commentary.message || commentary.content || 'No message';
+
+                    addCommentaryMessage(header, message, commentary.timestamp);
+                } else if (data.type === 'pipeline-status') {
+                    if (data.active) {
+                        pipelineStatus.classList.add('active');
+                    } else {
+                        pipelineStatus.classList.remove('active');
+                    }
+                } else if (data.type === 'error') {
+                    addMessage('system', `Error: ${data.message}`);
+                    isProcessing = false;
+                    updateUI();
+                }
+            } catch (e) {
+                console.error('Error parsing message:', e);
+            }
+        };
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'message-header';
+            headerDiv.textContent = role.toUpperCase();
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            // Basic markdown-style formatting
+            let formattedContent = content
+                .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>');
+
+            contentDiv.innerHTML = formattedContent;
+
+            messageDiv.appendChild(headerDiv);
+            messageDiv.appendChild(contentDiv);
+            messagesDiv.appendChild(messageDiv);
+
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            conversationHistory.push({ role, content });
+        }
+
+        function addCommentaryMessage(header, content, timestamp) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message system';
+            messageDiv.style.background = '#1a2a3a';
+            messageDiv.style.borderColor = '#2a4a6a';
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'message-header';
+
+            // Add timestamp to header
+            const timeStr = timestamp ? new Date(timestamp).toLocaleTimeString() : '';
+            headerDiv.textContent = timeStr ? `${header} • ${timeStr}` : header;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+
+            // Basic markdown-style formatting
+            let formattedContent = content
+                .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>');
+
+            contentDiv.innerHTML = formattedContent;
+
+            messageDiv.appendChild(headerDiv);
+            messageDiv.appendChild(contentDiv);
+            messagesDiv.appendChild(messageDiv);
+
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            // Don't add commentary to conversation history since it's system-level
+        }
+
+        function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message || isProcessing) return;
+
+            addMessage('user', message);
+            userInput.value = '';
+            userInput.style.height = 'auto';
+
+            isProcessing = true;
+            updateUI();
+
+            // Send to Claude via proxy with monitor context
+            ws.send(JSON.stringify({
+                type: 'pipeline-monitor-query',
+                message: message,
+                history: conversationHistory.slice(-10) // Last 10 messages for context
+            }));
+        }
+
+        function sendQuickCommand(command) {
+            const commands = {
+                'status': 'What is the current status of the pipeline system?',
+                'current-pipeline': 'Show me the current pipeline state and what it\'s doing',
+                'recent-errors': 'Check for recent errors in the execution logs',
+                'execution-history': 'Show recent execution history from the structured logs',
+                'list-pipelines': 'List all available pipeline templates',
+                'list-agents': 'List all agent definitions',
+                'check-health': 'Run a health check on the proxy and pipeline system',
+                'list-templates': 'Show all available templates and their purposes'
+            };
+
+            userInput.value = commands[command] || command;
+            sendMessage();
+        }
+
+        function updateUI() {
+            sendBtn.disabled = isProcessing;
+            sendBtn.innerHTML = isProcessing ? '<span class="loading"></span>' : 'Send';
+            userInput.disabled = isProcessing;
+        }
+
+        // ===== LIVE UPDATES FUNCTIONALITY =====
+        let autoRefreshEnabled = true;
+        let refreshInterval = null;
+        let lastUpdateTime = {};
+
+        function toggleAutoRefresh() {
+            autoRefreshEnabled = document.getElementById('autoRefresh').checked;
+            if (autoRefreshEnabled) {
+                startAutoRefresh();
+            } else {
+                stopAutoRefresh();
+            }
+        }
+
+        function startAutoRefresh() {
+            if (refreshInterval) return;
+
+            // Initial fetch
+            fetchLiveUpdates();
+
+            // Poll every 2 seconds
+            refreshInterval = setInterval(fetchLiveUpdates, 2000);
+        }
+
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
+
+        async function fetchLiveUpdates() {
+            try {
+                // Fetch current pipeline state
+                const stateResponse = await fetch('http://localhost:8081/api/pipeline-state');
+                if (stateResponse.ok) {
+                    const state = await stateResponse.json();
+                    updateCurrentPipeline(state);
+                }
+
+                // Fetch recent execution events
+                const eventsResponse = await fetch('http://localhost:8081/api/recent-events?limit=10');
+                if (eventsResponse.ok) {
+                    const events = await eventsResponse.json();
+                    updateRecentActivity(events);
+                    updateRecentErrors(events);
+                }
+            } catch (error) {
+                console.error('Error fetching live updates:', error);
+            }
+        }
+
+        function updateCurrentPipeline(state) {
+            const container = document.getElementById('currentPipeline');
+
+            if (!state || !state.stages || state.stages.length === 0) {
+                container.innerHTML = '<div class="no-data">No active pipeline</div>';
+                return;
+            }
+
+            const stages = state.stages.map(stage => {
+                const status = state.completedStages?.includes(stage.id) ? 'completed' :
+                              state.currentStage === stage.id ? 'in-progress' : 'pending';
+
+                let timeInfo = '';
+                if (state.stageTimings && state.stageTimings[stage.id]) {
+                    const timing = state.stageTimings[stage.id];
+                    if (timing.end) {
+                        const duration = Math.round((timing.end - timing.start) / 1000);
+                        timeInfo = `${duration}s`;
+                    } else if (timing.start) {
+                        const elapsed = Math.round((Date.now() - timing.start) / 1000);
+                        timeInfo = `${elapsed}s...`;
+                    }
+                }
+
+                return `
+                    <div class="stage">
+                        <div class="stage-status ${status}"></div>
+                        <div class="stage-name">${stage.name || stage.id}</div>
+                        ${timeInfo ? `<div class="stage-time">${timeInfo}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = stages;
+
+            // Update pipeline status indicator
+            if (state.currentStage) {
+                pipelineStatus.classList.add('active');
+            } else {
+                pipelineStatus.classList.remove('active');
+            }
+        }
+
+        function updateRecentActivity(events) {
+            const container = document.getElementById('recentActivity');
+
+            if (!events || events.length === 0) {
+                container.innerHTML = '<div class="no-data">No recent activity</div>';
+                return;
+            }
+
+            // Filter to interesting events (stage starts, completions, routes)
+            const activityEvents = events.filter(e =>
+                ['stage_started', 'stage_completed', 'stage_routed', 'pipeline_completed'].includes(e.eventType)
+            ).slice(0, 5);
+
+            if (activityEvents.length === 0) {
+                container.innerHTML = '<div class="no-data">No recent activity</div>';
+                return;
+            }
+
+            const html = activityEvents.map(event => {
+                const time = new Date(event.timestamp).toLocaleTimeString();
+                const icon = event.eventType === 'stage_completed' ? '✓' :
+                            event.eventType === 'stage_started' ? '▶' :
+                            event.eventType === 'stage_routed' ? '→' : '●';
+
+                let message = '';
+                if (event.eventType === 'stage_started') {
+                    message = `${event.stageName || event.stageId} started`;
+                } else if (event.eventType === 'stage_completed') {
+                    message = `${event.stageName || event.stageId} completed`;
+                } else if (event.eventType === 'stage_routed') {
+                    message = `Routed to ${event.nextStage}`;
+                } else if (event.eventType === 'pipeline_completed') {
+                    message = 'Pipeline completed';
+                }
+
+                return `
+                    <div class="stage">
+                        <div class="stage-name">${icon} ${message}</div>
+                        <div class="stage-time">${time}</div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        function updateRecentErrors(events) {
+            const container = document.getElementById('recentErrors');
+
+            if (!events || events.length === 0) {
+                container.innerHTML = '<div class="no-data">No errors</div>';
+                return;
+            }
+
+            // Filter to error events
+            const errorEvents = events.filter(e => e.eventType === 'stage_error').slice(0, 3);
+
+            if (errorEvents.length === 0) {
+                container.innerHTML = '<div class="no-data">No errors</div>';
+                return;
+            }
+
+            const html = errorEvents.map(event => {
+                const time = new Date(event.timestamp).toLocaleTimeString();
+                const errorMsg = event.error || 'Unknown error';
+                const stageName = event.stageName || event.stageId || 'Unknown stage';
+
+                return `
+                    <div class="error-item">
+                        <div class="error-time">${time} - ${stageName}</div>
+                        <div class="error-message">${errorMsg}</div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        // Start auto-refresh when connected
+        ws.addEventListener('open', () => {
+            if (autoRefreshEnabled) {
+                startAutoRefresh();
+            }
+        });
+
+        // Stop auto-refresh when disconnected
+        ws.addEventListener('close', () => {
+            stopAutoRefresh();
+        });
+    </script>
+</body>
+</html>

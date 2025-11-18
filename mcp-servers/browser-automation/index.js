@@ -278,6 +278,45 @@ class BrowserAutomationServer {
           }
         },
         {
+          name: 'browser_get_console_logs',
+          description: 'Get all captured console logs from the browser',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                description: 'Session ID from browser_launch'
+              },
+              filter: {
+                type: 'string',
+                enum: ['all', 'log', 'info', 'warn', 'error', 'debug'],
+                default: 'all',
+                description: 'Filter logs by type'
+              },
+              clear: {
+                type: 'boolean',
+                default: false,
+                description: 'Clear logs after retrieving them'
+              }
+            },
+            required: ['sessionId']
+          }
+        },
+        {
+          name: 'browser_clear_console_logs',
+          description: 'Clear all captured console logs',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                description: 'Session ID from browser_launch'
+              }
+            },
+            required: ['sessionId']
+          }
+        },
+        {
           name: 'browser_close',
           description: 'Close the browser session',
           inputSchema: {
@@ -320,6 +359,10 @@ class BrowserAutomationServer {
             return await this.waitForSelector(args);
           case 'browser_get_page_info':
             return await this.getPageInfo(args);
+          case 'browser_get_console_logs':
+            return await this.getConsoleLogs(args);
+          case 'browser_clear_console_logs':
+            return await this.clearConsoleLogs(args);
           case 'browser_close':
             return await this.closeBrowser(args);
           default:
@@ -364,9 +407,32 @@ class BrowserAutomationServer {
 
     const page = await context.newPage();
 
+    // Initialize console log capture
+    const consoleLogs = [];
+    page.on('console', msg => {
+      consoleLogs.push({
+        type: msg.type(),
+        text: msg.text(),
+        timestamp: new Date().toISOString(),
+        location: msg.location()
+      });
+    });
+
+    // Capture page errors
+    page.on('pageerror', error => {
+      consoleLogs.push({
+        type: 'error',
+        text: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      });
+    });
+
     this.browsers.set(sessionId, browser);
     this.contexts.set(sessionId, context);
     this.pages.set(sessionId, page);
+    this.consoleLogs = this.consoleLogs || new Map();
+    this.consoleLogs.set(sessionId, consoleLogs);
 
     return {
       content: [
@@ -377,7 +443,7 @@ class BrowserAutomationServer {
             browserType,
             headless,
             viewport: { width: viewport.width || 1280, height: viewport.height || 720 },
-            message: 'Browser launched successfully'
+            message: 'Browser launched successfully with console capture enabled'
           }, null, 2)
         }
       ]
@@ -547,6 +613,51 @@ class BrowserAutomationServer {
     };
   }
 
+  async getConsoleLogs(args) {
+    const { sessionId, filter = 'all', clear = false } = args;
+    if (!this.consoleLogs) this.consoleLogs = new Map();
+
+    const logs = this.consoleLogs.get(sessionId) || [];
+    let filteredLogs = logs;
+
+    if (filter !== 'all') {
+      filteredLogs = logs.filter(log => log.type === filter);
+    }
+
+    if (clear) {
+      this.consoleLogs.set(sessionId, []);
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            sessionId,
+            logCount: filteredLogs.length,
+            logs: filteredLogs
+          }, null, 2)
+        }
+      ]
+    };
+  }
+
+  async clearConsoleLogs(args) {
+    const { sessionId } = args;
+    if (!this.consoleLogs) this.consoleLogs = new Map();
+
+    this.consoleLogs.set(sessionId, []);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Console logs cleared for session ${sessionId}`
+        }
+      ]
+    };
+  }
+
   async closeBrowser(args) {
     const { sessionId } = args;
     const browser = this.browsers.get(sessionId);
@@ -556,6 +667,7 @@ class BrowserAutomationServer {
     this.browsers.delete(sessionId);
     this.contexts.delete(sessionId);
     this.pages.delete(sessionId);
+    if (this.consoleLogs) this.consoleLogs.delete(sessionId);
 
     return {
       content: [

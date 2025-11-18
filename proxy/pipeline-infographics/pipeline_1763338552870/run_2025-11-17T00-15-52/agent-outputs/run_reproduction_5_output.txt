@@ -1,0 +1,90 @@
+Found it! The handleGameResponse function is parsing `data` as the top-level response object, but based on the evidence file, the actual message structure is `{type: 'command', command: {...}}` coming back (it's echoing the command, not the response).
+
+The issue is that the handleGameResponse function is receiving the command echo, not the actual response. The WebSocket server relay needs to properly handle response messages.
+
+Looking at the evidence file again:
+```json
+"response": {
+  "type": "command",
+  "command": {
+    "id": "1",
+    "command": "getShipState",
+    "params": {"includeModules": false}
+  }
+}
+```
+
+This is the command being echoed back, not the response! The relay logic at line 165-168 is forwarding game messages to testClient, but it should only forward `type: 'response'` messages, not `type: 'register'` or other message types.
+
+## Execution Report
+
+```json
+{
+  "executionStatus": "completed",
+  "exitCode": 1,
+  "devServerRunning": true,
+  "websocketServerStarted": true,
+  "gameConnected": true,
+  "testClientConnected": true,
+  "commandsExecuted": 1,
+  "evidenceCaptured": [
+    {
+      "type": "evidence",
+      "path": "ship_movement_bug_evidence_1763338948872.json",
+      "status": "COMMAND_FAILED",
+      "commands": [
+        {
+          "command": "getShipState",
+          "params": {"includeModules": false},
+          "response": {
+            "type": "command",
+            "command": {
+              "id": "1",
+              "command": "getShipState",
+              "params": {"includeModules": false}
+            }
+          },
+          "timestamp": "2025-11-17T00:22:28.872Z"
+        }
+      ]
+    },
+    {
+      "type": "console_output",
+      "lines": [
+        "SHIP MOVEMENT BUG REPRODUCTION TEST",
+        "Testing: Ship movement after setNavigationTarget",
+        "Expected: Ship accelerates toward target",
+        "Bug: Ship remains stationary",
+        "[Automation] WebSocket server started on port 8765",
+        "[Launch] Starting game in Chrome with testMode...",
+        "[Launch] Waiting for game to connect...",
+        "[Automation] ✓ Game connected to automation server",
+        "[Launch] ✓ Game connected! Waiting 3s for initialization...",
+        "[Test] Connecting test client...",
+        "[Automation] ✓ Test client connected",
+        "[Test] ✓ Test client ready!",
+        "STARTING TEST SEQUENCE",
+        "[Test] → Get initial ship state and position",
+        "[Error] ✗ Command failed: undefined",
+        "[Evidence] Evidence saved to ship_movement_bug_evidence_1763338948872.json (COMMAND_FAILED)"
+      ]
+    }
+  ],
+  "observations": [
+    "Dev server confirmed running on http://localhost:8080",
+    "WebSocket server started successfully on port 8765",
+    "Game connected to automation server",
+    "Test client connected successfully",
+    "Command 'getShipState' was sent with params {includeModules: false}",
+    "Response received contains command echo, not actual response data",
+    "Response structure: {type: 'command', command: {id, command, params}}",
+    "Expected response structure: {type: 'response', response: {id, success, data, error, timestamp}}",
+    "Script detected undefined response.success (because response was command echo, not response)",
+    "Script exited with code 1 (COMMAND_FAILED)",
+    "Evidence.json shows only the command echo was captured, not the actual game response"
+  ],
+  "rootCause": "WebSocket relay forwarding command messages back to test client instead of only response messages. The relay at lines 165-168 in the script forwards all messages from game to test client, including the initial command registration messages. The test client is receiving the command echo {type: 'command'} instead of the response {type: 'response'}."
+}
+```
+
+DECISION: FRAMEWORK_ERROR

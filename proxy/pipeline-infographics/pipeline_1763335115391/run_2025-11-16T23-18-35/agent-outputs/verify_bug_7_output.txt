@@ -1,0 +1,105 @@
+# Bug Existence Verification Analysis
+
+## Step 1: Parse WebSocket Evidence
+
+Loading evidence from: `ship_movement_bug_evidence_1763335455703.json`
+
+```json
+{
+  "command": "setThrottle",
+  "params": {"value": 50},
+  "response": {
+    "type": "command",
+    "command": {
+      "id": "1",
+      "command": "setThrottle",
+      "params": {"value": 50}
+    }
+  },
+  "success": false,
+  "timestamp": "2025-11-16T23:24:15.703Z"
+}
+```
+
+## Step 2: Evidence Quality Assessment
+
+### Runtime Evidence Present?
+✅ **YES** - WebSocket automation was executed with:
+- Live WebSocket server on port 8765
+- Game connected to automation server
+- Test client connected successfully
+- Command sent: `setThrottle` with value 50
+- Response received (though malformed)
+
+### Critical Problem Identified
+
+**The evidence reveals an infrastructure issue, NOT the ship movement bug itself.**
+
+**Observed**: 
+- WebSocket automation infrastructure exists
+- Command was sent to the game
+- Game echoed command back instead of executing it
+- Response format: `{type: 'command', command: {...}}` (relay/echo behavior)
+- Expected format: `{id: string, success: boolean, data: object}` (execution result)
+
+**Root Cause**: The WebSocket automation layer (`TestingBrowserBridge`) does not execute commands on the game simulator - it only relays/echoes them back to the client.
+
+## Step 3: Verification Decision
+
+### Evidence Analysis
+
+```json
+{
+  "runtimeEvidencePresent": true,
+  "websocketResponses": "Command sent successfully, but game echoed instead of executing",
+  "stateInconsistency": "Cannot verify - command was not executed by game engine",
+  "matchesBugReport": false,
+  "infraBlocker": "WebSocket automation layer incomplete - commands not routed to simulator"
+}
+```
+
+### Critical Distinction
+
+**Bug Report**: "Ship does not move when navigation targets are set"
+
+**Evidence Shows**: "WebSocket automation commands are not executed by the game at all - they are only echoed back"
+
+**Implication**: The test infrastructure cannot yet verify the ship movement bug because commands don't reach the game engine.
+
+## Conclusion
+
+The WebSocket automation test **successfully connected** and **sent commands**, but revealed a **blocker in the automation infrastructure** itself:
+
+1. ✅ WebSocket server running
+2. ✅ Game connected
+3. ✅ Commands sent
+4. ❌ **Commands NOT executed** - game echoes instead of processing
+5. ❌ **Cannot verify ship movement** - no state changes occurred
+
+The evidence is **runtime evidence**, but it proves the **testing infrastructure is incomplete**, not that the ship movement bug exists or doesn't exist.
+
+### Reasoning
+
+- **NOT BUG_CONFIRMED**: We have no evidence the ship movement bug occurred (command never executed)
+- **NOT NOT_REPRODUCED**: We couldn't attempt to reproduce the bug (infrastructure blocked us)
+- **IS INCONCLUSIVE**: Runtime evidence exists, but the automation layer failed before testing could occur
+
+### Next Steps Required
+
+**Before verifying the ship movement bug:**
+
+1. Fix `TestingBrowserBridge` in the game to:
+   - Receive WebSocket commands
+   - Execute them on the simulator instance
+   - Return proper `{id, success, data}` responses
+
+2. Then re-run the ship movement test with:
+   - `setNavigationTarget` command
+   - `getShipState` to verify position/velocity
+   - Compare expected vs actual movement
+
+**Confidence**: 0.95 (high confidence the infrastructure is broken, cannot yet test the reported bug)
+
+---
+
+**DECISION: INCONCLUSIVE** (Runtime automation infrastructure incomplete - cannot verify ship movement bug until WebSocket command execution is implemented)

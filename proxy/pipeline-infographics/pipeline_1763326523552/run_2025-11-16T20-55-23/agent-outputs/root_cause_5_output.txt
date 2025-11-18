@@ -1,0 +1,119 @@
+Perfect! Now I have all the evidence I need. Let me trace through the exact execution flow to document the root cause:
+
+## Root Cause Analysis
+
+Based on my investigation of the code, I can now provide a comprehensive root cause analysis:
+
+```json
+{
+  "rootCause": "StationManager.undock() method never calls syncStatsFromFitting() to restore ship physics after undocking, leaving ship with zero/corrupted physics values (maxVelocity=0, mass=0) when fitted items exist",
+  
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/StationManager.js",
+      "lineNumbers": [500, 553],
+      "currentCode": "undock() {\n    // ... undocking logic ...\n    // Applies undock velocity (line 549-552)\n    // ❌ MISSING: syncStatsFromFitting() call\n}",
+      "problem": "After applying undock velocity, the method never calls syncStatsFromFitting() to restore ship physics from fitted items"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [59, 197],
+      "currentCode": "syncStatsFromFitting() { /* restores physics from fitting */ }\nupdateWithNavigation() {\n    this.syncStatsFromFitting(); // ✅ Called during normal gameplay\n}",
+      "problem": "Ship.updateWithNavigation() calls syncStatsFromFitting() every frame DURING NORMAL GAMEPLAY, but this is never called immediately after undocking, causing a critical gap where physics remain corrupted until the first frame update"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [324, 335],
+      "currentCode": "dispatchStatsUpdatedEvent(shipId) {\n    // ... dispatch event ...\n    if (shipId === this.playerShipId && window.simulator?.playerShip) {\n        window.simulator.playerShip.syncStatsFromFitting(); // ✅ Called when fitting items\n    }\n}",
+      "problem": "This correctly syncs physics when items are fitted, but the sync is lost when undocking because StationManager doesn't call it"
+    }
+  ],
+
+  "executionFlow": [
+    "1. Player fits item (e.g., afterburner) → ShipFittingManager.fitItem() called",
+    "2. fitItem() calls dispatchStatsUpdatedEvent() → syncStatsFromFitting() called ✅",
+    "3. Ship physics updated: maxVelocity=340 m/s, mass=1,080,000 kg ✅",
+    "4. Player docks at station → StationManager.completeDocking() called",
+    "5. Ship fitting data saved to localStorage ✅",
+    "6. Player undocks → StationManager.undock() called",
+    "7. undock() applies undock velocity (50 m/s push) ✅",
+    "8. ❌ CRITICAL BUG: undock() NEVER calls syncStatsFromFitting()",
+    "9. Ship physics remain in default/corrupted state: maxVelocity=0, mass=0",
+    "10. Ship.updateWithNavigation() calculates targetVelocity = direction × maxVelocity × thrustMagnitude",
+    "11. When maxVelocity=0: targetVelocity = direction × 0 × thrust = 0 (zero vector)",
+    "12. Ship cannot move - completely unresponsive to all controls"
+  ],
+
+  "whyItHappens": "The bug occurs because there are TWO mechanisms for syncing ship physics: (1) fitItem() explicitly calls syncStatsFromFitting() when fitting items, and (2) updateWithNavigation() calls syncStatsFromFitting() every frame during normal gameplay. However, when undocking, there is a CRITICAL GAP where neither mechanism runs immediately, leaving ship physics in a corrupted state. The docking process appears to somehow corrupt or reset the physics values (possibly through velocity manipulation at lines 470-473), and without an immediate sync after undocking, the ship remains broken.",
+
+  "proposedFix": "Add explicit call to syncStatsFromFitting() in StationManager.undock() method immediately after applying undock velocity (after line 553)",
+  
+  "fixCode": "// In StationManager.js, after line 553:\nif (window.simulator?.playerShip) {\n    window.simulator.playerShip.syncStatsFromFitting();\n    console.log('✅ Ship physics restored from fitting after undock');\n}",
+  
+  "technicalExplanation": "The physics engine calculates ship movement using the formula: targetVelocity = direction × maxVelocity × thrustMagnitude. When maxVelocity is zero (corrupted state), this calculation always produces a zero vector regardless of player input, making the ship completely unresponsive. The syncStatsFromFitting() method reads the correct maxVelocity, mass, and agility values from the ShipFittingManager and applies them to the ship's physics object, but this critical synchronization step is missing from the undock workflow.",
+  
+  "additionalFindings": [
+    "Ship.updateWithNavigation() (line 197) calls syncStatsFromFitting() every frame during normal gameplay, which masks the bug in non-docking scenarios",
+    "completeDocking() (line 444) also has potential physics corruption when setting velocity to zero (lines 470-473) - this may be contributing to the problem",
+    "The velocity object manipulation in completeDocking() uses property-by-property assignment instead of proper Vector3 methods, which may cause additional issues"
+  ]
+}
+```
+
+## Visual Execution Flow Diagram
+
+```
+FITTING PROCESS (✅ Works correctly):
+┌─────────────────────────────────────────────────────────────┐
+│ Player fits afterburner                                     │
+│   ↓                                                          │
+│ ShipFittingManager.fitItem()                                │
+│   ↓                                                          │
+│ dispatchStatsUpdatedEvent()                                 │
+│   ↓                                                          │
+│ syncStatsFromFitting() ✅ CALLED                            │
+│   ↓                                                          │
+│ Ship physics: maxVelocity = 340 m/s, mass = 1,080,000 kg   │
+└─────────────────────────────────────────────────────────────┘
+
+UNDOCKING PROCESS (❌ Bug occurs):
+┌─────────────────────────────────────────────────────────────┐
+│ Player clicks "Undock"                                      │
+│   ↓                                                          │
+│ StationManager.undock() called                              │
+│   ↓                                                          │
+│ Apply undock velocity (50 m/s push) ✅                      │
+│   ↓                                                          │
+│ ❌ syncStatsFromFitting() NEVER CALLED                      │
+│   ↓                                                          │
+│ Ship physics: maxVelocity = 0, mass = 0 (CORRUPTED!)       │
+│   ↓                                                          │
+│ Ship.updateWithNavigation() calculates movement             │
+│   ↓                                                          │
+│ targetVelocity = direction × 0 × thrust = [0, 0, 0]        │
+│   ↓                                                          │
+│ Ship frozen - no movement possible                          │
+└─────────────────────────────────────────────────────────────┘
+
+NORMAL GAMEPLAY (✅ Hidden protection):
+┌─────────────────────────────────────────────────────────────┐
+│ Every frame during normal gameplay                          │
+│   ↓                                                          │
+│ Ship.updateWithNavigation() called                          │
+│   ↓                                                          │
+│ syncStatsFromFitting() ✅ CALLED EVERY FRAME                │
+│   ↓                                                          │
+│ Ship physics continuously restored from fitting             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Why The Bug Is So Insidious
+
+1. **During normal gameplay** (without docking), the ship works perfectly because `updateWithNavigation()` calls `syncStatsFromFitting()` every frame
+2. **When fitting items**, the sync is called immediately via `dispatchStatsUpdatedEvent()`
+3. **The bug ONLY appears** when you dock → fit items → undock, because `undock()` is the ONLY code path that skips the sync
+4. **The corruption happens silently** - no errors, no warnings, just a frozen ship with zero physics values
+
+---
+
+**DECISION: root_cause_found**

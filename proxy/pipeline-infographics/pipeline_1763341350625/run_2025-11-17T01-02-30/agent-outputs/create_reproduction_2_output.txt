@@ -1,0 +1,196 @@
+Perfect! Now let me create a summary document explaining both scripts:
+
+```json
+{
+  "reproductionScriptsCreated": [
+    {
+      "scriptPath": "/mnt/c/github/superstarships/reproduce_ship_movement_bug.js",
+      "description": "Existing reproduction script - tests navigation target and velocity/position changes",
+      "status": "already_exists"
+    },
+    {
+      "scriptPath": "/mnt/c/github/superstarships/reproduce_ship_movement_bug_enhanced.js",
+      "description": "Enhanced reproduction script - includes manual throttle testing to isolate navigation vs physics bugs",
+      "status": "newly_created"
+    }
+  ],
+  "scriptFeatures": {
+    "websocketAutomation": "Both scripts use WebSocket automation framework on port 8765",
+    "availableCommands": [
+      "getShipState - Get ship position, velocity, throttle, modules",
+      "setNavigationTarget - Set navigation target (x,y,z coords or objectId)",
+      "setThrottle - Manually set ship throttle 0-100%",
+      "setPosition - Teleport ship (debug command)",
+      "listCommands - Verify automation framework is working"
+    ],
+    "testSequence": [
+      "1. Verify automation framework is working (listCommands)",
+      "2. Get baseline ship state (position, velocity)",
+      "3. Set navigation target 5000m away",
+      "4. Wait 500ms and check for velocity response",
+      "5. Wait 2s total and verify sustained movement",
+      "6. ENHANCED: Test manual throttle to isolate navigation vs physics bug",
+      "7. Save evidence JSON with all test results"
+    ]
+  },
+  "commandSequence": [
+    {
+      "command": "listCommands",
+      "purpose": "Verify automation framework is working",
+      "expectedResult": "Returns list of available commands"
+    },
+    {
+      "command": "getShipState",
+      "params": {"includeModules": false},
+      "purpose": "Get initial ship state as baseline",
+      "expectedResult": "Position (0,0,0), velocity (0,0,0)"
+    },
+    {
+      "command": "setNavigationTarget",
+      "params": {"x": 5000, "y": 0, "z": 0, "mode": "approach"},
+      "purpose": "Set navigation target 5000m away on X-axis",
+      "expectedResult": "Navigation target set successfully"
+    },
+    {
+      "command": "wait",
+      "params": {"duration": 500},
+      "purpose": "Wait for physics engine to start processing",
+      "expectedResult": "Local wait command (not sent to game)"
+    },
+    {
+      "command": "getShipState",
+      "params": {},
+      "purpose": "Check if ship has started moving (velocity > 0)",
+      "expectedResult": "If bug exists: velocity still 0. If working: velocity > 0",
+      "criticalCheck": true
+    },
+    {
+      "command": "wait",
+      "params": {"duration": 1500},
+      "purpose": "Wait additional 1.5s (2s total)",
+      "expectedResult": "Local wait command"
+    },
+    {
+      "command": "getShipState",
+      "params": {},
+      "purpose": "Verify sustained movement and position change",
+      "expectedResult": "If bug exists: position barely changed. If working: moved 10+ meters",
+      "criticalCheck": true
+    },
+    {
+      "command": "setPosition",
+      "params": {"x": 0, "y": 0, "z": 0},
+      "purpose": "ENHANCED: Reset ship for manual throttle test",
+      "expectedResult": "Ship teleported to origin"
+    },
+    {
+      "command": "setThrottle",
+      "params": {"value": 75},
+      "purpose": "ENHANCED: Test manual throttle (bypass navigation)",
+      "expectedResult": "Throttle set to 75%"
+    },
+    {
+      "command": "wait",
+      "params": {"duration": 2000},
+      "purpose": "ENHANCED: Wait for manual throttle to apply",
+      "expectedResult": "Local wait command"
+    },
+    {
+      "command": "getShipState",
+      "params": {},
+      "purpose": "ENHANCED: Check if manual throttle works",
+      "expectedResult": "If physics broken: velocity 0. If nav broken only: velocity > 0",
+      "isolatesRootCause": "Determines if bug is in navigation system or physics engine"
+    }
+  ],
+  "bugDetectionLogic": {
+    "navigationBugOnly": {
+      "condition": "setNavigationTarget succeeds but ship velocity remains 0, BUT manual throttle works",
+      "rootCause": "InputManager.setNavigationTarget() not calling ship physics methods",
+      "fixLocation": "js/core/InputManager.js or js/systems/NavigationManager.js"
+    },
+    "physicsBugOnly": {
+      "condition": "Both navigation AND manual throttle fail to move ship",
+      "rootCause": "Ship physics update loop not running or ship.update() not being called",
+      "fixLocation": "js/SpaceshipSimulator.js (main game loop) or js/physics/ShipPhysics.js"
+    },
+    "movementBlockingFlag": {
+      "condition": "Ship state shows isDocked=true or other blocking flag",
+      "rootCause": "Movement prevented by game state flag",
+      "fixLocation": "Check docking system, pause state, etc."
+    }
+  },
+  "evidenceFiles": [
+    "ship_movement_bug_evidence_[timestamp].json"
+  ],
+  "expectedOutcome": {
+    "bugReproduced": "Script exits with code 0 and saves evidence showing ship did not move",
+    "bugNotReproduced": "Script exits with code 0 and saves evidence showing ship moved correctly"
+  },
+  "howToRun": [
+    "1. Ensure Node.js and 'ws' package are installed (npm install ws)",
+    "2. Ensure game dev server is running on http://localhost:8080",
+    "3. Run: node reproduce_ship_movement_bug_enhanced.js",
+    "4. Script will launch Chrome with testMode=true",
+    "5. Script will execute test sequence automatically",
+    "6. Check console output and evidence JSON file for results"
+  ]
+}
+```
+
+## Summary
+
+I have created a comprehensive **ship movement bug reproduction script** using the game's WebSocket automation framework:
+
+### What Was Created
+
+1. **Enhanced Reproduction Script**: `/mnt/c/github/superstarships/reproduce_ship_movement_bug_enhanced.js`
+   - Tests navigation target setting
+   - Verifies velocity and position changes
+   - **NEW**: Includes manual throttle test to isolate whether bug is in navigation system vs physics engine
+   - Comprehensive logging and evidence collection
+
+2. **Existing Script**: `/mnt/c/github/superstarships/reproduce_ship_movement_bug.js`
+   - Already exists and tests basic navigation and movement
+   - Good foundation but lacks manual throttle isolation test
+
+### Key Features
+
+**Available Commands Used** (all verified in GameTestingInterface.js):
+- `listCommands` - Verify automation works
+- `getShipState` - Get position, velocity, throttle
+- `setNavigationTarget` - Set navigation target (the main test!)
+- `setThrottle` - Manual throttle control (isolates bug location)
+- `setPosition` - Reset ship position between tests
+- `wait` - Local timing command
+
+**Test Sequence**:
+1. Get baseline ship state (position, velocity should be 0)
+2. Set navigation target 5000m away on X-axis
+3. Wait 500ms - check if velocity > 0 (CRITICAL CHECK)
+4. Wait 2s total - verify position changed (CRITICAL CHECK)
+5. **Enhanced test**: Set manual throttle to 75% and check if that works
+   - If manual throttle works but navigation doesn't → bug is in navigation system
+   - If both fail → bug is in physics engine
+
+**Root Cause Isolation**:
+- The enhanced script can determine if the bug is:
+  - Navigation system not triggering physics ✓
+  - Physics engine not running at all ✓
+  - Movement-blocking flag (docked, paused, etc.) ✓
+
+### How to Run
+
+```bash
+cd /mnt/c/github/superstarships
+node reproduce_ship_movement_bug_enhanced.js
+```
+
+The script will automatically:
+- Start WebSocket server on port 8765
+- Launch Chrome with testMode=true
+- Execute test sequence
+- Save evidence JSON file
+- Exit with clear bug reproduced/not reproduced status
+
+**DECISION: script_ready**

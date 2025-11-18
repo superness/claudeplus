@@ -1,0 +1,44 @@
+Now I have the complete root cause analysis. Let me document the findings:
+
+```json
+{
+  "rootCause": "The rendering pipeline is completely broken - SceneManager.update() never calls SceneManager.render(), so visual changes to ship positions are calculated but never drawn to the screen",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/SpaceshipSimulator.js",
+      "lineNumbers": [1827],
+      "currentCode": "this.sceneManager.update(deltaTime, playerPosition);",
+      "problem": "After calling sceneManager.update(), SpaceshipSimulator never calls sceneManager.render() to actually draw the updated scene to the canvas"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/core/SceneManager.js",
+      "lineNumbers": [2079, 2110],
+      "currentCode": "update(deltaTime, playerPosition = null) {\n    // Updates ship visuals internally\n    // ...\n    // NO CALL TO this.render()\n}",
+      "problem": "SceneManager.update() calculates and updates all visual object positions (line 2085: updateShipVisuals) but never calls this.render() to draw them. The render() method exists (line 2459) but is orphaned."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/core/SceneManager.js",
+      "lineNumbers": [2115, 2121],
+      "currentCode": "updateShipVisuals(id, shipData, deltaTime) {\n    const ship = shipData.ship;\n    const group = shipData.group;\n    group.position.set(ship.position.x, ship.position.y, ship.position.z);",
+      "problem": "Ship visual positions ARE being correctly updated in the Three.js scene graph, but the scene is never rendered to the canvas"
+    }
+  ],
+  "executionFlow": [
+    "1. User presses W key → InputManager.setThrustMagnitude(1.0) ✓",
+    "2. SpaceshipSimulator.update() called via requestAnimationFrame ✓",
+    "3. inputManager.update() processes thrust input ✓",
+    "4. playerShip.updateWithMiningAndExploration() called with navigationCommand ✓",
+    "5. Ship.updateWithNavigation() calculates thrust vector ✓",
+    "6. ship.physics.updatePhysics() calculates new position ✓",
+    "7. Position stored in ship.physics.position (e.g., position.x changes from 0 to 50) ✓",
+    "8. sceneManager.update() called ✓",
+    "9. sceneManager.updateShipVisuals() updates group.position ✓",
+    "10. **sceneManager.render() NEVER CALLED** ✗",
+    "11. Canvas shows old frame, ship appears stationary despite internal updates ✗"
+  ],
+  "whyItHappens": "The game loop was refactored at some point to use SpaceshipSimulator's own game loop instead of SceneManager's animate() method. However, the critical render() call was lost in this refactoring. SceneManager.update() correctly updates all object positions in the Three.js scene graph, but without calling renderer.render(scene, camera), the updated scene is never drawn to the canvas. The ship is moving in memory, but not on screen.",
+  "proposedFix": "Add this.sceneManager.render() call after this.sceneManager.update() in SpaceshipSimulator.js line 1827, OR have SceneManager.update() call this.render() internally at the end"
+}
+```
+
+**DECISION: root_cause_found**

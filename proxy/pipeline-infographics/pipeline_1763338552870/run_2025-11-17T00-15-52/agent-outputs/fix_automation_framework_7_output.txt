@@ -1,0 +1,89 @@
+Perfect! Now let me write a summary of all the fixes made:
+
+## Test Automation Framework Fixed
+
+I've identified and fixed critical issues in the ship movement bug reproduction test framework:
+
+### Root Cause
+The `reproduce_ship_movement_bug.js` script was using an incompatible WebSocket protocol:
+1. **Wrong registration method**: Used URL query parameters (`?client=game`) instead of message-based registration
+2. **Message forwarding bug**: Forwarded ALL messages indiscriminately, including registration messages
+3. **Response parsing error**: Expected raw response object instead of `{type: 'response', response: {...}}` wrapper
+
+### Fixes Applied
+
+#### 1. Fixed WebSocket Server Registration (lines 158-218)
+**Before**: Used URL query parameters to identify clients
+```javascript
+const clientType = url.searchParams.get('client');
+if (clientType === 'game') { ... }
+```
+
+**After**: Uses message-based registration protocol (matching `websocket-test-server.js`)
+```javascript
+if (data.type === 'register') {
+  if (data.clientType === 'browser') { ... }
+  else if (data.clientType === 'test') { ... }
+}
+```
+
+#### 2. Fixed Message Relay Logic (lines 171-209)
+**Before**: Forwarded ALL messages from game to test client
+```javascript
+ws.on('message', (msg) => {
+  testClient.send(msg); // Sent everything including registration!
+});
+```
+
+**After**: Only forwards response-type messages
+```javascript
+ws.on('message', (gameMsg) => {
+  const gameData = JSON.parse(gameMsg);
+  if (gameData.type === 'response' && testClient) {
+    testClient.send(gameMsg);
+  }
+});
+```
+
+#### 3. Fixed Test Client Connection (lines 260-278)
+**Before**: Connected with query parameter
+```javascript
+testClient = new WebSocket(`ws://localhost:${WS_PORT}?client=test`);
+```
+
+**After**: Sends registration message after connection
+```javascript
+testClient = new WebSocket(`ws://localhost:${WS_PORT}`);
+testClient.on('open', () => {
+  testClient.send(JSON.stringify({
+    type: 'register',
+    clientType: 'test'
+  }));
+});
+```
+
+#### 4. Fixed Response Message Parsing (lines 310-339)
+**Before**: Parsed message directly as response
+```javascript
+const response = JSON.parse(data);
+```
+
+**After**: Extracts response from wrapper message
+```javascript
+const message = JSON.parse(data);
+if (message.type !== 'response') return;
+const response = message.response;
+```
+
+### Testing Alignment
+The fixes ensure `reproduce_ship_movement_bug.js` uses the same protocol as:
+- `websocket-test-server.js` (the standardized relay server)
+- `TestingBrowserBridge.js` (browser-side WebSocket client)
+- `GameTestingInterface.js` (game command handler)
+
+All components now use consistent message format:
+- **Commands**: `{type: 'command', command: {id, command, params}}`
+- **Responses**: `{type: 'response', response: {id, success, data, error, timestamp}}`
+- **Registration**: `{type: 'register', clientType: 'browser'|'test'}`
+
+DECISION: framework_fixed_retry_reproduction

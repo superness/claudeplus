@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: Development Cycle Meta-Router V1</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+
+    
+
+    <div class="header">
+      <h1><span class="running-indicator"></span>Development Cycle Meta-Router V1</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1763332101109</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">14.1s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">1/2</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">⚡ Running</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Request Classification</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Classify user request as bug fix, feature request, refactor, or question</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">request_classifier</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">classifier</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">13.2s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">2,741 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">1,940 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(2,741 characters)</span></div>
+        <button class="collapsible" data-target="prompt_classify_request_1">Click to expand prompt from request_classifier</button>
+        <div class="collapsible-content" id="prompt_classify_request_1">
+          <pre class="code-content">You are a Request Classifier that analyzes user requests and determines what type of development work is needed.
+
+Your job is to classify requests into these categories:
+
+**BUG_FIX** - Something is broken or not working correctly:
+- &quot;The ship doesn&#039;t move when I press W&quot;
+- &quot;Game crashes when I dock at station&quot;
+- &quot;Health bar shows wrong value&quot;
+- &quot;Clicking buy button does nothing&quot;
+- Keywords: broken, bug, crash, error, doesn&#039;t work, not working, issue, problem, fail
+
+**QUICK_CHANGE** - Simple, direct code modifications (1-5 line changes):
+- &quot;Change this color to red&quot;
+- &quot;Update the text to say &#039;Welcome&#039;&quot;
+- &quot;Set max speed to 500&quot;
+- &quot;Make this button bigger&quot;
+- &quot;Rename this function to calculateScore&quot;
+- Keywords: change, update, set, make, adjust, rename (+ simple/specific target)
+- Must be: specific target, simple modification, no new logic/features
+
+**FEATURE_REQUEST** - New functionality or enhancement:
+- &quot;Add a tutorial for new players&quot;
+- &quot;I want to see a minimap&quot;
+- &quot;Add sound effects for weapons&quot;
+- &quot;Implement a trading system&quot;
+- Keywords: add, implement, create, new, I want, feature, enhancement, improve
+
+**REFACTOR** - Code improvement without changing behavior:
+- &quot;Clean up the combat system code&quot;
+- &quot;Refactor ship rendering logic&quot;
+- &quot;Improve performance of collision detection&quot;
+- Keywords: refactor, clean up, optimize, improve performance, restructure
+
+**QUESTION** - User needs information:
+- &quot;How does the upgrade system work?&quot;
+- &quot;What does this code do?&quot;
+- &quot;Explain the game loop&quot;
+- Keywords: how, what, why, explain, question
+
+Analysis process:
+1. Read the user&#039;s request carefully
+2. Identify key indicators (keywords, tone, specificity)
+3. Determine primary intent
+4. Extract relevant context for the next pipeline
+5. Provide confidence score
+
+Output format:
+```json
+{
+  &quot;classification&quot;: &quot;BUG_FIX|QUICK_CHANGE|FEATURE_REQUEST|REFACTOR|QUESTION&quot;,
+  &quot;confidence&quot;: 0.95,
+  &quot;reasoning&quot;: &quot;Explanation of why this classification was chosen&quot;,
+  &quot;context&quot;: {
+    &quot;originalRequest&quot;: &quot;User&#039;s full request&quot;,
+    &quot;keyIndicators&quot;: [&quot;broken&quot;, &quot;doesn&#039;t work&quot;],
+    &quot;affectedArea&quot;: &quot;combat system, ship movement, UI, etc.&quot;,
+    &quot;priority&quot;: &quot;high|medium|low&quot;
+  }
+}
+```
+
+IMPORTANT: End your response with one of these decisions:
+- DECISION: BUG_FIX
+- DECISION: QUICK_CHANGE
+- DECISION: FEATURE_REQUEST
+- DECISION: REFACTOR
+- DECISION: QUESTION
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: BUG_FIX (Request is a bug fix)
+- DECISION: QUICK_CHANGE (Request is a simple code modification)
+- DECISION: FEATURE_REQUEST (Request is a new feature)
+- DECISION: REFACTOR (Request is code refactoring)
+- DECISION: QUESTION (Request is a question)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,940 characters)</span></div>
+        <button class="collapsible" data-target="output_classify_request_1">Click to expand output from request_classifier</button>
+        <div class="collapsible-content" id="output_classify_request_1">
+          <pre class="code-content">```json
+{
+  &quot;classification&quot;: &quot;BUG_FIX&quot;,
+  &quot;confidence&quot;: 0.98,
+  &quot;reasoning&quot;: &quot;The user explicitly states &#039;The player ship is not moving at all&#039; which indicates broken functionality. The request uses clear bug indicators like &#039;not moving&#039;, &#039;Debug and fix&#039;, and &#039;finding and fixing the bug&#039;. The user has already attempted to use the feature (setting navigation targets, tapping) but it&#039;s not working as expected. This is a classic bug fix scenario where existing functionality has failed.&quot;,
+  &quot;context&quot;: {
+    &quot;originalRequest&quot;: &quot;The player ship is not moving at all even after setting navigation targets and tapping places to fly to in space. Debug and fix the ship movement system by: 1) Identifying where navigation targets are set when the user taps, 2) Checking if the movement/physics code is properly reading and responding to these targets, 3) Verifying the ship&#039;s velocity/position is being updated each frame, 4) Finding and fixing the bug preventing movement, and 5) Testing the fix to ensure the ship now moves to tapped locations.&quot;,
+    &quot;keyIndicators&quot;: [
+      &quot;not moving at all&quot;,
+      &quot;Debug and fix&quot;,
+      &quot;finding and fixing the bug&quot;,
+      &quot;preventing movement&quot;
+    ],
+    &quot;affectedArea&quot;: &quot;ship movement system, navigation targets, physics engine, mobile input (tap controls)&quot;,
+    &quot;priority&quot;: &quot;high&quot;,
+    &quot;technicalDetails&quot;: {
+      &quot;symptoms&quot;: &quot;Ship remains stationary despite user input&quot;,
+      &quot;inputMethod&quot;: &quot;touch/tap controls (mobile)&quot;,
+      &quot;affectedSystems&quot;: [
+        &quot;MobileInputManager (tap detection)&quot;,
+        &quot;NavigationManager (target setting)&quot;,
+        &quot;ShipPhysics (movement/velocity)&quot;,
+        &quot;EVEPhysics (position updates)&quot;
+      ],
+      &quot;debugSteps&quot;: [
+        &quot;Verify tap events are firing&quot;,
+        &quot;Check navigation target setting&quot;,
+        &quot;Inspect physics update loop&quot;,
+        &quot;Validate velocity calculations&quot;,
+        &quot;Test movement integration&quot;
+      ]
+    }
+  }
+}
+```
+
+DECISION: BUG_FIX</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: BUG_FIX</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;BUG_FIX&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>route_to_bug_pipeline</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage running">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Bug Fix Pipeline</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Execute bug-fix-v1 pipeline for bug fixes</div>
+        </div>
+        <span class="stage-badge badge-running">running</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">pipeline_executor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">sub_pipeline</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">In progress...</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">2</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+
+      
+
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

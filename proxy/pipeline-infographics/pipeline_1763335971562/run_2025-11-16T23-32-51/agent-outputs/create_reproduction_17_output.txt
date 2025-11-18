@@ -1,0 +1,240 @@
+The code is syntactically valid. Based on my analysis, I can see the movement chain is complete:
+1. Input → InputManager (captures tap/click and sets navigation target)  
+2. Navigation → Ship.updateWithNavigation (calculates thrust vector from navigation target)
+3. Physics → ShipPhysics.updatePhysics (applies thrust to ship)
+
+The architecture looks correct. This suggests the bug might be a runtime issue rather than a logic issue. Let me create a WebSocket-based reproduction script to identify the exact failure point:
+
+## Bug Reproduction Script
+
+```javascript
+#!/usr/bin/env node
+// Bug Reproduction: Ship Not Moving When Navigation Target Set
+
+const WebSocket = require('ws');
+const { spawn } = require('child_process');
+const fs = require('fs');
+
+const WS_PORT = 8765;
+let gameClient = null;
+let testClient = null;
+let commandId = 1;
+let commandQueue = [];
+const evidence = {timestamp: new Date().toISOString(), commands: [], bugDescription: 'Ship does not move when navigation target is set via tap/click'};
+
+// Define test scenario to reproduce ship movement bug
+function defineScenario() {
+  return [
+    {
+      command: 'getShipState',
+      params: {},
+      verify: (r) => r.position !== undefined,
+      desc: 'Get initial ship state and position'
+    },
+    {
+      command: 'setNavigationTarget',
+      params: {x: 1000, y: 0, z: 1000},
+      verify: (r) => r.success === true,
+      desc: 'Set navigation target to (1000, 0, 1000)'
+    },
+    {
+      command: 'wait',
+      params: {duration: 2000},
+      verify: () => true,
+      desc: 'Wait 2 seconds for ship to start moving'
+    },
+    {
+      command: 'getShipState',
+      params: {},
+      verify: (r) => {
+        const initialPos = commandQueue[0]?.response?.data?.position;
+        const currentPos = r.position;
+        if (!initialPos || !currentPos) return false;
+        
+        // Check if ship has moved
+        const deltaX = Math.abs(currentPos.x - initialPos.x);
+        const deltaZ = Math.abs(currentPos.z - initialPos.z);
+        const moved = (deltaX > 1 || deltaZ > 1);
+        
+        console.log(`Position change: ΔX=${deltaX.toFixed(2)}, ΔZ=${deltaZ.toFixed(2)}, Moved: ${moved}`);
+        return moved;
+      },
+      desc: 'Verify ship has moved from initial position'
+    }
+  ];
+}
+
+// Start WebSocket automation server
+async function startAutomationServer() {
+  return new Promise((resolve) => {
+    const wss = new WebSocket.Server({ port: WS_PORT });
+    console.log(`WebSocket automation server started on port ${WS_PORT}`);
+
+    wss.on('connection', (ws, req) => {
+      const url = new URL(req.url, 'http://localhost');
+      const clientType = url.searchParams.get('client');
+
+      if (clientType === 'game') {
+        gameClient = ws;
+        console.log('✅ Game connected to automation server');
+        ws.on('message', (msg) => {
+          if (testClient && testClient.readyState === WebSocket.OPEN) {
+            testClient.send(msg);
+          }
+        });
+        ws.on('close', () => {
+          console.log('❌ Game disconnected');
+          saveEvidence('DISCONNECTED', evidence);
+          process.exit(1);
+        });
+        resolve();
+      } else if (clientType === 'test') {
+        testClient = ws;
+        console.log('✅ Test client connected');
+        ws.on('message', (msg) => {
+          if (gameClient && gameClient.readyState === WebSocket.OPEN) {
+            gameClient.send(msg);
+          }
+        });
+      }
+    });
+
+    wss.on('error', (err) => {
+      console.error('WebSocket server error:', err);
+      process.exit(1);
+    });
+  });
+}
+
+// Launch Chrome and run test
+async function runTest() {
+  // Start automation server first
+  const serverPromise = startAutomationServer();
+
+  // Launch game in Chrome with testMode
+  console.log('🚀 Launching game in Chrome...');
+  const gameUrl = 'http://localhost:8080/index.html?testMode=true';
+  spawn('cmd.exe', [
+    '/c', 'start', 'chrome',
+    '--user-data-dir=C:\\temp\\chrome-test-profile',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-extensions',
+    gameUrl
+  ], {detached: true, stdio: 'ignore'});
+
+  // Wait for game to connect
+  console.log('⏳ Waiting for game to connect...');
+  await serverPromise;
+  console.log('✅ Game connected! Waiting 3s for initialization...');
+  await new Promise(r => setTimeout(r, 3000));
+
+  // Connect test client
+  console.log('🔌 Connecting test client...');
+  testClient = new WebSocket(`ws://localhost:${WS_PORT}?client=test`);
+
+  testClient.on('open', () => {
+    console.log('✅ Test client ready! Starting test scenario...');
+    commandQueue = defineScenario();
+    executeNextCommand();
+  });
+
+  testClient.on('message', handleGameResponse);
+  testClient.on('error', (err) => {
+    console.error('❌ Test client error:', err);
+    saveEvidence('ERROR', {error: err.message, evidence});
+    process.exit(1);
+  });
+}
+
+function sendGameCommand(command, params) {
+  const id = String(commandId++);
+  testClient.send(JSON.stringify({
+    type: 'command',
+    command: {id, command, params}
+  }));
+  return id;
+}
+
+function handleGameResponse(data) {
+  const response = JSON.parse(data);
+  console.log(`📩 Game Response [${response.id}]:`, JSON.stringify(response, null, 2));
+  
+  const currentCmd = commandQueue[0];
+  evidence.commands.push({
+    command: currentCmd?.command,
+    params: currentCmd?.params,
+    response: response,
+    timestamp: new Date().toISOString()
+  });
+  
+  if (!response.success && currentCmd?.command !== 'wait') {
+    console.error('❌ Command failed:', response.error);
+    saveEvidence('FAILED', evidence);
+    process.exit(1);
+    return;
+  }
+  
+  if (currentCmd && currentCmd.verify) {
+    const passed = currentCmd.verify(response.data);
+    console.log(`${passed ? '✅' : '❌'} Verification [${currentCmd.desc}]: ${passed ? 'PASS' : 'FAIL'}`);
+    
+    if (!passed) {
+      console.error(`❌ Bug reproduced! Expected behavior not met: ${currentCmd.desc}`);
+      saveEvidence('BUG_REPRODUCED', evidence);
+      process.exit(1);
+      return;
+    }
+  }
+  
+  executeNextCommand();
+}
+
+function executeNextCommand() {
+  if (commandQueue.length === 0) {
+    console.log('✅ All commands executed successfully! Bug NOT reproduced.');
+    saveEvidence('SUCCESS', evidence);
+    process.exit(0);
+    return;
+  }
+  
+  commandQueue.shift();
+  const cmd = commandQueue[0];
+  
+  if (cmd.command === 'wait') {
+    console.log(`⏳ ${cmd.desc}...`);
+    setTimeout(() => {
+      handleGameResponse({success: true, data: {}, id: String(commandId++)});
+    }, cmd.params.duration);
+  } else {
+    console.log(`🎮 Executing: ${cmd.desc}`);
+    sendGameCommand(cmd.command, cmd.params);
+  }
+}
+
+function saveEvidence(status, data) {
+  const finalEvidence = {...data, status, finalTimestamp: new Date().toISOString()};
+  const filename = `./ship_movement_bug_evidence_${Date.now()}.json`;
+  fs.writeFileSync(filename, JSON.stringify(finalEvidence, null, 2));
+  console.log(`💾 Evidence saved to ${filename} (${status})`);
+}
+
+runTest();
+```
+
+Based on my investigation, I found that:
+
+1. **Movement Logic is Complete**: The input → navigation → physics chain is properly implemented
+2. **No Syntax Errors**: All JavaScript files are syntactically valid  
+3. **Navigation Target Setting**: The InputManager.setNavigationTarget() method correctly sets the target
+4. **Physics Application**: The Ship.updateWithNavigation() method calculates thrust vectors from navigation targets
+5. **Physics Update**: The ShipPhysics.updatePhysics() method applies thrust to velocity and updates position
+
+The bug is likely a **runtime integration issue** where either:
+- Navigation target is not being passed through the update chain correctly
+- Thrust magnitude is zero when it should have a value
+- Some condition is preventing physics updates from running
+
+The reproduction script above will help identify the exact failure point by testing the complete workflow and capturing evidence of where the movement chain breaks.
+
+**DECISION: script_ready**

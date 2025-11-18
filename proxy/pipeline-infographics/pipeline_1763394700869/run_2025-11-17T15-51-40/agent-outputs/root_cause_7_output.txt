@@ -1,0 +1,119 @@
+Excellent! Now I have the complete root cause analysis. Let me create the comprehensive report:
+
+```json
+{
+  "rootCause": "Formula error in Ship.js line 82: timeConstant calculated as agility/5 instead of agility/5000000, causing 1,000,000x slower acceleration",
+  
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [82],
+      "committedCode": "this.physics.timeConstant = stats.agility / 5;",
+      "correctCode": "this.physics.timeConstant = stats.agility / 5000000;",
+      "problem": "Divisor is 1,000,000x too small (5 instead of 5000000), making time constant 1,000,000x too large"
+    }
+  ],
+  
+  "executionFlow": [
+    "1. Player ship spawns → Ship constructor called",
+    "2. Initial physics created with correct timeConstant (ShipPhysics.js:34 uses agility/5000000)",
+    "3. Ship.syncStatsFromFitting() called every frame (Ship.js:203)",
+    "4. syncStatsFromFitting() recalculates timeConstant with WRONG formula (Ship.js:82: agility/5)",
+    "5. Physics engine uses corrupted timeConstant for acceleration curve",
+    "6. Exponential acceleration curve V(t) = V_max × (1 - e^(-t/τ)) becomes imperceptibly slow",
+    "7. Ship technically moves but takes 11 minutes to reach 50% speed instead of 0.5 seconds",
+    "8. Result: Ship appears completely frozen - user sees zero movement"
+  ],
+  
+  "mathematicalImpact": {
+    "agilityValue": 3456000,
+    "brokenFormula": "timeConstant = 3456000 / 5 = 691200 seconds",
+    "correctFormula": "timeConstant = 3456000 / 5000000 = 0.6912 seconds",
+    "magnitudeOfError": "1,000,000x too large",
+    "accelerationCurve": "V(t) = V_max × (1 - e^(-t/τ))",
+    "brokenBehavior": "Ship reaches 50% max speed in ~691 seconds (11.5 minutes)",
+    "correctBehavior": "Ship reaches 50% max speed in ~0.69 seconds (responsive)",
+    "physicalMeaning": "Time constant τ determines how quickly ship responds to thrust - larger τ = slower acceleration"
+  },
+  
+  "whyItHappens": "Commit 094f3c4 added syncStatsFromFitting() to fix 'movement breaks after fitting items'. This function recalculates physics stats from fitted modules EVERY FRAME. However, the timeConstant formula was incorrectly documented as 'EVE formula' and used agility/5, when the actual scaled formula used in ShipPhysics.js is agility/5000000. The incorrect formula overwrites the correct initial physics every frame, making movement completely non-functional.",
+  
+  "whyBugWasHardToFind": [
+    "Silent failure - no JavaScript errors or exceptions thrown",
+    "All WebSocket commands return success:true (commands work, physics calculations fail)",
+    "Ship is technically moving - just 1,000,000x slower than intended",
+    "Bug only visible through state inspection (position/velocity checking)",
+    "Console logs show no errors during movement commands",
+    "Initial physics are correct (ShipPhysics.js uses right formula)",
+    "Bug introduced by per-frame sync overwriting correct initial values"
+  ],
+  
+  "commitAnalysis": {
+    "introducedInCommit": "094f3c4",
+    "commitMessage": "Fix radial HUD spacing and scene rendering bugs, enhance automation testing",
+    "intentOfChange": "Fix bug where ship movement breaks after fitting items and undocking",
+    "mechanismOfFix": "Added syncStatsFromFitting() to sync physics stats from fitting manager every frame",
+    "unintendedConsequence": "Incorrect timeConstant formula overwrites correct initial physics every frame",
+    "formulaSource": "Comment says 'EVE formula' but actual EVE formula in ShipPhysics.js is 10x scaled",
+    "rootMistake": "Formula was copied incorrectly - missed the 5000000 divisor, used 5 instead"
+  },
+  
+  "proposedFix": {
+    "action": "Change Ship.js line 82 from 'stats.agility / 5' to 'stats.agility / 5000000'",
+    "reasoning": "Match the correct scaled EVE formula used in ShipPhysics.js line 34",
+    "impact": "Restores responsive ship movement while maintaining the fitting sync fix",
+    "testingRequired": [
+      "1. Start game - ship should move normally (tap object, double-tap location)",
+      "2. Dock at station, fit/unfit items, undock",
+      "3. Verify ship still moves correctly after undocking (original bug should stay fixed)",
+      "4. Verify fitted modules still affect ship performance (speed bonuses work)"
+    ]
+  },
+  
+  "verificationEvidence": {
+    "uncommittedChanges": "Ship.js already has the fix applied (modified but not committed)",
+    "gitDiffShows": "Line 82 changed from 'agility / 5' to 'agility / 5000000'",
+    "fixStatus": "Fix has been implemented but NOT committed to git",
+    "nextStep": "User should test the fix in browser, then commit if working"
+  }
+}
+```
+
+---
+
+## Root Cause Summary
+
+**The bug was introduced in commit 094f3c4** when fixing "movement breaks after fitting items":
+
+### What the fix was trying to do:
+- Add `syncStatsFromFitting()` to ensure fitted modules affect ship performance
+- Call this function every frame to keep physics stats synchronized
+
+### What went wrong:
+- The timeConstant recalculation used the wrong formula: `agility / 5`
+- The correct formula (from ShipPhysics.js) is: `agility / 5000000`
+- This made the time constant **1,000,000x too large**
+
+### Mathematical impact:
+```
+Atron agility = 3,456,000 (mass × inertiaModifier)
+
+BROKEN: τ = 3,456,000 / 5 = 691,200 seconds
+CORRECT: τ = 3,456,000 / 5,000,000 = 0.6912 seconds
+
+Acceleration curve: V(t) = V_max × (1 - e^(-t/τ))
+
+BROKEN: Ship reaches 50% speed in ~11.5 minutes
+CORRECT: Ship reaches 50% speed in ~0.5 seconds
+```
+
+### Why it was hard to debug:
+1. ✅ No JavaScript errors (calculations run without throwing exceptions)
+2. ✅ Commands succeed (WebSocket returns success:true)
+3. ✅ Ship is technically moving (just imperceptibly slowly)
+4. ✅ Only visible through state inspection (WebSocket automation was critical)
+
+### Fix status:
+The fix has already been applied to Ship.js (line 82 changed to use `/5000000`), but **NOT committed** to git. The modified file shows the correct formula.
+
+**DECISION: root_cause_found**
