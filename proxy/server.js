@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const InfographicGenerator = require('./infographic-generator');
+const InfographicNarrator = require('./infographic-narrator');
 const BrowserAutomationService = require('./browser-automation-service');
 const TestLibraryManager = require('./test-library-manager');
 
@@ -199,6 +200,8 @@ class ClaudeProxy {
       }
       return;
     }
+
+    // Story generation moved to infographic-server.js (port 3005)
 
     // API endpoint to get recent execution events
     if (req.url.startsWith('/api/recent-events') && req.method === 'GET') {
@@ -1455,6 +1458,136 @@ Remember: You're working in a game development context. Be creative, helpful, an
         }));
       }
 
+    } else if (message.type === 'supercoin-dev-studio-init') {
+      console.log('[PROXY] SuperCoin Dev Studio initialized');
+      console.log(`[PROXY] Working directory: ${message.workingDirectory}`);
+
+      // Set working directory
+      if (message.workingDirectory) {
+        this.workingDirectory.set(ws, message.workingDirectory);
+      }
+
+      // Send back confirmation
+      ws.send(JSON.stringify({
+        type: 'assistant-message',
+        content: `SuperCoin Dev Studio ready! I'm set up to work on your project at: ${message.workingDirectory}\n\nI can run development pipelines, implement features, fix bugs, and help with code quality. What would you like to work on?`
+      }));
+
+    } else if (message.type === 'supercoin-dev-studio-query') {
+      console.log(`[PROXY] SuperCoin Dev Studio query: ${message.message}`);
+
+      try {
+        // Get or initialize conversation history
+        const history = this.conversationHistory.get(ws) || [];
+
+        // Build conversation context
+        let conversationContext = '';
+        if (message.history && message.history.length > 0) {
+          conversationContext = '\n\nPREVIOUS CONVERSATION:\n';
+          conversationContext += message.history.slice(-10).map(h => {
+            if (h.role === 'user') {
+              return `User: ${h.content}`;
+            } else if (h.role === 'assistant') {
+              return `Assistant: ${h.content}`;
+            }
+            return '';
+          }).filter(Boolean).join('\n\n');
+          conversationContext += '\n\n';
+        }
+
+        // Detect if user wants to modify THIS interface (supercoin-dev-studio.html)
+        const wantsToModifyStudioInterface = /\b(modify|change|update|edit|improve)\s+(this|the)?\s*(interface|studio)/i.test(message.message);
+
+        // Build specialized context
+        let studioContext = `SUPERCOIN DEV STUDIO - Development Assistant
+
+Working Directory: ${message.workingDirectory}
+Project: SuperCoinServ
+
+Your role: You are a development assistant for the SuperCoinServ project. You help with:
+- Understanding the codebase
+- Running bug-fix and feature-development pipelines
+- Code review and testing
+- Debugging and analysis
+- Suggesting improvements
+
+CAPABILITIES:
+${conversationContext}
+Current User Request: ${message.message}
+
+IMPORTANT INSTRUCTIONS:`;
+
+        if (wantsToModifyStudioInterface) {
+          studioContext += `
+
+USER WANTS TO MODIFY THIS INTERFACE (supercoin-dev-studio.html)
+
+1. Read the current supercoin-dev-studio.html file at /mnt/c/github/claudeplus/supercoin-dev-studio.html
+2. Understand what changes the user wants
+3. Use the Edit or Write tool to modify the HTML/CSS/JavaScript
+4. Explain what you changed and why
+5. Tell them to refresh their browser to see changes
+
+Be creative and implement their requested changes to the interface!`;
+
+        } else {
+          studioContext += `
+
+For development requests, you can:
+1. Answer questions about the codebase (explore and explain)
+2. Suggest running pipelines for bugs and features
+3. Help with code review and testing
+4. Provide development guidance
+
+When appropriate, suggest or execute pipelines:
+- For bug fixes: Use "bug-fix-v1" pipeline
+- For new features: Use "feature-development-v1" pipeline
+
+To execute a pipeline, output this format:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "bug-fix-v1" or "feature-development-v1",
+  "userPrompt": "<detailed description of the task>",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+For questions and exploration, use your tools to:
+- Read files to understand code
+- Search for patterns with grep
+- List files with glob
+- Explain how things work
+
+Be conversational, helpful, and proactive about suggesting the best approach!`;
+        }
+
+        // Get working directory
+        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+
+        // Send to Claude with SuperCoin dev context
+        const response = await this.sendToClaude(studioContext, ws);
+
+        // Store exchange in history
+        history.push({
+          user: message.message,
+          assistant: response
+        });
+        this.conversationHistory.set(ws, history);
+
+        // Send response back
+        ws.send(JSON.stringify({
+          type: 'assistant-message',
+          content: response
+        }));
+
+      } catch (error) {
+        console.error('[PROXY] SuperCoin Dev Studio query error:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: `Error processing query: ${error.message}`
+        }));
+      }
+
     } else if (message.type === 'execute-single-agent') {
       console.log(`[PROXY] Single agent execution not available - system removed`);
 
@@ -2412,7 +2545,13 @@ Your commentary:`;
       type: 'pipeline-started',
       pipelineId: pipelineState.id,
       pipelineName: pipeline.name,
-      totalStages: pipeline.stages?.length || 0
+      totalStages: pipeline.stages?.length || 0,
+      stages: pipeline.stages.map(s => ({
+        id: s.id,
+        name: s.name,
+        agent: s.agent,
+        description: s.description
+      }))
     }));
 
     // Send initial commentary
@@ -2454,7 +2593,7 @@ Your commentary:`;
 
     let currentStageId = pipeline.stages[0]?.id; // Start with first stage
     let executionCount = 0;
-    const maxExecutions = 20; // Prevent infinite loops
+    const maxExecutions = 100; // Prevent infinite loops (allow sufficient iterations for complex debugging)
     
     while (currentStageId && executionCount < maxExecutions) {
       const stage = stageMap[currentStageId];
@@ -2490,6 +2629,15 @@ Your commentary:`;
             message: `Starting ${stage.name}`,
             style: 'focused'
           }
+        }));
+
+        // Send stage update for visualization
+        ws.send(JSON.stringify({
+          type: 'pipeline-stage-update',
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          status: 'in-progress'
         }));
 
         // Build input for this stage
@@ -2708,6 +2856,16 @@ Your commentary:`;
           }
         }));
 
+        // Send stage completion update for visualization
+        ws.send(JSON.stringify({
+          type: 'pipeline-stage-update',
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          status: 'completed',
+          output: result ? result.substring(0, 300) + (result.length > 300 ? '...' : '') : null
+        }));
+
         // Send pipeline update for game dev studio
         ws.send(JSON.stringify({
           type: 'pipeline-update',
@@ -2766,6 +2924,16 @@ Your commentary:`;
           }
         }));
 
+        // Send stage error update for visualization
+        ws.send(JSON.stringify({
+          type: 'pipeline-stage-update',
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          status: 'error',
+          error: error.message
+        }));
+
         throw error;
       }
     }
@@ -2791,6 +2959,53 @@ Your commentary:`;
       duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime),
       finalResults: Object.keys(results)
     });
+
+    // Generate AI-powered story report using InfographicNarrator
+    try {
+      console.log('[PROXY] Generating AI story report for pipeline execution...');
+
+      const infographic = this.pipelineInfographics.get(pipelineState.id);
+      if (infographic) {
+        const runDirectory = infographic.getRunDirectory();
+        const narrator = new InfographicNarrator(runDirectory);
+
+        // Prepare pipeline data for narrator
+        const pipelineData = {
+          name: pipeline.name,
+          id: pipelineState.id,
+          duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime),
+          totalStages: pipelineState.stages.length,
+          completedStages: pipelineState.completedStages.length,
+          errorCount: pipelineState.stages.filter(s => s.status === 'error').length,
+          workingDir: workingDir,
+          status: 'completed',
+          stages: pipelineState.stages || []
+        };
+
+        // Generate the story report asynchronously (don't block pipeline completion)
+        narrator.generateStoryReport(pipelineData).then(result => {
+          if (result.success) {
+            console.log('[PROXY] Story report generated:', result.storyPath);
+
+            // Notify client that story is ready
+            ws.send(JSON.stringify({
+              type: 'story-report-ready',
+              pipelineId: pipelineState.id,
+              storyPath: result.storyPath,
+              narrativePath: result.narrativePath,
+              message: '✨ Magical story report generated!'
+            }));
+          } else {
+            console.error('[PROXY] Story report generation failed:', result.error);
+          }
+        }).catch(err => {
+          console.error('[PROXY] Story report generation error:', err);
+        });
+      }
+    } catch (narratorError) {
+      console.error('[PROXY] Failed to generate story report:', narratorError);
+      // Don't fail the pipeline if narrator fails - just log it
+    }
 
     // Auto-commit changes if working on a git repository
     // NOTE: Test collection is now handled by the test_librarian agent in the pipeline

@@ -15,10 +15,10 @@ echo ""
 echo "Cleaning up existing processes on port 3005..."
 lsof -ti:3005 | xargs kill -9 2>/dev/null || true
 
-# Start a simple HTTP file server on port 3005
-echo "Starting HTTP file server on port 3005..."
+# Start Node.js server with story generation API on port 3005
+echo "Starting infographic server on port 3005..."
 cd /mnt/c/github/claudeplus
-python3 -m http.server 3005 &
+node infographic-server.js &
 FILE_SERVER_PID=$!
 
 echo ""

@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Start Pipeline Monitor**: `./start-monitor.sh` (launches monitoring interface on http://localhost:3004/pipeline-monitor.html)
 - **Start Infographic Viewer**: `./start-infographic-viewer.sh` (launches rich media viewer on http://localhost:3005/infographic-viewer.html)
 - **Start Game Dev Studio**: `./start-game-dev-studio.sh` (launches AI development partner on http://localhost:3006/game-dev-studio.html)
+- **Start SuperCoin Dev Studio**: `./start-supercoin-dev-studio.sh` (launches focused dev environment on http://localhost:3007/supercoin-dev-studio.html)
 
 ### MCP Server Components
 - **Browser Automation Server**: `cd mcp-servers/browser-automation && npm install && npm start`
@@ -71,6 +72,25 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    - Infographics stored in `proxy/pipeline-infographics/`
    - Access via `./start-infographic-viewer.sh` on http://localhost:3005/infographic-viewer.html
 
+   **NEW: AI Story Reports** - Magical, narrative-driven execution summaries
+   - After pipeline completion, `InfographicNarrator` generates beautiful story reports
+   - Uses Claude Code with the `infographic_narrator` agent to create engaging narratives
+   - Tells the story of what happened in an accessible, non-technical way
+   - Includes progressive disclosure: simple summaries → detailed narratives → technical deep-dives
+   - Modern, animated HTML with:
+     - Starfield background with floating hero section
+     - Chapter-based storytelling with emoji indicators
+     - Mood-based visual styling (discovery, challenge, triumph, setback, resolution)
+     - Collapsible technical details for each chapter
+     - Beautiful conclusion with outcomes, lessons, and metrics
+     - Full technical appendix with timeline, agent insights, and data flows
+   - Files generated per run:
+     - `narrative.json` - AI-generated story structure
+     - `story.html` - Beautiful HTML story report (open this!)
+   - Auto-generated on pipeline completion (async, non-blocking)
+   - Manual generation: `cd proxy && node test-narrator.js [pipeline-id]`
+   - Located in: `proxy/pipeline-infographics/<pipeline-id>/run_<timestamp>/story.html`
+
 6. **Game Dev Studio** (`game-dev-studio.html`): AI development partner chat interface
    - Natural conversation with Claude Code CLI for game development
    - Automatically triggers pipeline execution when building features
@@ -81,20 +101,32 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    - Quick commands for common development tasks
    - Access via `./start-game-dev-studio.sh` on http://localhost:3006/game-dev-studio.html
 
-7. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
+7. **SuperCoin Dev Studio** (`supercoin-dev-studio.html`): Focused development environment for SuperCoinServ
+   - Dedicated chat interface with Claude Code CLI for the SuperCoinServ project
+   - Pre-configured working directory: `/mnt/c/github/private-SuperCoinServ`
+   - Context-aware development assistance (codebase exploration, debugging, testing)
+   - Can run bug-fix and feature-development pipelines
+   - Quick commands for project status, tests, code review
+   - Real-time pipeline progress tracking
+   - Can modify its own interface based on user requests
+   - Orange/gold color scheme distinct from other studios
+   - Access via `./start-supercoin-dev-studio.sh` on http://localhost:3007/supercoin-dev-studio.html
+
+8. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
    - Provides web scraping and browser testing capabilities
 
-8. **Web Interfaces**: Multiple access points
+9. **Web Interfaces**: Multiple access points
    - Main Electron app (`src/index.html`)
    - Web-based chat interface (`src/claude-app-web.html`)
    - Standalone pipeline designer (via `./start-pipeline-system.sh`)
    - Pipeline monitor (via `./start-monitor.sh`)
    - Pipeline infographic viewer (via `./start-infographic-viewer.sh`)
    - Game Dev Studio (via `./start-game-dev-studio.sh`)
+   - SuperCoin Dev Studio (via `./start-supercoin-dev-studio.sh`)
 
 ### Key Technical Details
 
-- **Proxy Communication**: WebSocket on port 8081, JSON message protocol with types: `user-message`, `directory-change`, `pipeline-config`, `get-templates`, `get-agents`, `pipeline-monitor-init`, `pipeline-monitor-query`, `game-dev-studio-init`, `game-dev-studio-query`, `pipeline-started`, `pipeline-update`, `pipeline-completed`, `infographic-ready`, etc.
+- **Proxy Communication**: WebSocket on port 8081, JSON message protocol with types: `user-message`, `directory-change`, `pipeline-config`, `get-templates`, `get-agents`, `pipeline-monitor-init`, `pipeline-monitor-query`, `game-dev-studio-init`, `game-dev-studio-query`, `supercoin-dev-studio-init`, `supercoin-dev-studio-query`, `pipeline-started`, `pipeline-update`, `pipeline-completed`, `infographic-ready`, etc.
 - **HTTP API**: Port 8081 also serves HTTP endpoints: `/list-infographics` for querying available pipeline visualizations
 - **Path Conversion**: Windows paths (C:\path) automatically converted to WSL paths (/mnt/c/path) in proxy
 - **Process Management**: Proxy kills existing processes on port 8081 before starting
