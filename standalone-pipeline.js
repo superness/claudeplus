@@ -151,11 +151,23 @@ class PipelineDesigner {
   }
 
   updateNodeVisualState(stageId, state) {
+    console.log(`🎨 updateNodeVisualState called: stageId="${stageId}", state="${state}"`);
+    console.log(`🎨 Current nodes count: ${this.nodes.size}`);
+
     // Find node by stage ID and update its visual appearance
+    let found = false;
     for (const [nodeId, node] of this.nodes) {
-      if (node.id === stageId || node.agent === stageId) {
+      const nodeConfigId = node.config?.id;
+      const nodeConfigAgent = node.config?.agent;
+      console.log(`  - Checking node: id="${nodeConfigId}", agent="${nodeConfigAgent}"`);
+      if (nodeConfigId === stageId || nodeConfigAgent === stageId || nodeId === stageId) {
+        found = true;
+        console.log(`  ✅ Match found! Updating node visual state to: ${state}`);
         const element = node.element;
-        if (!element) continue;
+        if (!element) {
+          console.log(`  ⚠️ Node element is null!`);
+          continue;
+        }
 
         // Remove existing state classes
         element.classList.remove('node-idle', 'node-running', 'node-completed', 'node-error');
@@ -169,6 +181,10 @@ class PipelineDesigner {
         console.log(`🎨 Updated node ${stageId} to state: ${state}`);
         break;
       }
+    }
+
+    if (!found) {
+      console.log(`  ❌ No node found matching stageId: "${stageId}"`);
     }
   }
 
@@ -670,30 +686,30 @@ class PipelineDesigner {
     });
 
     this.selectedNode = nodeId;
-    
+
     if (nodeId) {
       const node = this.nodes.get(nodeId);
       if (node) {
         node.element.classList.add('selected');
-        this.updatePropertiesPanel(node.config);
+        this.updatePropertiesPanel(node.config, node);
       }
     } else {
-      this.updatePropertiesPanel(this.pipelineConfig);
+      this.updatePropertiesPanel(this.pipelineConfig, null);
     }
   }
 
-  updatePropertiesPanel(config) {
+  updatePropertiesPanel(config, node = null) {
     if (config === this.pipelineConfig) {
       // Pipeline properties
       this.propertiesContent.innerHTML = `
         <div class="property-group">
           <div class="property-label">Pipeline Name</div>
-          <input type="text" class="property-input" value="${config.name}" 
+          <input type="text" class="property-input" value="${config.name}"
                  onchange="designer.updatePipelineProperty('name', this.value)" />
         </div>
         <div class="property-group">
           <div class="property-label">Description</div>
-          <textarea class="property-input property-textarea" 
+          <textarea class="property-input property-textarea"
                     onchange="designer.updatePipelineProperty('description', this.value)">${config.description}</textarea>
         </div>
         <div class="property-group">
@@ -703,22 +719,55 @@ class PipelineDesigner {
         </div>
         <div class="property-group">
           <div class="property-label">Global Config</div>
-          <textarea class="property-input property-textarea" 
+          <textarea class="property-input property-textarea"
                     placeholder="JSON configuration..."
                     onchange="designer.updatePipelineProperty('globalConfig', this.value)">${JSON.stringify(config.globalConfig || {}, null, 2)}</textarea>
         </div>
       `;
     } else {
       // Node properties
+      const escapeHtml = (text) => {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      };
+
+      let executionOutputHTML = '';
+      if (node && (node.prompt || node.output)) {
+        executionOutputHTML = `
+          <div class="property-group" style="margin-top: 20px; border-top: 2px solid rgba(100, 255, 218, 0.3); padding-top: 15px;">
+            <div class="property-label" style="color: #64ffda; font-weight: 600; font-size: 14px;">⚡ Execution Results</div>
+          </div>
+        `;
+
+        if (node.prompt) {
+          executionOutputHTML += `
+            <div class="property-group">
+              <div class="property-label">Agent Prompt (${node.prompt.length} chars)</div>
+              <textarea class="property-input property-textarea" readonly style="min-height: 150px; font-family: 'Monaco', monospace; font-size: 11px; background: rgba(0,0,0,0.3);">${escapeHtml(node.prompt)}</textarea>
+            </div>
+          `;
+        }
+
+        if (node.output) {
+          executionOutputHTML += `
+            <div class="property-group">
+              <div class="property-label">Agent Output (${node.output.length} chars)</div>
+              <textarea class="property-input property-textarea" readonly style="min-height: 200px; font-family: 'Monaco', monospace; font-size: 11px; background: rgba(0,0,0,0.3);">${escapeHtml(node.output)}</textarea>
+            </div>
+          `;
+        }
+      }
+
       this.propertiesContent.innerHTML = `
         <div class="property-group">
           <div class="property-label">Stage Name</div>
-          <input type="text" class="property-input" value="${config.name}" 
+          <input type="text" class="property-input" value="${config.name}"
                  onchange="designer.updateNodeProperty('name', this.value)" />
         </div>
         <div class="property-group">
           <div class="property-label">Description</div>
-          <textarea class="property-input property-textarea" 
+          <textarea class="property-input property-textarea"
                     onchange="designer.updateNodeProperty('description', this.value)">${config.description}</textarea>
         </div>
         <div class="property-group">
@@ -732,25 +781,26 @@ class PipelineDesigner {
         </div>
         <div class="property-group">
           <div class="property-label">Agent</div>
-          <input type="text" class="property-input" value="${config.agent || ''}" 
+          <input type="text" class="property-input" value="${config.agent || ''}"
                  onchange="designer.updateNodeProperty('agent', this.value)" />
         </div>
         <div class="property-group">
           <div class="property-label">Timeout (ms)</div>
-          <input type="number" class="property-input" value="${config.timeout || 30000}" 
+          <input type="number" class="property-input" value="${config.timeout || 30000}"
                  onchange="designer.updateNodeProperty('timeout', parseInt(this.value))" />
         </div>
         <div class="property-group">
           <div class="property-label">Max Attempts</div>
-          <input type="number" class="property-input" value="${config.retryPolicy?.maxAttempts || 3}" 
+          <input type="number" class="property-input" value="${config.retryPolicy?.maxAttempts || 3}"
                  onchange="designer.updateNodeRetryPolicy('maxAttempts', parseInt(this.value))" />
         </div>
         <div class="property-group">
           <div class="property-label">Configuration (JSON)</div>
-          <textarea class="property-input property-textarea" 
+          <textarea class="property-input property-textarea"
                     placeholder="Stage-specific JSON configuration..."
                     onchange="designer.updateNodeProperty('config', this.value)">${JSON.stringify(config.config || {}, null, 2)}</textarea>
         </div>
+        ${executionOutputHTML}
       `;
     }
   }
@@ -1032,8 +1082,19 @@ class PipelineDesigner {
       path.setAttribute('class', 'connection-path');
       path.setAttribute('data-from', connection.from);
       path.setAttribute('data-to', connection.to);
-      path.setAttribute('data-condition', connection.condition || 'completed');
-      
+      // Handle both string and object formats for condition
+      console.log(`🔗 Drawing connection: from=${connection.from}, to=${connection.to}, condition=`, connection.condition);
+      console.log(`   Type: ${typeof connection.condition}, Value:`, JSON.stringify(connection.condition));
+
+      const conditionValue = typeof connection.condition === 'object'
+        ? connection.condition.value
+        : connection.condition;
+      const conditionLabel = conditionValue || 'completed';
+
+      console.log(`   Resolved label: "${conditionLabel}"`);
+
+      path.setAttribute('data-condition', conditionLabel);
+
       // Add connection condition label at 1/3 position to avoid overlaps in loops
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       const labelX = fromX + (toX - fromX) * 0.33;
@@ -1042,7 +1103,7 @@ class PipelineDesigner {
       label.setAttribute('y', labelY);
       label.setAttribute('text-anchor', 'middle');
       label.setAttribute('class', 'connection-label');
-      label.textContent = connection.condition || 'completed';
+      label.textContent = conditionLabel;
       
       // Add hover events for connection manipulation
       path.addEventListener('click', (e) => {
@@ -1058,15 +1119,26 @@ class PipelineDesigner {
   handleConnectionClick(connection) {
     const fromNode = this.nodes.get(connection.from);
     const toNode = this.nodes.get(connection.to);
-    
+
     if (fromNode && toNode) {
-      const choice = confirm(`Connection: ${fromNode.config.name} → ${toNode.config.name}\nCondition: ${connection.condition}\n\nClick OK to delete this connection, or Cancel to keep it.`);
-      
+      // Handle both string and object formats for condition
+      const conditionValue = typeof connection.condition === 'object'
+        ? connection.condition.value
+        : connection.condition;
+
+      const choice = confirm(`Connection: ${fromNode.config.name} → ${toNode.config.name}\nCondition: ${conditionValue || 'completed'}\n\nClick OK to delete this connection, or Cancel to keep it.`);
+
       if (choice) {
-        // Remove connection from array
-        this.connections = this.connections.filter(conn => 
-          !(conn.from === connection.from && conn.to === connection.to && conn.condition === connection.condition)
-        );
+        // Remove connection from array (handle both formats)
+        this.connections = this.connections.filter(conn => {
+          const connCondition = typeof conn.condition === 'object'
+            ? conn.condition.value
+            : conn.condition;
+          const targetCondition = typeof connection.condition === 'object'
+            ? connection.condition.value
+            : connection.condition;
+          return !(conn.from === connection.from && conn.to === connection.to && connCondition === targetCondition);
+        });
         
         // Refresh connection display
         this.updateConnectionLines();
@@ -1260,10 +1332,12 @@ class PipelineDesigner {
       // Use explicit connections from template
       console.log(`🔗 Creating ${template.connections.length} connections from template`);
       template.connections.forEach(conn => {
+        console.log(`🔗 Loading connection: from=${conn.from}, to=${conn.to}, condition=`, conn.condition);
         const fromNode = document.querySelector(`[data-node-id="${conn.from}"]`);
         const toNode = document.querySelector(`[data-node-id="${conn.to}"]`);
         if (fromNode && toNode) {
-          this.createConnection(conn.from, conn.to, 'completed');
+          // Use actual condition from connection, not hardcoded 'completed'
+          this.createConnection(conn.from, conn.to, conn.condition || 'completed', conn.description);
         } else {
           console.warn(`⚠️ Could not create connection: ${conn.from} -> ${conn.to} (nodes not found)`);
         }
@@ -3176,6 +3250,9 @@ function reconnectToPipeline(pipelineId) {
           console.log('📊 Pipeline data:', response.pipelineData);
           console.log('💬 Chat history length:', response.chatHistory?.length || 0);
           console.log('💬 Chat history:', response.chatHistory);
+          console.log('🔄 Execution events length:', response.executionEvents?.length || 0);
+          console.log('🔄 Execution events:', response.executionEvents);
+          console.log('📁 Stage outputs:', response.stageOutputs);
           if (response.chatHistory && response.chatHistory.length > 0) {
             response.chatHistory.forEach((msg, idx) => {
               console.log(`  Message ${idx}:`, msg);
@@ -3314,13 +3391,49 @@ function reconnectToPipeline(pipelineId) {
                 if (response.stageOutputs) {
                   for (const [stageId, output] of Object.entries(response.stageOutputs)) {
                     for (const [nodeId, node] of window.designer.nodes) {
-                      if (node.id === stageId) {
+                      if (node.config?.id === stageId || nodeId === stageId) {
                         node.output = output.output;
                         node.prompt = output.prompt;
                         console.log(`📎 Attached output to node ${stageId}`);
                         break;
                       }
                     }
+                  }
+                }
+
+                // Replay execution events to restore visual state sequentially
+                if (response.executionEvents && response.executionEvents.length > 0) {
+                  console.log(`🔄 Replaying ${response.executionEvents.length} execution events...`);
+                  response.executionEvents.forEach((event, idx) => {
+                    if (event.eventType === 'stage_started') {
+                      console.log(`  ${idx + 1}. Stage Started: ${event.stageName} (${event.stageId})`);
+                      window.designer.updateNodeVisualState(event.stageId, 'running');
+                    } else if (event.eventType === 'stage_completed') {
+                      console.log(`  ${idx + 1}. Stage Completed: ${event.stageName} (${event.stageId})`);
+                      window.designer.updateNodeVisualState(event.stageId, 'completed');
+                    } else if (event.eventType === 'stage_error') {
+                      console.log(`  ${idx + 1}. Stage Error: ${event.stageName} (${event.stageId})`);
+                      window.designer.updateNodeVisualState(event.stageId, 'error');
+                    }
+                  });
+
+                  // Find the currently running stage (last stage_started without corresponding stage_completed)
+                  let currentRunningStageId = null;
+                  const completedStageIds = new Set();
+
+                  for (const event of response.executionEvents) {
+                    if (event.eventType === 'stage_started') {
+                      currentRunningStageId = event.stageId;
+                    } else if (event.eventType === 'stage_completed' && event.stageId === currentRunningStageId) {
+                      completedStageIds.add(event.stageId);
+                      currentRunningStageId = null;
+                    }
+                  }
+
+                  // Ensure current running stage is highlighted
+                  if (currentRunningStageId) {
+                    console.log(`🔍 Current running stage: ${currentRunningStageId}`);
+                    window.designer.updateNodeVisualState(currentRunningStageId, 'running');
                   }
                 }
               } else {
@@ -3379,9 +3492,33 @@ function reconnectToPipeline(pipelineId) {
             );
           }
 
-        } else if (response.type === 'pipeline-update' || response.type === 'pipeline-stage-update') {
-          // Handle ongoing pipeline updates after reconnection
-          console.log('📊 Pipeline update received');
+        } else if (response.type === 'pipeline-stage-update') {
+          // Handle stage updates with stageId
+          console.log('🎯 Stage update:', response);
+          if (window.designer) {
+            if (response.status === 'in-progress') {
+              window.designer.updateNodeVisualState(response.stageId, 'running');
+            } else if (response.status === 'completed') {
+              window.designer.updateNodeVisualState(response.stageId, 'completed');
+
+              // Store output if available
+              if (response.output) {
+                const node = Array.from(window.designer.nodes.values()).find(n =>
+                  n.config?.id === response.stageId
+                );
+                if (node) {
+                  node.output = response.output;
+                  console.log(`📎 Attached live output to node ${response.stageId}`);
+                }
+              }
+            } else if (response.status === 'error') {
+              window.designer.updateNodeVisualState(response.stageId, 'error');
+            }
+          }
+
+        } else if (response.type === 'pipeline-update') {
+          // Handle general pipeline updates
+          console.log('📊 Pipeline update received:', response);
           if (window.designer && window.designer.handlePipelineUpdate) {
             window.designer.handlePipelineUpdate(response);
           }

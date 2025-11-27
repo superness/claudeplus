@@ -61,6 +61,43 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    - Knows to check structured logs FIRST before reading proxy.log
    - Access via `./start-monitor.sh` on http://localhost:3004/pipeline-monitor.html
 
+   **How to Read Execution Logs Correctly:**
+
+   **CRITICAL RULE**: A pipeline stage is ONLY complete when you see a completion event (`stage_completed`, `stage_error`, or `stage_routed`) AFTER the `stage_started` event.
+
+   **Correct Procedure**:
+   1. Read last 50-100 lines: `tail -n 100 /path/to/pipeline_execution.json`
+   2. Find the LAST `stage_started` event (bottom of log)
+   3. Check if a completion event exists AFTER it (same stageId)
+   4. If NO completion event → pipeline is **STILL RUNNING**
+   5. If completion event exists → stage is **COMPLETE**
+
+   **Event Types**:
+   - `pipeline_initialized` - Pipeline configuration loaded
+   - `stage_started` - Stage began execution (timestamp = start time, NOT completion time)
+   - `stage_completed` - Stage finished successfully with results
+   - `stage_error` - Stage failed with error details
+   - `stage_routed` - Stage returned routing decision (next_stage)
+   - `pipeline_completed` - Entire pipeline finished
+
+   **Example - Pipeline Still Running**:
+   ```json
+   {"eventType": "stage_started", "timestamp": "2025-11-23T16:06:22.364Z", "stageId": "handle_recovery"}
+   [no more events after this]
+   ```
+   Status: Stage 16 is RUNNING (started at 16:06, no completion yet)
+
+   **Example - Pipeline Complete**:
+   ```json
+   {"eventType": "stage_started", "timestamp": "2025-11-23T16:06:22.364Z", "stageId": "handle_recovery"}
+   {"eventType": "stage_completed", "timestamp": "2025-11-23T16:08:45.123Z", "stageId": "handle_recovery"}
+   ```
+   Status: Stage 16 COMPLETED (finished at 16:08, took 2min 23sec)
+
+   **Common Mistake**:
+   ❌ Seeing `stage_started` timestamp and assuming it's complete
+   ✅ Always verify a completion event exists AFTER `stage_started`
+
 5. **Pipeline Infographic Viewer** (`infographic-viewer.html`): Real-time visual execution reports
    - Rich HTML infographics generated during pipeline runs
    - Visual timeline of all stages with agent outputs
@@ -112,6 +149,91 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    - Orange/gold color scheme distinct from other studios
    - Access via `./start-supercoin-dev-studio.sh` on http://localhost:3007/supercoin-dev-studio.html
 
+   **SuperCoin Dev Studio Tools & Capabilities:**
+
+   The studio provides conversational AI development assistance with access to all Claude Code CLI tools:
+
+   - **Code Exploration**: Read files, search patterns with grep, list files with glob, understand codebase structure
+   - **Pipeline Execution**: Trigger automated development pipelines via [PIPELINE-EXECUTE] format
+   - **Development Assistance**: Code review, debugging, testing, implementation guidance
+   - **Direct Tool Access**: All Claude Code tools (Read, Edit, Write, Bash, Grep, Glob, etc.)
+
+   **How to Use in Conversations:**
+
+   1. **Ask Questions & Explore**: Ask about the codebase, how features work, where bugs might be, etc.
+      - "How does the stratum server handle share submissions?"
+      - "Where is the wallet address validation logic?"
+      - "Show me the RPC endpoint definitions"
+
+   2. **Request Code Changes**: Ask for bug fixes, feature implementations, refactoring
+      - "Fix the share validation error in the pool server"
+      - "Add a new RPC endpoint for checking miner status"
+      - "Refactor the configuration loader to use JSON"
+
+   3. **Trigger Pipelines**: For complex tasks, the studio can execute full development pipelines
+      - Bug fixes: "Run a bug-fix pipeline to solve the stratum authentication issue"
+      - Features: "Run a feature-development pipeline to add worker statistics tracking"
+      - Testing: "Run the full mining cycle test to verify the pool is working"
+
+   **Pipeline Execution Format:**
+
+   When appropriate, the studio will output this format to trigger pipeline execution:
+
+   ```
+   [PIPELINE-EXECUTE]
+   {
+     "pipelineName": "bug-fix-v1" | "feature-development-v1" | "pool-bug-fix" | "pool-feature-development" | "full-mining-cycle",
+     "userPrompt": "Detailed description of the task",
+     "workingDirectory": "/mnt/c/github/private-SuperCoinServ"
+   }
+   [/PIPELINE-EXECUTE]
+   ```
+
+   **Available Pipelines:**
+
+   - **bug-fix-v1**: General bug fixing workflow (analyze → reproduce → fix → validate → collect tests)
+   - **feature-development-v1**: General feature development (define → plan tests → implement → validate → collect tests)
+   - **pool-bug-fix**: SuperCoinServ-specific bug fixing with mining cycle reproduction
+   - **pool-feature-development**: SuperCoinServ-specific feature development with mining cycle validation
+   - **full-mining-cycle**: End-to-end mining stack validation (daemon → pool → miner → block discovery)
+   - **mining-infrastructure-setup**: Complete mining infrastructure setup and verification
+   - **daemon-pool-integration**: Daemon↔Pool RPC integration testing
+   - **miner-integration**: Miner↔Pool stratum integration testing
+
+   **Example Conversations:**
+
+   User: "Why aren't miners receiving jobs from the pool?"
+   Assistant: Let me search the stratum server code to understand how jobs are distributed...
+   [Uses Grep/Read tools to explore code]
+   Assistant: I found the issue in the job distributor. It's checking for block template updates but the RPC connection isn't being refreshed. Would you like me to:
+   1. Fix this directly, or
+   2. Run a bug-fix pipeline with full reproduction and validation?
+
+   User: "Add support for variable difficulty per miner"
+   Assistant: This is a significant feature that will require changes to multiple components. I recommend running a feature-development pipeline to ensure proper testing. Here's what it will do:
+   [PIPELINE-EXECUTE]
+   {
+     "pipelineName": "pool-feature-development",
+     "userPrompt": "Add variable difficulty support per miner with automatic difficulty adjustment based on hashrate",
+     "workingDirectory": "/mnt/c/github/private-SuperCoinServ"
+   }
+   [/PIPELINE-EXECUTE]
+
+   **Key Differences from Other Studios:**
+
+   - **Pre-configured for SuperCoinServ**: All paths, context, and recommendations are specific to the pool server project
+   - **Mining-aware**: Understands cryptocurrency mining concepts, stratum protocol, RPC communication
+   - **Specialized Pipelines**: Access to mining-specific testing pipelines with real daemon/pool/miner components
+   - **Persistent Working Directory**: Always operates in `/mnt/c/github/private-SuperCoinServ`
+
+   **Tips for Best Results:**
+
+   - Be specific about what you want to achieve or understand
+   - Ask clarifying questions before running pipelines for complex tasks
+   - Use pipelines for multi-step tasks that require validation
+   - Use direct tool access for quick exploration and simple changes
+   - Review pipeline progress in real-time via the studio interface
+
 8. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
    - Provides web scraping and browser testing capabilities
 
@@ -159,14 +281,264 @@ The system uses 38+ JSON-defined agents organized by category:
 - **Test Management**: test_librarian (collects, validates, and commits tests to library)
 - **Domain Experts**: world_historian, sociologist_reviewer, market_simulator, resource_designer, progression_designer
 
+### Mining Automation Agents (SuperCoinServ)
+A complete set of 17 specialized agents for cryptocurrency mining pool development:
+
+**Core Infrastructure Agents:**
+- **bitcoin_daemon_manager**: Manages bitcoind in regtest mode (start, fund wallets, generate blocks)
+- **pool_server_manager**: Launches and manages CoiniumServ pool server
+- **miner_manager**: Configures and runs mining software (cpuminer, cgminer)
+- **wallet_manager**: Creates and manages mining wallet addresses
+
+**Integration Testing Agents:**
+- **daemon_pool_connector**: Validates daemon↔pool RPC connection
+- **miner_pool_connector**: Validates miner↔pool stratum connection
+- **job_validator**: Verifies miner receives valid mining jobs from pool
+- **share_validator**: Tests share submission from miner to pool
+- **block_validator**: Verifies complete block discovery cycle
+
+**System Testing Agents:**
+- **cycle_integration_tester**: End-to-end full mining cycle validation
+- **performance_analyzer**: Analyzes mining performance and efficiency metrics
+- **stratum_monitor**: Monitors stratum protocol communication and jobs
+- **rpc_tester**: Tests Bitcoin RPC endpoints and responses
+- **network_monitor**: Monitors network connectivity and health
+
+**Support Agents:**
+- **config_generator**: Generates configuration files for daemon, pool, and miner
+- **log_analyzer**: Parses and analyzes logs from all mining components
+- **error_recovery_agent**: Detects and recovers from common mining failures
+
 ### Template System
 Pre-configured pipeline workflows in `templates/`:
+
+**General Development:**
 - `claude-plus-v1.json`: Basic Claude Plus workflow
 - `bug-fix-v1.json`: Comprehensive bug fix pipeline with test finalization
 - `feature-development-v1.json`: Test-first feature development with test finalization
 - `game-design-v1.json`: Game development pipeline
 - `living-game-world-v1.json`: Complex world simulation pipeline
 - `thesis-generator-v1.json`: Academic thesis generation workflow
+
+**Mining System Pipelines (SuperCoinServ):**
+- `intelligent-mining-infrastructure-setup.json`: **NEW** Intelligent AI-orchestrated mining infrastructure setup with dynamic delegation (recommended)
+- `mining-infrastructure-setup.json`: Basic mining infrastructure setup (daemon → wallet → pool → miner)
+- `daemon-pool-integration.json`: Daemon↔Pool RPC integration testing
+- `miner-integration.json`: Miner↔Pool stratum integration testing
+- `share-submission-test.json`: Share submission validation
+- `block-discovery-test.json`: Block discovery cycle validation
+- `full-mining-cycle.json`: Comprehensive end-to-end mining cycle test
+- `mining-health-check-v1.json`: Ongoing health monitoring and diagnostics
+- `pool-feature-development.json`: Feature development with mining cycle validation
+- `pool-bug-fix.json`: Bug fixing with mining cycle reproduction
+
+### Mining Automation System
+
+The mining automation system provides **production-ready cryptocurrency mining pool testing** with real components (no mocks). This is specifically designed for SuperCoinServ development.
+
+**What It Does:**
+✅ Launch bitcoind in regtest mode
+✅ Generate funded wallets for mining rewards
+✅ Start CoiniumServ pool server
+✅ Configure and run miners (cpuminer/cgminer)
+✅ Validate job delivery (daemon→pool→miner)
+✅ Test share submission (miner→pool)
+✅ Verify block discovery (pool→daemon)
+✅ Confirm wallet receives mining rewards
+
+**Key Workflows:**
+
+1. **Infrastructure Setup** (`intelligent-mining-infrastructure-setup` or `mining-infrastructure-setup`):
+   - Verifies all dependencies (bitcoind, CoiniumServ, miner)
+   - Generates all configuration files
+   - Starts daemon, funds wallet, starts pool, configures miner
+   - End-to-end verification
+   - **Intelligent version**: Uses AI orchestrator for dynamic delegation and adaptive error handling
+
+2. **Integration Testing** (`daemon-pool-integration`, `miner-integration`):
+   - Validates RPC communication between daemon and pool
+   - Validates stratum communication between miner and pool
+   - Tests job delivery and share submission
+
+3. **Full Mining Cycle** (`full-mining-cycle`):
+   - Complete end-to-end test of entire mining stack
+   - Verifies all components work together
+   - Validates block discovery and reward delivery
+
+4. **Development Workflows**:
+   - **Bug Fixing** (`pool-bug-fix`): Reproduce bugs using real mining components
+   - **Feature Development** (`pool-feature-development`): Validate features with mining cycle tests
+
+**Usage in SuperCoin Dev Studio:**
+
+When working on SuperCoinServ, you can run these pipelines by using the [PIPELINE-EXECUTE] format:
+
+```
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "pool-bug-fix" or "pool-feature-development" or "full-mining-cycle",
+  "userPrompt": "Fix stratum share submission error" or "Add new pool payout algorithm",
+  "workingDirectory": "/mnt/c/github/private-SuperCoinServ"
+}
+[/PIPELINE-EXECUTE]
+```
+
+**Component Locations:**
+- Agents: `/mnt/c/github/claudeplus/agents/` (17 mining agent JSON files)
+- Pipelines: `/mnt/c/github/claudeplus/templates/` (8 mining pipeline JSON files)
+- Documentation:
+  - `META_PIPELINE_SYSTEM_DOCUMENTATION.md` - Complete system architecture
+  - `PIPELINE_IMPLEMENTATION_SUMMARY.md` - Implementation details
+  - `PROOF_OF_COMPLETION.md` - Completion proof and metrics
+
+### Meta-Pipeline Orchestration System
+
+The meta-pipeline system provides **complete SDLC automation** - a pipeline that builds and orchestrates other pipelines. This is a second-order automation system that manages the entire software development lifecycle.
+
+**System Overview:**
+
+The meta-pipeline orchestrator (`meta-pipeline-orchestrator.json`) is a master workflow that:
+- Builds specialized pipeline templates on demand
+- Routes development tasks to appropriate workflows
+- Chains pipelines together for complex multi-stage operations
+- Provides health checks, monitoring, and rollback capabilities
+
+**Built Pipeline Categories:**
+
+1. **Development Pipelines (3):**
+   - `bug-fix-pipeline.json` - Bug reproduction → fix → validation → test collection
+   - `feature-development-pipeline.json` - Feature planning → TDD → validation → test collection
+   - `refactoring-pipeline.json` - Code analysis → refactor → validation
+
+2. **Testing Pipelines (3):**
+   - `unit-test-pipeline.json` - Unit test creation and execution
+   - `integration-test-pipeline.json` - Integration test orchestration
+   - `performance-test-pipeline.json` - Performance profiling and benchmarking
+
+3. **Deployment Pipelines (3):**
+   - `build-and-package-pipeline.json` - Build artifacts → package → verify
+   - `deployment-pipeline.json` - Deploy → smoke test → health check
+   - `rollback-pipeline.json` - Rollback → restore state → verify
+
+4. **Monitoring Pipelines (3):**
+   - `health-check-pipeline.json` - System health monitoring
+   - `performance-monitoring-pipeline.json` - Performance metrics and alerts
+   - `error-detection-pipeline.json` - Error detection and triage
+
+5. **Meta Pipelines (1):**
+   - `meta-pipeline-orchestrator.json` - Routes tasks and chains workflows
+
+**How the Meta-Orchestrator Works:**
+
+The orchestrator uses a **routing agent** (`agent_router`) that:
+1. Analyzes the user's development request
+2. Determines which pipeline(s) are needed
+3. Chains multiple pipelines if necessary (e.g., feature → integration-test → deploy)
+4. Returns routing decisions with `next_pipeline` fields
+
+**Example Routing Scenarios:**
+
+- "Fix this bug" → `bug-fix-pipeline`
+- "Add new feature" → `feature-development-pipeline` → `integration-test-pipeline`
+- "Deploy to production" → `build-and-package-pipeline` → `deployment-pipeline` → `health-check-pipeline`
+- "Rollback deployment" → `rollback-pipeline` → `health-check-pipeline`
+- "Optimize performance" → `refactoring-pipeline` → `performance-test-pipeline`
+
+**Built Agent Ecosystem:**
+
+The meta-pipeline created **28 specialized agents** organized by workflow:
+
+**Pipeline Builder Agents:**
+- `pipeline_architect` - Designs new pipeline structures
+- `agent_architect` - Creates new agent definitions
+- `component_validator` - Validates pipeline/agent JSON files
+- `integration_reviewer` - Reviews how pipelines integrate
+
+**Development Agents:**
+- `bug_analyzer`, `root_cause_analyzer`, `fix_implementer`
+- `feature_architect`, `implementation_planner`, `code_implementer`
+- `refactoring_planner`, `code_refactorer`
+
+**Testing Agents:**
+- `unit_test_writer`, `integration_test_designer`, `performance_profiler`
+- `test_executor`, `test_validator`
+
+**Deployment Agents:**
+- `build_manager`, `package_creator`, `artifact_validator`
+- `deployment_manager`, `smoke_tester`, `rollback_manager`
+
+**Monitoring Agents:**
+- `health_checker`, `performance_monitor`, `error_detector`
+- `metrics_analyzer`, `alert_manager`
+
+**Support Agents:**
+- `agent_router` - Routes tasks to appropriate pipelines
+- `diagnostics_agent` - System diagnostics and troubleshooting
+- `emergency_shutdown` - Emergency shutdown and recovery
+
+**Complete File Inventory:**
+
+All files created by the meta-pipeline build process:
+
+**Agent Files (28):** `/mnt/c/github/claudeplus/agents/`
+- Pipeline Builders: `pipeline_architect.json`, `agent_architect.json`, `component_validator.json`, `integration_reviewer.json`
+- Development: `bug_analyzer.json`, `root_cause_analyzer.json`, `fix_implementer.json`, `feature_architect.json`, `implementation_planner.json`, `code_implementer.json`, `refactoring_planner.json`, `code_refactorer.json`
+- Testing: `unit_test_writer.json`, `integration_test_designer.json`, `performance_profiler.json`, `test_executor.json`, `test_validator.json`
+- Deployment: `build_manager.json`, `package_creator.json`, `artifact_validator.json`, `deployment_manager.json`, `smoke_tester.json`, `rollback_manager.json`
+- Monitoring: `health_checker.json`, `performance_monitor.json`, `error_detector.json`, `metrics_analyzer.json`, `alert_manager.json`
+- Support: `agent_router.json`, `diagnostics_agent.json`, `emergency_shutdown.json`
+
+**Pipeline Files (13):** `/mnt/c/github/claudeplus/templates/`
+- Development: `bug-fix-pipeline.json`, `feature-development-pipeline.json`, `refactoring-pipeline.json`
+- Testing: `unit-test-pipeline.json`, `integration-test-pipeline.json`, `performance-test-pipeline.json`
+- Deployment: `build-and-package-pipeline.json`, `deployment-pipeline.json`, `rollback-pipeline.json`
+- Monitoring: `health-check-pipeline.json`, `performance-monitoring-pipeline.json`, `error-detection-pipeline.json`
+- Meta: `meta-pipeline-orchestrator.json`
+
+**Mining-Specific Files (25):** Created by mining automation build
+- Mining Agents (17): `bitcoin_daemon_manager.json`, `pool_server_manager.json`, `miner_manager.json`, `wallet_manager.json`, `daemon_pool_connector.json`, `miner_pool_connector.json`, `job_validator.json`, `share_validator.json`, `block_validator.json`, `cycle_integration_tester.json`, `performance_analyzer.json`, `stratum_monitor.json`, `rpc_tester.json`, `network_monitor.json`, `config_generator.json`, `log_analyzer.json`, `error_recovery_agent.json`
+- Mining Pipelines (8): `mining-infrastructure-setup.json`, `daemon-pool-integration.json`, `miner-integration.json`, `share-submission-test.json`, `block-discovery-test.json`, `full-mining-cycle.json`, `pool-feature-development.json`, `pool-bug-fix.json`
+
+**Documentation Files (3):** `/mnt/c/github/claudeplus/`
+- `META_PIPELINE_SYSTEM_DOCUMENTATION.md` (870 lines) - Complete system architecture, all stages, all agents, all routing decisions
+- `PIPELINE_IMPLEMENTATION_SUMMARY.md` (460 lines) - Implementation details, verification steps, file locations
+- `PROOF_OF_COMPLETION.md` - Completion proof, metrics, file inventory
+
+**Total System Size:**
+- **66 total files** (28 meta agents + 13 meta pipelines + 17 mining agents + 8 mining pipelines)
+- **53 specialized AI agents** across all categories
+- **21 production pipelines** covering complete SDLC
+- **3 comprehensive documentation files**
+
+**Using the Meta-Pipeline System:**
+
+The meta-orchestrator is designed for **complex multi-stage development workflows**:
+
+```
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "meta-pipeline-orchestrator",
+  "userPrompt": "Add user authentication feature, test it, and deploy to staging",
+  "workingDirectory": "/path/to/project"
+}
+```
+
+The orchestrator will automatically chain:
+1. `feature-development-pipeline` (TDD implementation)
+2. `integration-test-pipeline` (E2E validation)
+3. `build-and-package-pipeline` (Build artifacts)
+4. `deployment-pipeline` (Deploy to staging)
+5. `health-check-pipeline` (Verify deployment)
+
+**Benefits of Meta-Pipeline System:**
+
+1. **Self-Evolving**: The system can create new pipelines and agents as needed
+2. **Intelligent Routing**: Automatically determines workflow based on task description
+3. **Pipeline Chaining**: Combines multiple workflows for complex operations
+4. **Complete SDLC Coverage**: Development → Testing → Deployment → Monitoring
+5. **Rollback Safety**: Automated rollback with state restoration
+6. **Health Monitoring**: Continuous health checks and error detection
+7. **Performance Optimization**: Automated performance profiling and benchmarking
 
 ## ChromeManager - Browser Testing Infrastructure
 

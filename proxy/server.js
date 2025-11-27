@@ -422,9 +422,22 @@ class ClaudeProxy {
       
       console.log(`[PROXY] Pipeline "${message.pipeline.name}" configured with ${message.pipeline.stages?.length || 0} stages`);
       
+    } else if (message.type === 'resume-pipeline') {
+      console.log(`[PROXY] Pipeline resume request: ${message.pipelineId}`);
+
+      try {
+        await this.resumePipeline(message.pipelineId, ws);
+      } catch (error) {
+        console.error('[PROXY] Failed to resume pipeline:', error);
+        ws.send(JSON.stringify({
+          type: 'resume-error',
+          error: error.message
+        }));
+      }
+
     } else if (message.type === 'directory-change') {
       console.log(`[PROXY] Directory change request: ${message.directory}`);
-      
+
       // Convert Windows paths to WSL paths
       let wslPath = message.directory;
       if (message.directory.match(/^[A-Z]:\\/)) {
@@ -618,66 +631,94 @@ class ClaudeProxy {
 
           // Try to load execution log
           const executionLogPath = path.join(baseDir, 'proxy/pipelines', `${message.pipelineId}_execution.json`);
+          console.log(`[PROXY] Looking for execution log at: ${executionLogPath}`);
           const stageOutputs = {}; // Store all stage outputs
+          let executionEvents = []; // Store all events for replay
 
           if (fs.existsSync(executionLogPath)) {
-            const executionLog = fs.readFileSync(executionLogPath, 'utf8');
-            const events = executionLog.trim().split('\n').map(line => JSON.parse(line));
+            console.log(`[PROXY] Execution log found! Loading...`);
+            const executionLogContent = fs.readFileSync(executionLogPath, 'utf8');
+            console.log(`[PROXY] Execution log size: ${executionLogContent.length} bytes`);
 
-            // Convert execution events to chat history AND collect stage outputs
-            for (const event of events) {
-              if (event.eventType === 'stage_completed') {
-                // Store the full output for this stage
-                stageOutputs[event.stageId] = {
-                  stageName: event.stageName,
-                  agent: event.agent,
-                  output: event.output || '',
-                  prompt: event.prompt || '',
-                  outputLength: event.outputLength,
-                  promptLength: event.promptLength,
-                  timestamp: event.timestamp
-                };
+            // Parse execution log - could be JSON array or newline-delimited JSON
+            try {
+              const parsed = JSON.parse(executionLogContent);
+              executionEvents = parsed.events || [];
+              console.log(`[PROXY] Parsed ${executionEvents.length} execution events from JSON`);
+            } catch (e) {
+              // Try newline-delimited JSON
+              console.log(`[PROXY] JSON parse failed, trying newline-delimited format...`);
+              executionEvents = executionLogContent.trim().split('\n').map(line => JSON.parse(line));
+              console.log(`[PROXY] Parsed ${executionEvents.length} execution events from newline-delimited format`);
+            }
+          } else {
+            console.log(`[PROXY] ⚠️ Execution log NOT found at ${executionLogPath}`);
+          }
 
-                chatHistory.push({
-                  type: 'success',
-                  title: `${event.stageName} COMPLETED`,
-                  message: `✅ Stage completed successfully`,
-                  details: `Agent: ${event.agent}\nOutput: ${event.outputLength} characters\nPrompt: ${event.promptLength} characters`,
-                  timestamp: event.timestamp,
-                  output: event.output,
-                  prompt: event.prompt
-                });
-              } else if (event.eventType === 'stage_started') {
-                chatHistory.push({
-                  type: 'info',
-                  title: `${event.stageName} STARTED`,
-                  message: `🔄 Processing with ${event.agent}`,
-                  timestamp: event.timestamp,
-                  prompt: event.prompt
-                });
-              } else if (event.eventType === 'stage_error') {
-                chatHistory.push({
-                  type: 'error',
-                  title: `${event.stageName} ERROR`,
-                  message: `❌ ${event.error}`,
-                  timestamp: event.timestamp,
-                  error: event.error,
-                  stack: event.stack
-                });
-              } else if (event.eventType === 'stage_routed') {
-                chatHistory.push({
-                  type: 'info',
-                  title: 'ROUTING',
-                  message: `➡️ ${event.fromStage} → ${event.toStage}`,
-                  details: `Decision: ${event.decision}\n${event.reasoning}`,
-                  timestamp: event.timestamp
-                });
-              }
+          // Convert execution events to chat history AND collect stage outputs
+          for (const event of executionEvents) {
+            if (event.eventType === 'stage_completed') {
+              // Store the full output for this stage
+              stageOutputs[event.stageId] = {
+                stageName: event.stageName,
+                agent: event.agent,
+                output: event.output || '',
+                prompt: event.prompt || '',
+                outputLength: event.outputLength,
+                promptLength: event.promptLength,
+                timestamp: event.timestamp
+              };
+
+              chatHistory.push({
+                type: 'success',
+                title: `${event.stageName} COMPLETED`,
+                message: `✅ Stage completed successfully`,
+                details: `Agent: ${event.agent}\nOutput: ${event.outputLength} characters\nPrompt: ${event.promptLength} characters`,
+                timestamp: event.timestamp,
+                output: event.output,
+                prompt: event.prompt
+              });
+            } else if (event.eventType === 'stage_started') {
+              chatHistory.push({
+                type: 'info',
+                title: `${event.stageName} STARTED`,
+                message: `🔄 Processing with ${event.agent}`,
+                timestamp: event.timestamp,
+                prompt: event.prompt,
+                stageId: event.stageId,
+                agent: event.agent,
+                stageName: event.stageName
+              });
+            } else if (event.eventType === 'stage_error') {
+              chatHistory.push({
+                type: 'error',
+                title: `${event.stageName} ERROR`,
+                message: `❌ ${event.error}`,
+                timestamp: event.timestamp,
+                error: event.error,
+                stack: event.stack,
+                stageId: event.stageId
+              });
+            } else if (event.eventType === 'stage_routed') {
+              chatHistory.push({
+                type: 'info',
+                title: 'ROUTING',
+                message: `➡️ ${event.fromStage} → ${event.toStage}`,
+                details: `Decision: ${event.decision}\n${event.reasoning}`,
+                timestamp: event.timestamp
+              });
             }
           }
         } catch (err) {
           console.warn(`[PROXY] Error loading pipeline data for reconnect:`, err.message);
+          console.warn(`[PROXY] Stack trace:`, err.stack);
         }
+
+        console.log(`[PROXY] Sending reconnection response with:`);
+        console.log(`  - Chat history entries: ${chatHistory.length}`);
+        console.log(`  - Execution events: ${executionEvents.length}`);
+        console.log(`  - Stage outputs: ${Object.keys(stageOutputs).length}`);
+        console.log(`  - Pipeline data: ${pipelineData ? 'loaded' : 'not found'}`);
 
         ws.send(JSON.stringify({
           type: 'pipeline-reconnected',
@@ -685,7 +726,8 @@ class ClaudeProxy {
           status: 'Connected to running pipeline',
           pipelineData: pipelineData,
           chatHistory: chatHistory,
-          stageOutputs: stageOutputs // Include all stage outputs
+          stageOutputs: stageOutputs, // Include all stage outputs
+          executionEvents: executionEvents // Include raw execution events for detailed replay
         }));
       } else {
         // Check for file-based pipeline states (like CEREBRO)
@@ -717,9 +759,90 @@ class ClaudeProxy {
           if (pipelineFound && pipelineData) {
             // Create a virtual connection for file-based pipelines
             this.pipelineClients.set(message.pipelineId, ws);
-            
+
             // Load any existing outputs/chat history for this pipeline
             const chatHistory = [];
+            const stageOutputs = {}; // Store all stage outputs
+            let executionEvents = []; // Store all events for replay
+
+            // Try to load execution log
+            const executionLogPath = path.join(baseDir, 'proxy/pipelines', `${message.pipelineId}_execution.json`);
+            console.log(`[PROXY] [FILE-BASED] Looking for execution log at: ${executionLogPath}`);
+
+            if (fs.existsSync(executionLogPath)) {
+              console.log(`[PROXY] [FILE-BASED] Execution log found! Loading...`);
+              const executionLogContent = fs.readFileSync(executionLogPath, 'utf8');
+              console.log(`[PROXY] [FILE-BASED] Execution log size: ${executionLogContent.length} bytes`);
+
+              // Parse execution log - could be JSON array or newline-delimited JSON
+              try {
+                const parsed = JSON.parse(executionLogContent);
+                executionEvents = parsed.events || [];
+                console.log(`[PROXY] [FILE-BASED] Parsed ${executionEvents.length} execution events from JSON`);
+              } catch (e) {
+                // Try newline-delimited JSON
+                console.log(`[PROXY] [FILE-BASED] JSON parse failed, trying newline-delimited format...`);
+                executionEvents = executionLogContent.trim().split('\n').map(line => JSON.parse(line));
+                console.log(`[PROXY] [FILE-BASED] Parsed ${executionEvents.length} execution events from newline-delimited format`);
+              }
+
+              // Convert execution events to chat history AND collect stage outputs
+              for (const event of executionEvents) {
+                if (event.eventType === 'stage_completed') {
+                  // Store the full output for this stage
+                  stageOutputs[event.stageId] = {
+                    stageName: event.stageName,
+                    agent: event.agent,
+                    output: event.output || '',
+                    prompt: event.prompt || '',
+                    outputLength: event.outputLength,
+                    promptLength: event.promptLength,
+                    timestamp: event.timestamp
+                  };
+
+                  chatHistory.push({
+                    type: 'success',
+                    title: `${event.stageName} COMPLETED`,
+                    message: `✅ Stage completed successfully`,
+                    details: `Agent: ${event.agent}\nOutput: ${event.outputLength} characters\nPrompt: ${event.promptLength} characters`,
+                    timestamp: event.timestamp,
+                    output: event.output,
+                    prompt: event.prompt
+                  });
+                } else if (event.eventType === 'stage_started') {
+                  chatHistory.push({
+                    type: 'info',
+                    title: `${event.stageName} STARTED`,
+                    message: `🔄 Processing with ${event.agent}`,
+                    timestamp: event.timestamp,
+                    prompt: event.prompt,
+                    stageId: event.stageId,
+                    agent: event.agent,
+                    stageName: event.stageName
+                  });
+                } else if (event.eventType === 'stage_error') {
+                  chatHistory.push({
+                    type: 'error',
+                    title: `${event.stageName} ERROR`,
+                    message: `❌ ${event.error}`,
+                    timestamp: event.timestamp,
+                    error: event.error,
+                    stack: event.stack,
+                    stageId: event.stageId
+                  });
+                } else if (event.eventType === 'stage_routed') {
+                  chatHistory.push({
+                    type: 'info',
+                    title: 'ROUTING',
+                    message: `➡️ ${event.fromStage} → ${event.toStage}`,
+                    details: `Decision: ${event.decision}\n${event.reasoning}`,
+                    timestamp: event.timestamp
+                  });
+                }
+              }
+            } else {
+              console.log(`[PROXY] [FILE-BASED] ⚠️ Execution log NOT found at ${executionLogPath}`);
+            }
             try {
               const outputDir = path.join(baseDir, 'output');
               
@@ -780,13 +903,21 @@ class ClaudeProxy {
             } catch (err) {
               console.warn(`[PROXY] Error loading pipeline outputs:`, err.message);
             }
-            
+
+            console.log(`[PROXY] [FILE-BASED] Sending reconnection response with:`);
+            console.log(`  - Chat history entries: ${chatHistory.length}`);
+            console.log(`  - Execution events: ${executionEvents.length}`);
+            console.log(`  - Stage outputs: ${Object.keys(stageOutputs).length}`);
+            console.log(`  - Pipeline data: ${pipelineData ? 'loaded' : 'not found'}`);
+
             ws.send(JSON.stringify({
               type: 'pipeline-reconnected',
               pipelineId: message.pipelineId,
               status: 'Connected to file-based pipeline',
               pipelineData: pipelineData,
-              chatHistory: chatHistory
+              chatHistory: chatHistory,
+              stageOutputs: stageOutputs, // Include all stage outputs
+              executionEvents: executionEvents // Include raw execution events for detailed replay
             }));
           } else {
             ws.send(JSON.stringify({
@@ -2500,6 +2631,285 @@ Your commentary:`;
     }
   }
 
+  async resumePipeline(pipelineId, ws) {
+    console.log(`[PROXY] Resuming pipeline: ${pipelineId}`);
+
+    try {
+      // Load pipeline state from disk
+      const stateFilePath = path.join(__dirname, 'pipeline-states', `${pipelineId}.json`);
+      if (!fs.existsSync(stateFilePath)) {
+        throw new Error(`Pipeline state file not found: ${pipelineId}`);
+      }
+
+      const pipelineState = JSON.parse(fs.readFileSync(stateFilePath, 'utf8'));
+
+      console.log(`[PROXY] Loaded pipeline state: ${pipelineState.name}`);
+      console.log(`[PROXY] Current stage index: ${pipelineState.currentStageIndex}`);
+      console.log(`[PROXY] Completed stages: ${pipelineState.completedStages.length}`);
+      console.log(`[PROXY] Total stages: ${pipelineState.stages.length}`);
+      console.log(`[PROXY] Status: ${pipelineState.status}`);
+
+      // Update status to running
+      pipelineState.status = 'running';
+      pipelineState.pid = process.pid;
+      await this.savePipelineState(pipelineState);
+
+      // Store pipeline client mapping
+      this.pipelineClients.set(pipelineState.id, ws);
+
+      // Notify client of resume
+      ws.send(JSON.stringify({
+        type: 'pipeline-resumed',
+        pipelineId: pipelineState.id,
+        pipelineName: pipelineState.name,
+        currentStage: pipelineState.currentStage,
+        completedStages: pipelineState.completedStages.length,
+        totalStages: pipelineState.stages.length,
+        startTime: pipelineState.startTime
+      }));
+
+      // Continue execution from where it left off
+      return await this.resumePipelineExecution(pipelineState, ws);
+
+    } catch (error) {
+      console.error(`[PROXY] Failed to resume pipeline ${pipelineId}:`, error);
+      throw error;
+    }
+  }
+
+  async resumePipelineExecution(pipelineState, ws) {
+    console.log(`[PROXY] Resuming execution for pipeline: ${pipelineState.name}`);
+
+    const { stages, connections, userContext, workingDir, currentStageIndex, completedStages, results } = pipelineState;
+
+    // Restore infographic generator
+    const infographic = new InfographicGenerator(pipelineState.id, pipelineState.name);
+    this.pipelineInfographics.set(pipelineState.id, infographic);
+    console.log(`[PROXY] Infographic restored: ${infographic.getInfographicPath()}`);
+
+    // Send infographic URL to client
+    ws.send(JSON.stringify({
+      type: 'infographic-ready',
+      pipelineId: pipelineState.id,
+      infographicPath: infographic.getInfographicPath(),
+      infographicUrl: `file://${infographic.getInfographicPath()}`
+    }));
+
+    // Build stage map
+    const stageMap = {};
+    stages.forEach(stage => stageMap[stage.id] = stage);
+
+    // Find the current stage to resume from
+    let currentStageId = stages[currentStageIndex]?.id;
+    let executionCount = completedStages.length;
+    const maxExecutions = 100;
+
+    console.log(`[PROXY] Resuming from stage index ${currentStageIndex}: ${stages[currentStageIndex]?.name}`);
+    console.log(`[PROXY] Execution count: ${executionCount}`);
+
+    // Send resume notification
+    await this.sendCommentaryUpdate(ws, `Resuming pipeline "${pipelineState.name}" from stage "${stages[currentStageIndex]?.name}". ${executionCount} stages already completed.`, workingDir);
+
+    // Continue the execution loop from where it left off
+    while (currentStageId && executionCount < maxExecutions) {
+      const stage = stageMap[currentStageId];
+      if (!stage) break;
+
+      executionCount++;
+
+      try {
+        console.log(`[PROXY] Executing stage: ${stage.name} (${stage.agent})`);
+
+        // Log stage start
+        this.logPipelineExecution(pipelineState.id, 'stage_started', {
+          executionNumber: executionCount,
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          stageType: stage.type,
+          description: stage.description,
+          inputs: stage.inputs || []
+        });
+
+        // Update pipeline state
+        pipelineState.currentStageIndex = executionCount - 1;
+        pipelineState.currentStage = stage.name;
+        await this.savePipelineState(pipelineState);
+
+        // Send stage start notification
+        ws.send(JSON.stringify({
+          type: 'pipeline-status',
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: stage.agent.toUpperCase(),
+            type: 'stage-start',
+            message: `Starting ${stage.name}`,
+            style: 'focused'
+          }
+        }));
+
+        // Build input for this stage
+        let stageInput = userContext;
+        const stageInputs = stage.inputs || stage.config?.inputs || [];
+        if (stageInputs && stageInputs.length > 0) {
+          stageInput += '\n\nInputs from previous stages:\n';
+          stageInputs.forEach(inputStage => {
+            if (results[inputStage] && inputStage !== stage.id) {
+              stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+            }
+          });
+        }
+
+        // CHECK FOR SUB-PIPELINE EXECUTION
+        if (stage.type === 'sub_pipeline' && stage.config && stage.config.pipeline) {
+          console.log(`[PROXY] Sub-pipeline detected: ${stage.config.pipeline}`);
+
+          const subPipelinePath = path.join(__dirname, '..', 'templates', `${stage.config.pipeline}.json`);
+          if (!fs.existsSync(subPipelinePath)) {
+            throw new Error(`Sub-pipeline template not found: ${stage.config.pipeline}`);
+          }
+
+          const subPipelineTemplate = JSON.parse(fs.readFileSync(subPipelinePath, 'utf8'));
+          const subPipelineContext = stage.config.inheritContext ? userContext : (stage.prompt || userContext);
+          const subPipelineResult = await this.executePipelineStages(subPipelineTemplate, subPipelineContext, workingDir, ws);
+
+          results[stage.id] = JSON.stringify({
+            subPipeline: subPipelineTemplate.name,
+            result: subPipelineResult,
+            status: 'completed'
+          });
+
+          pipelineState.results = results;
+          completedStages.push(stage.id);
+          pipelineState.completedStages = completedStages;
+          await this.savePipelineState(pipelineState);
+
+          const matchingConnection = connections.find(conn => conn.from === stage.id);
+          currentStageId = matchingConnection?.to || null;
+
+          this.logPipelineExecution(pipelineState.id, 'stage_routed', {
+            fromStage: stage.id,
+            toStage: currentStageId,
+            decision: "SUB_PIPELINE_COMPLETED"
+          });
+
+          continue;
+        }
+
+        // Load agent config and build prompt
+        const agentPath = path.join(__dirname, '..', 'agents', `${stage.agent}.json`);
+        let agentPrompt = `You are ${stage.agent.toUpperCase()}. Complete your task.`;
+
+        if (fs.existsSync(agentPath)) {
+          const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
+          if (agentConfig.system_prompt_template) {
+            agentPrompt = agentConfig.system_prompt_template;
+          } else {
+            agentPrompt = agentConfig.systemPrompt || agentPrompt;
+          }
+        }
+
+        // Add decision instructions
+        let availableDecisions = stage.decisions || [];
+        if (availableDecisions.length === 0) {
+          const stageConnections = connections.filter(conn => conn.from === stage.id);
+          availableDecisions = stageConnections.map(conn => ({
+            choice: typeof conn.condition === 'object' ? conn.condition.value : conn.condition,
+            description: conn.description || `Go to ${conn.to}`
+          }));
+        }
+
+        if (availableDecisions.length > 0) {
+          agentPrompt += `\n\n=== ROUTING DECISION REQUIRED ===\n`;
+          agentPrompt += `After your response, you MUST choose exactly ONE decision from:\n`;
+          availableDecisions.forEach(decision => {
+            agentPrompt += `- ${decision.choice}: ${decision.description}\n`;
+          });
+          agentPrompt += `\n**CRITICAL**: Your VERY LAST LINE must be exactly:\n`;
+          agentPrompt += `DECISION: [ONE_OF_THE_ABOVE_CHOICES]\n`;
+          agentPrompt += `Example: DECISION: ${availableDecisions[0].choice}\n`;
+          agentPrompt += `Do NOT add explanations after the decision keyword.\n`;
+        }
+
+        // Execute Claude
+        const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
+        results[stage.id] = result;
+
+        // Log and save
+        this.logPipelineExecution(pipelineState.id, 'stage_completed', {
+          executionNumber: executionCount,
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          output: result,
+          completedStagesCount: completedStages.length + 1
+        });
+
+        pipelineState.results = results;
+        completedStages.push(stage.id);
+        pipelineState.completedStages = completedStages;
+        await this.savePipelineState(pipelineState);
+
+        // Determine next stage (build temporary pipeline object for routing)
+        const tempPipeline = { stages, connections };
+        const decision = this.extractDecision(result);
+        currentStageId = this.determineNextStage(tempPipeline, stage.id, result);
+
+        this.logPipelineExecution(pipelineState.id, 'stage_routed', {
+          fromStage: stage.id,
+          toStage: currentStageId,
+          decision: decision,
+          reasoning: decision ? `Decision "${decision}" matched connection condition` : 'No decision found, using default routing'
+        });
+
+      } catch (error) {
+        console.error(`[PROXY] Stage ${stage.name} failed:`, error);
+
+        this.logPipelineExecution(pipelineState.id, 'stage_error', {
+          stageId: stage.id,
+          stageName: stage.name,
+          agent: stage.agent,
+          error: error.message,
+          stack: error.stack
+        });
+
+        pipelineState.status = 'error';
+        pipelineState.error = error.message;
+        await this.savePipelineState(pipelineState);
+
+        throw error;
+      }
+    }
+
+    // Pipeline completed
+    console.log(`[PROXY] Pipeline ${pipelineState.name} completed with ${executionCount} total stage executions`);
+
+    pipelineState.status = 'completed';
+    pipelineState.endTime = new Date().toISOString();
+    await this.savePipelineState(pipelineState);
+
+    this.logPipelineExecution(pipelineState.id, 'pipeline_completed', {
+      totalStagesRun: executionCount,
+      completedStages: completedStages,
+      duration: Date.now() - new Date(pipelineState.startTime).getTime(),
+      finalResults: Object.keys(results)
+    });
+
+    ws.send(JSON.stringify({
+      type: 'pipeline-completed',
+      pipelineId: pipelineState.id,
+      results: Object.keys(results)
+    }));
+
+    return results;
+  }
+
+  // Helper to get current WebSocket for a pipeline (handles reconnection)
+  getPipelineWebSocket(pipelineId, fallbackWs) {
+    const currentWs = this.pipelineClients.get(pipelineId);
+    return (currentWs && currentWs.readyState === 1) ? currentWs : fallbackWs;
+  }
+
   async executePipelineStages(pipeline, userContext, workingDir, ws) {
     console.log(`[PROXY] Executing ${pipeline.stages?.length || 0} stages for pipeline: ${pipeline.name}`);
 
@@ -2520,6 +2930,9 @@ Your commentary:`;
 
     // Save initial pipeline state
     await this.savePipelineState(pipelineState);
+
+    // Store the initial WebSocket connection
+    this.pipelineClients.set(pipelineState.id, ws);
 
     // Initialize infographic generator for real-time HTML reporting
     const infographic = new InfographicGenerator(pipelineState.id, pipeline.name);
@@ -2619,8 +3032,9 @@ Your commentary:`;
         pipelineState.currentStage = stage.name;
         await this.savePipelineState(pipelineState);
         
-        // Send stage start notification
-        ws.send(JSON.stringify({
+        // Send stage start notification (use current WebSocket in case of reconnection)
+        const currentWs = this.getPipelineWebSocket(pipelineState.id, ws);
+        currentWs.send(JSON.stringify({
           type: 'pipeline-status',
           content: {
             timestamp: new Date().toISOString(),
@@ -2632,7 +3046,7 @@ Your commentary:`;
         }));
 
         // Send stage update for visualization
-        ws.send(JSON.stringify({
+        currentWs.send(JSON.stringify({
           type: 'pipeline-stage-update',
           stageId: stage.id,
           stageName: stage.name,
@@ -2687,8 +3101,9 @@ Your commentary:`;
           const subPipelineTemplate = JSON.parse(fs.readFileSync(subPipelinePath, 'utf8'));
           console.log(`[PROXY] Loaded sub-pipeline: ${subPipelineTemplate.name} with ${subPipelineTemplate.stages.length} stages`);
 
-          // Send notification that we're entering sub-pipeline
-          ws.send(JSON.stringify({
+          // Send notification that we're entering sub-pipeline (use current WebSocket)
+          const subPipelineStartWs = this.getPipelineWebSocket(pipelineState.id, ws);
+          subPipelineStartWs.send(JSON.stringify({
             type: 'pipeline-status',
             content: {
               timestamp: new Date().toISOString(),
@@ -2702,8 +3117,10 @@ Your commentary:`;
 
           await this.sendCommentaryUpdate(ws, `🔀 Entering sub-pipeline: "${subPipelineTemplate.name}". This pipeline has ${subPipelineTemplate.stages.length} stages and will execute nested within the current pipeline.`, workingDir);
 
-          // Execute the sub-pipeline recursively with inherited context
-          const subPipelineContext = stage.config.inheritContext ? stageInput : userContext;
+          // Execute the sub-pipeline with context determined by inheritContext flag
+          // If inheritContext is true, use the full user context
+          // If inheritContext is false, use ONLY the stage's prompt field (targeted, specific prompt)
+          const subPipelineContext = stage.config.inheritContext ? userContext : (stage.prompt || userContext);
           const subPipelineResult = await this.executePipelineStages(subPipelineTemplate, subPipelineContext, workingDir, ws);
 
           // Store sub-pipeline result
@@ -2714,8 +3131,9 @@ Your commentary:`;
             status: 'completed'
           });
 
-          // Send notification that sub-pipeline completed
-          ws.send(JSON.stringify({
+          // Send notification that sub-pipeline completed (use current WebSocket)
+          const subPipelineCompleteWs = this.getPipelineWebSocket(pipelineState.id, ws);
+          subPipelineCompleteWs.send(JSON.stringify({
             type: 'pipeline-status',
             content: {
               timestamp: new Date().toISOString(),
@@ -2743,14 +3161,25 @@ Your commentary:`;
           pipelineState.completedStages.push(stage.id);
           await this.savePipelineState(pipelineState);
 
-          // Continue to next stage based on "complete" decision
-          const decision = 'complete';
-          const connections = pipeline.flow?.connections || pipeline.connections || [];
-          const matchingConnection = connections.find(conn =>
-            conn.from === stage.id && conn.condition === decision
+          // Continue to next stage - for sub-pipelines, use PARENT pipeline's connections (from pipelineState)
+          // NOT the sub-pipeline's connections (from pipeline parameter)
+          const parentConnections = pipelineState.connections || [];
+          const matchingConnection = parentConnections.find(conn =>
+            conn.from === stage.id
           );
 
           currentStageId = matchingConnection?.to || null;
+          console.log(`[PROXY] Sub-pipeline complete. Next stage: ${currentStageId || 'END'}`);
+          console.log(`[PROXY] [DEBUG] Found ${parentConnections.length} parent connections, matching connection for ${stage.id}:`, matchingConnection);
+
+          // Log routing decision for sub-pipeline completion
+          this.logPipelineExecution(pipelineState.id, 'stage_routed', {
+            fromStage: stage.id,
+            toStage: currentStageId,
+            decision: "SUB_PIPELINE_COMPLETED",
+            reasoning: "Sub-pipeline completed successfully, automatically routing to next stage in parent pipeline"
+          });
+
           continue; // Skip to next iteration
         }
 
@@ -2799,11 +3228,15 @@ Your commentary:`;
         }
         
         if (availableDecisions.length > 0) {
-          agentPrompt += `\n\nIMPORTANT: End your response with exactly one of these decisions:\n`;
+          agentPrompt += `\n\n=== ROUTING DECISION REQUIRED ===\n`;
+          agentPrompt += `After your response, you MUST choose exactly ONE decision from:\n`;
           availableDecisions.forEach(decision => {
-            agentPrompt += `- DECISION: ${decision.choice} (${decision.description})\n`;
+            agentPrompt += `- ${decision.choice}: ${decision.description}\n`;
           });
-          agentPrompt += `\nFormat: End with "DECISION: [YOUR_CHOICE]" on the last line.`;
+          agentPrompt += `\n**CRITICAL**: Your VERY LAST LINE must be exactly:\n`;
+          agentPrompt += `DECISION: [ONE_OF_THE_ABOVE_CHOICES]\n`;
+          agentPrompt += `Example: DECISION: ${availableDecisions[0].choice}\n`;
+          agentPrompt += `Do NOT add explanations after the decision keyword.\n`;
         }
 
         // DEBUG: Log what prompt is being sent
@@ -2827,8 +3260,9 @@ Your commentary:`;
           totalExecutions: executionCount
         });
 
-        // Send agent output to UI
-        ws.send(JSON.stringify({
+        // Send agent output to UI (use current WebSocket)
+        const agentOutputWs = this.getPipelineWebSocket(pipelineState.id, ws);
+        agentOutputWs.send(JSON.stringify({
           type: 'agent-output',
           content: {
             timestamp: new Date().toISOString(),
@@ -2844,8 +3278,9 @@ Your commentary:`;
         pipelineState.completedStages.push(stage.id);
         await this.savePipelineState(pipelineState);
 
-        // Send stage complete notification
-        ws.send(JSON.stringify({
+        // Send stage complete notification (use current WebSocket)
+        const stageCompleteWs = this.getPipelineWebSocket(pipelineState.id, ws);
+        stageCompleteWs.send(JSON.stringify({
           type: 'pipeline-status',
           content: {
             timestamp: new Date().toISOString(),
@@ -2856,8 +3291,8 @@ Your commentary:`;
           }
         }));
 
-        // Send stage completion update for visualization
-        ws.send(JSON.stringify({
+        // Send stage completion update for visualization (use current WebSocket)
+        stageCompleteWs.send(JSON.stringify({
           type: 'pipeline-stage-update',
           stageId: stage.id,
           stageName: stage.name,
@@ -2866,8 +3301,8 @@ Your commentary:`;
           output: result ? result.substring(0, 300) + (result.length > 300 ? '...' : '') : null
         }));
 
-        // Send pipeline update for game dev studio
-        ws.send(JSON.stringify({
+        // Send pipeline update for game dev studio (use current WebSocket)
+        stageCompleteWs.send(JSON.stringify({
           type: 'pipeline-update',
           message: `Completed: ${stage.name}`,
           progress: {
@@ -2913,7 +3348,8 @@ Your commentary:`;
           stack: error.stack
         });
 
-        ws.send(JSON.stringify({
+        const stageErrorWs = this.getPipelineWebSocket(pipelineState.id, ws);
+        stageErrorWs.send(JSON.stringify({
           type: 'pipeline-status',
           content: {
             timestamp: new Date().toISOString(),
@@ -2924,8 +3360,8 @@ Your commentary:`;
           }
         }));
 
-        // Send stage error update for visualization
-        ws.send(JSON.stringify({
+        // Send stage error update for visualization (use current WebSocket)
+        stageErrorWs.send(JSON.stringify({
           type: 'pipeline-stage-update',
           stageId: stage.id,
           stageName: stage.name,
@@ -2943,8 +3379,9 @@ Your commentary:`;
     pipelineState.endTime = new Date().toISOString();
     await this.savePipelineState(pipelineState);
 
-    // Send pipeline completed notification for game dev studio
-    ws.send(JSON.stringify({
+    // Send pipeline completed notification for game dev studio (use current WebSocket)
+    const pipelineCompletedWs = this.getPipelineWebSocket(pipelineState.id, ws);
+    pipelineCompletedWs.send(JSON.stringify({
       type: 'pipeline-completed',
       pipelineId: pipelineState.id,
       pipelineName: pipeline.name,
@@ -2987,8 +3424,9 @@ Your commentary:`;
           if (result.success) {
             console.log('[PROXY] Story report generated:', result.storyPath);
 
-            // Notify client that story is ready
-            ws.send(JSON.stringify({
+            // Notify client that story is ready (use current WebSocket)
+            const storyReadyWs = this.getPipelineWebSocket(pipelineState.id, ws);
+            storyReadyWs.send(JSON.stringify({
               type: 'story-report-ready',
               pipelineId: pipelineState.id,
               storyPath: result.storyPath,
