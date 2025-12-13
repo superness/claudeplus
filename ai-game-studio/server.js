@@ -446,11 +446,16 @@ wss.on('connection', (ws) => {
 
 // Broadcast to clients subscribed to a project
 function broadcastToProject(projectId, message) {
+  let sentCount = 0;
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN && clientProjects.get(client) === projectId) {
       client.send(JSON.stringify(message));
+      sentCount++;
     }
   });
+  if (message.type === 'pipeline-progress' || message.type === 'agent-output') {
+    console.log(`[WS] Broadcast ${message.type} to ${sentCount} clients for ${projectId}`);
+  }
 }
 
 // ============================================
@@ -487,6 +492,10 @@ queueService.on('queue-updated', (data) => {
 
 queueService.on('pipeline-progress', (data) => {
   broadcastToProject(data.projectId, { type: 'pipeline-progress', ...data });
+});
+
+queueService.on('agent-output', (data) => {
+  broadcastToProject(data.projectId, { type: 'agent-output', ...data });
 });
 
 queueService.on('game-updated', (data) => {

@@ -192,6 +192,39 @@ class QueueService {
   }
 
   /**
+   * Find the latest pipeline execution log for a specific project
+   */
+  findLatestPipelineLogForProject(projectId) {
+    try {
+      const files = fs.readdirSync(PROXY_PIPELINES_DIR)
+        .filter(f => f.endsWith('_execution.json'))
+        .map(f => ({
+          name: f,
+          path: path.join(PROXY_PIPELINES_DIR, f),
+          mtime: fs.statSync(path.join(PROXY_PIPELINES_DIR, f)).mtime
+        }))
+        .sort((a, b) => b.mtime - a.mtime);
+
+      // Find the most recent log that contains this project ID
+      for (const file of files) {
+        try {
+          const content = fs.readFileSync(file.path, 'utf8');
+          if (content.includes(projectId)) {
+            return file.path;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      // No matching log found - don't fallback to other projects
+      return null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
    * Parse pipeline log for progress
    */
   parsePipelineProgress(logPath) {
@@ -202,9 +235,12 @@ class QueueService {
 
       // Find latest stage info
       let currentStage = null;
+      let currentAgent = null;
       let completedCount = 0;
       let totalStages = 24; // Default for living-game-world
       let lastEventTime = null;
+      let lastCompletedOutput = null;
+      let lastCompletedAgent = null;
 
       for (const event of events) {
         if (event.eventType === 'pipeline_initialized' && event.totalStages) {
@@ -212,9 +248,16 @@ class QueueService {
         }
         if (event.eventType === 'stage_started') {
           currentStage = event.stageName || event.stageId;
+          currentAgent = event.agent;
         }
         if (event.eventType === 'stage_completed') {
           completedCount++;
+          // Capture the output (up to 3000 chars for reasonable display)
+          if (event.output) {
+            lastCompletedOutput = event.output.substring(0, 3000);
+            if (event.output.length > 3000) lastCompletedOutput += '\n\n[... truncated, see full output in pipeline story]';
+          }
+          lastCompletedAgent = event.agent;
         }
         // Track the most recent event timestamp
         if (event.timestamp) {
@@ -224,10 +267,13 @@ class QueueService {
 
       return {
         currentStage,
+        currentAgent,
         completedCount,
         totalStages,
         progress: Math.round((completedCount / totalStages) * 100),
-        lastEventTime
+        lastEventTime,
+        lastCompletedOutput,
+        lastCompletedAgent
       };
     } catch (err) {
       return null;
@@ -242,15 +288,18 @@ class QueueService {
     this.stopProgressPolling(projectId);
 
     let lastProgress = null;
+    let lastOutputKey = null;
+
+    console.log(`[QueueService] Starting progress polling for ${projectId} (${phase})`);
 
     const interval = setInterval(() => {
-      const logPath = this.findLatestPipelineLog();
+      const logPath = this.findLatestPipelineLogForProject(projectId);
       if (!logPath) return;
 
       const progress = this.parsePipelineProgress(logPath);
       if (!progress) return;
 
-      // Only emit if changed
+      // Emit stage change
       const progressKey = `${progress.currentStage}-${progress.completedCount}`;
       if (progressKey !== lastProgress) {
         lastProgress = progressKey;
@@ -259,10 +308,26 @@ class QueueService {
           projectId,
           phase,
           currentStage: progress.currentStage,
+          currentAgent: progress.currentAgent,
           completedCount: progress.completedCount,
           totalStages: progress.totalStages,
           progress: progress.progress,
-          message: `${phase === 'design' ? 'Designing' : 'Building'}: ${progress.currentStage} (${progress.completedCount}/${progress.totalStages})`
+          message: `${phase === 'design' ? 'Designing' : 'Building'}: ${progress.currentStage} (step ${progress.completedCount})`
+        });
+      }
+
+      // Emit agent output when a stage completes (commentator message)
+      const outputKey = `${progress.lastCompletedAgent}-${progress.completedCount}`;
+      if (progress.lastCompletedOutput && outputKey !== lastOutputKey) {
+        lastOutputKey = outputKey;
+
+        this.emit('agent-output', {
+          projectId,
+          phase,
+          agent: progress.lastCompletedAgent,
+          output: progress.lastCompletedOutput,
+          completedCount: progress.completedCount,
+          totalStages: progress.totalStages
         });
       }
     }, 2000); // Poll every 2 seconds

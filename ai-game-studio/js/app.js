@@ -852,6 +852,11 @@ function handleWebSocketMessage(msg) {
       handlePipelineProgress(msg);
       break;
 
+    case 'agent-output':
+      // Agent completed with output (commentator message)
+      handleAgentOutput(msg);
+      break;
+
     case 'queue-updated':
       loadQueue();
       break;
@@ -863,6 +868,62 @@ function handleWebSocketMessage(msg) {
       updateProjectStatus('error');
       break;
   }
+}
+
+// Handle agent output (commentator messages)
+function handleAgentOutput(msg) {
+  if (!msg.output) return;
+
+  // Format agent name nicely
+  const agentName = msg.agent?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Agent';
+
+  // Mark any in-progress stage messages as complete
+  document.querySelectorAll('.stage-message .stage-icon.in-progress').forEach(icon => {
+    icon.classList.remove('in-progress');
+    icon.classList.add('completed');
+    icon.textContent = '✓';
+  });
+
+  // Create a collapsible commentator message
+  addAgentMessage(agentName, msg.output, msg.completedCount, msg.totalStages);
+}
+
+// Add an agent commentator message to chat
+function addAgentMessage(agentName, output, completed, total) {
+  const messagesEl = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-message agent-message';
+
+  // Truncate output for initial display, show full on click
+  const shortOutput = output.length > 300 ? output.substring(0, 300) + '...' : output;
+  const hasMore = output.length > 300;
+
+  div.innerHTML = `
+    <div class="agent-header">
+      <span class="agent-icon">🤖</span>
+      <span class="agent-name">${escapeHtml(agentName)}</span>
+      <span class="agent-progress">Step ${completed}</span>
+    </div>
+    <div class="agent-content ${hasMore ? 'truncated' : ''}">${escapeHtml(shortOutput)}</div>
+    ${hasMore ? '<button class="expand-btn">Show full output</button>' : ''}
+  `;
+
+  // Add expand functionality
+  if (hasMore) {
+    const btn = div.querySelector('.expand-btn');
+    const content = div.querySelector('.agent-content');
+    let expanded = false;
+    btn.addEventListener('click', () => {
+      expanded = !expanded;
+      content.textContent = expanded ? output : shortOutput;
+      content.classList.toggle('truncated', !expanded);
+      content.classList.toggle('expanded', expanded);
+      btn.textContent = expanded ? 'Show less' : 'Show full output';
+    });
+  }
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // Handle real-time pipeline progress updates
