@@ -1,0 +1,195 @@
+# Feature Definition: Persistent Ship Fitting System
+
+## Feature Name
+**Persistent Ship Fitting with Event-Driven Save**
+
+## User Story
+As a player, I want my ship's fitted modules to persist between page reloads so that I don't have to re-fit my ship every time I refresh or revisit the game.
+
+## Description
+Implement a persistence layer for the ship fitting system that saves the current ship's fitted modules to localStorage immediately whenever the player fits or removes a module. On page load, the system will restore the previously fitted modules to their correct slots, recreating the player's ship configuration from the last session.
+
+This feature uses an **event-driven save approach**: every time a player performs a fit/unfit action, the game immediately serializes and saves the current fitting state. This ensures zero data loss and eliminates the need for periodic auto-save intervals.
+
+## Acceptance Criteria
+
+### Core Functionality
+✓ **Immediate Save on Fit**: When a player fits a module to their ship, the complete fitting state is saved to localStorage within the same action handler
+✓ **Immediate Save on Remove**: When a player removes a module from their ship, the updated fitting state is saved to localStorage within the same action handler
+✓ **State Restoration on Load**: When the page loads, the system reads the saved fitting state from localStorage and restores all fitted modules to their correct slots
+✓ **Slot Position Preservation**: Each fitted module's slot position (high slot, mid slot, low slot, rig slot) is preserved and restored correctly
+✓ **Module Identification**: Modules are uniquely identified so the correct module instances are restored (not duplicates or wrong items)
+✓ **Ship-Specific Storage**: Fitting state is associated with the current ship (so different ships can have different fittings stored)
+
+### Data Integrity
+✓ **Valid JSON Storage**: Saved data is valid JSON that can be parsed without errors
+✓ **Graceful Degradation**: If localStorage is unavailable or corrupted, the game continues to function without crashes (fitting works, just doesn't persist)
+✓ **Missing Module Handling**: If a saved module no longer exists in the game data, skip it gracefully without breaking restoration
+✓ **Empty State Handling**: If no fitting data exists (first load), initialize with empty fitting slots without errors
+
+### User Experience
+✓ **No Loading Delay**: Fitting restoration happens quickly during page initialization (< 500ms)
+✓ **Visual Feedback**: Restored modules appear in the fitting UI immediately when opened
+✓ **Inventory Sync**: Fitted modules are correctly removed from inventory on restoration (avoid duplication)
+✓ **Transparent Operation**: Save/load happens automatically with no user-facing save/load buttons required
+
+## Scope
+
+### In Scope
+- Save fitted module data to localStorage on every fit/remove action
+- Store module identifiers, slot types, and slot positions
+- Restore fitting state on page load/game initialization
+- Handle ship-specific fitting storage (associate with current ship ID/type)
+- Graceful error handling for localStorage failures
+- Validation of restored module data
+
+### Out of Scope
+- Auto-save intervals or periodic background saves (explicitly avoided per requirements)
+- Cloud save or server-side persistence (client-side only)
+- Fitting history or undo/redo functionality
+- Multiple saved fitting loadouts per ship (only current fitting persists)
+- Cross-browser or cross-device synchronization
+- Encryption or security of saved data
+- Migration of old save formats (this is initial implementation)
+
+## Affected Systems
+
+### Primary Files to Modify
+1. **`js/ui/ShipFittingUI.js`**
+   - Add save calls to fit/remove action handlers
+   - Implement `saveFittingState()` method
+   - Implement `loadFittingState()` method
+   - Hook restoration into UI initialization
+
+2. **`js/systems/ShipFittingManager.js`** (if exists)
+   - May need to expose fitting state serialization methods
+   - Ensure fitting state can be queried as a data structure
+
+3. **`js/SpaceshipSimulator.js`** or main game initialization
+   - Call fitting restoration during game startup
+   - Ensure fitting UI is initialized before restoration
+
+### Secondary Systems Impacted
+- **Inventory System**: Fitted modules must be removed from inventory on restoration
+- **Ship System**: Current ship state must be queryable for ship-specific storage
+- **localStorage Management**: May need utility functions for safe read/write
+
+## Dependencies
+
+### Required Systems
+- Ship fitting system must be operational (`ShipFittingUI.js` functional)
+- Inventory system must track module instances
+- Ship entity must have stable identifiers (ship type or ship ID)
+- Browser localStorage API available
+
+### Data Dependencies
+- Module data structure must include unique identifiers (module type, module ID, or name)
+- Slot structure must be defined (high/mid/low/rig slots with positions)
+- Fitting constraints (CPU/Power) must be re-validated on restoration
+
+## Technical Implementation Details
+
+### Storage Schema
+```javascript
+{
+  "shipFitting": {
+    "shipType": "Atron", // or ship ID
+    "fittedModules": [
+      {
+        "moduleId": "mining_laser_i",
+        "moduleName": "Mining Laser I",
+        "slotType": "high", // high, mid, low, rig
+        "slotIndex": 0,
+        "moduleData": { /* full module stats */ }
+      },
+      // ... more fitted modules
+    ],
+    "timestamp": 1234567890, // optional: last save time
+    "version": 1 // optional: save format version
+  }
+}
+```
+
+### Save Trigger Points
+- **Fit Action**: `fitModule(module, slot)` → `saveFittingState()`
+- **Remove Action**: `removeModule(slot)` → `saveFittingState()`
+- **Ship Change**: If player changes ships, save current ship's fitting before switching
+
+### Restoration Flow
+```
+1. Page load → SpaceshipSimulator initialization
+2. Load localStorage key "shipFitting"
+3. Parse JSON (with try-catch)
+4. Validate ship type matches current ship
+5. For each fittedModule:
+   - Find module in game data
+   - Validate slot availability
+   - Fit module to slot
+   - Remove from inventory
+6. Update fitting UI display
+7. Recalculate CPU/Power usage
+```
+
+## Edge Cases
+
+### Storage Edge Cases
+1. **localStorage Full**: What happens if localStorage quota exceeded?
+   - Handle gracefully, log warning, continue without persistence
+2. **Corrupted Data**: What if saved JSON is malformed?
+   - Catch parse errors, clear corrupted data, start fresh
+3. **Browser Privacy Mode**: localStorage disabled in private browsing?
+   - Detect and handle gracefully, game still playable
+
+### Restoration Edge Cases
+4. **Module No Longer Exists**: Saved module type removed from game data?
+   - Skip that module, restore others successfully
+5. **Slot Mismatch**: Saved fitting has more slots than current ship?
+   - Only restore modules that fit current ship's slot layout
+6. **Insufficient Resources**: Not enough inventory items to restore?
+   - Restore what's available, skip missing modules
+7. **Constraint Violations**: Restored fitting exceeds CPU/Power after game balance changes?
+   - Restore anyway (let player fix it), or fail gracefully with notification
+
+### Gameplay Edge Cases
+8. **Ship Switch During Session**: Player changes ships mid-session?
+   - Save old ship's fitting, load new ship's fitting
+9. **Module Stacking**: Can same module type be fitted multiple times?
+   - Ensure restoration handles duplicate module types correctly
+10. **First Load**: No saved data exists?
+    - Initialize empty fitting, save after first fit action
+
+## Testing Checklist
+
+### Manual Testing
+- [ ] Fit a module → Reload page → Module still fitted
+- [ ] Remove a module → Reload page → Module removed
+- [ ] Fit multiple modules → Reload page → All modules restored
+- [ ] Change ship type → Reload page → Correct ship's fitting loaded
+- [ ] Clear localStorage → Reload page → Game initializes with empty fitting (no crash)
+- [ ] Fit module → Manually corrupt localStorage JSON → Reload → Game handles gracefully
+
+### Automated Testing (Future)
+- Unit test: `saveFittingState()` produces valid JSON
+- Unit test: `loadFittingState()` handles missing keys
+- Unit test: Module restoration matches saved data
+- Integration test: Full fit→save→load→verify cycle
+
+## Success Metrics
+- **Zero Data Loss**: 100% of fit/remove actions result in successful save
+- **Fast Restoration**: Fitting state restores in < 500ms on page load
+- **Error Resilience**: No crashes even with corrupted or missing localStorage data
+- **User Satisfaction**: Players no longer need to re-fit ships after every reload
+
+## Documentation Requirements
+- Add JSDoc comments to `saveFittingState()` and `loadFittingState()` methods
+- Update `CLAUDE.md` with persistence feature notes
+- Optional: Add developer notes about localStorage schema to README
+
+---
+
+## Implementation Notes
+The previous implementation attempt got stuck with auto-save intervals. This specification deliberately avoids that complexity by using **synchronous, immediate saves** triggered directly in the fit/remove action handlers. This is simpler, more reliable, and guarantees data consistency without timing issues.
+
+---
+
+DECISION: feature_defined

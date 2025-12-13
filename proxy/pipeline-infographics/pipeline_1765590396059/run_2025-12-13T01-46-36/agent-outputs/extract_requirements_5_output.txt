@@ -1,0 +1,369 @@
+Now I have read all the design documents. Let me compile the comprehensive requirements extraction, clearly separating what exists in the docs from what needs to be proposed as new design.
+
+---
+
+## Feature: Henchmen/Heroes System
+
+### SECTION 1: EXTRACTED REQUIREMENTS (From Design Documents)
+
+#### 1.1 Party System Constraints (From `api-specification.md` and `data-model.md`)
+
+**QUOTE from `api-specification.md:1410-1417`:**
+```json
+{
+  "party_type": "OPEN",
+  "max_members": 4
+}
+```
+
+**QUOTE from `data-model.md:1277-1279`:**
+```sql
+party_type VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- OPEN, FRIENDS, PRIVATE
+max_members INTEGER DEFAULT 4,
+```
+
+**Specification:** Party maximum is **4 players**.
+
+---
+
+#### 1.2 Summon Mechanics (From `combat-design.md`)
+
+**QUOTE from `combat-design.md:336-337`:**
+```
+**Summon Limit:** 2 active constructs maximum
+```
+
+**QUOTE from `combat-design.md:346-349`:**
+```
+CYBERNETICA LINE (Summons)
+├── Servo-Skull: Summon scout drone, 15 sec CD, 15 energy
+│   └── Reveals enemies, 60 HP, 60 sec duration
+├── Gun Servitor: Summon combat drone, 30 sec CD, 25 energy
+│   └── 80 DPS, 200 HP, 45 sec duration
+├── Kataphron Breacher: Summon heavy, 45 sec CD, 35 energy
+│   └── 120 DPS, 400 HP, 30 sec duration, 2-summon limit enforced
+└── Knight Crusader: Summon walker, 120 sec CD, 50 energy
+    └── 200 DPS, 800 HP, 30 sec duration, replaces other summons
+```
+
+**QUOTE from `combat-design.md:473-474`:**
+```
+├── Deploy Drone: Summon recon drone, 20 sec CD, 15 energy
+│   └── Marks enemies, 100 HP, 30 sec duration (counts toward 2-summon limit)
+```
+
+**QUOTE from `combat-design.md:521-522`:**
+```
+├── Drone Swarm: Summon 3 gun drones, 25 sec CD, 30 energy
+│   └── 40 DPS each, 80 HP each, 20 sec duration (counts as 1 toward limit)
+```
+
+**Specification:**
+- Maximum 2 combat summons + 1 utility summon per player
+- Tech-Priest/Pathfinder/Crisis Suit already have summon skills
+- Summons have stats: HP, DPS, Duration
+
+---
+
+#### 1.3 Existing Ally/Support Skills (From `combat-design.md`)
+
+**QUOTE from `combat-design.md:576-581` (Water Caste Diplomat):**
+```
+COMBAT LINE (NEW - Solo Viability)
+├── Tactical Analysis: 50 damage + mark target, 4 sec CD, 8 energy
+│   └── Marked targets take +10% damage from all sources
+├── Coordinated Strike: 80 damage, +50% if ally attacked target recently, 8 sec CD, 15 energy
+│   └── Enables solo damage when paired with drone
+├── Drone Relay: Summon combat drone, 20 sec CD, 20 energy
+│   └── 60 DPS, 150 HP, 30 sec duration, drone attacks marked targets
+```
+
+**Specification:** Water Caste Diplomat's Drone Relay provides a reference for henchman-like companion - **60 DPS, 150 HP, 30 sec duration, attacks marked targets**.
+
+---
+
+#### 1.4 Enemy Template Structure (From `data-model.md`)
+
+**QUOTE from `data-model.md:1151-1189`:**
+```sql
+CREATE TABLE enemy_templates (
+    template_id         SERIAL PRIMARY KEY,
+    enemy_code          VARCHAR(50) NOT NULL UNIQUE,
+    display_name        VARCHAR(100) NOT NULL,
+    faction_id          INTEGER REFERENCES factions(faction_id),
+    enemy_type          VARCHAR(20) NOT NULL,  -- COMMON, ELITE, BOSS, MINI_BOSS, WORLD_BOSS
+    enemy_tags          VARCHAR(50)[],         -- ['DAEMON', 'ARMORED', 'PSYCHIC', etc.]
+    base_health         INTEGER NOT NULL,
+    base_armor          INTEGER NOT NULL,
+    base_dps            INTEGER NOT NULL,
+    min_level           INTEGER DEFAULT 1,
+    max_level           INTEGER DEFAULT 30,
+    ai_behavior         VARCHAR(50),           -- AGGRESSIVE, DEFENSIVE, SUPPORT, etc.
+    abilities           INTEGER[],             -- Skill IDs this enemy can use
+    ...
+);
+```
+
+**Specification:** Enemy template structure can be adapted for henchmen/hero templates.
+
+---
+
+#### 1.5 Current Enemy Classification (From `data-model.md`)
+
+**QUOTE from `data-model.md:1160`:**
+```sql
+enemy_type VARCHAR(20) NOT NULL,  -- COMMON, ELITE, BOSS, MINI_BOSS, WORLD_BOSS
+```
+
+**Current Design:** Uses COMMON, ELITE, BOSS, MINI_BOSS, WORLD_BOSS classification.
+
+**User Requested:** minoris/majoris/extremis/terminus (white/blue/yellow/purple) from Darktide.
+
+**NOTE:** This is a NEW DESIGN REQUEST - not extracted from existing docs.
+
+---
+
+#### 1.6 Character Attributes (From `combat-design.md`)
+
+**QUOTE from `combat-design.md:45-52`:**
+```
+| Attribute | Effect | Soft Cap | Hard Cap |
+|-----------|--------|----------|----------|
+| Strength | +1% melee damage per 10 | 200 | 400 |
+| Ballistics | +1% ranged damage per 10 | 200 | 400 |
+| Toughness | +1% health per 10, +0.5% armor per 10 | 200 | 400 |
+| Willpower | +1% ability damage per 10, +1% condition duration | 200 | 400 |
+| Initiative | +1% attack speed per 10, +0.5% movement per 10 | 200 | 400 |
+| Faith/Unity/WAAAGH! | Faction resource regeneration | 150 | 300 |
+```
+
+**Specification:** Henchmen/heroes should use the same attribute system.
+
+---
+
+#### 1.7 Health Formula (From `combat-design.md`)
+
+**QUOTE from `combat-design.md:56-61`:**
+```
+Health = 200 + (Level × 20) + (Toughness × 5)
+├── Level 1: 220-320 HP
+├── Level 20: 600-900 HP
+└── Level 30 (cap): 800-1200 HP
+```
+
+---
+
+#### 1.8 Existing NPC Ally Types Referenced
+
+**QUOTE from `combat-design.md:709-710` (Kommando):**
+```
+├── Distraction Grot: Summon decoy, 20 sec CD, 18 energy
+│   └── Enemies attack decoy for 5 seconds
+```
+
+**Specification:** Gretchin already exist as a decoy summon in Kommando skills.
+
+---
+
+#### 1.9 Group Content Design (From `combat-design.md`)
+
+**QUOTE from `combat-design.md:1074-1094`:**
+```
+GROUP ENCOUNTER TEMPLATE
+
+Trash Pack:
+├── 6-10 common enemies with 1-2 elites
+├── Tank can gather, DPS can AoE
+├── Support manages conditions
+└── ~2 minutes per pack
+
+Elite Encounter:
+├── 2-3 elites with supporting commons
+├── Requires target priority decisions
+├── Tank/support split attention
+└── ~3-4 minutes per encounter
+
+Boss Encounter:
+├── Single boss with add phases
+├── Tank: Positioning and threat
+├── DPS: Burst windows and mechanics
+├── Support: Healing and cleansing
+└── 5-15 minutes depending on difficulty
+```
+
+**Specification:** Content designed for 4-player parties with defined roles.
+
+---
+
+#### 1.10 Solo Content Design (From `combat-design.md`)
+
+**QUOTE from `combat-design.md:1050-1069`:**
+```
+SOLO ENCOUNTER TEMPLATE
+
+Standard Fight (1-3 minutes):
+├── 3-5 common enemies OR 1 elite
+├── Clear space with minimal adds
+├── Healing opportunity after fight
+└── Resource drop to sustain consumables
+
+Mini-Boss (3-5 minutes):
+├── Single powerful enemy with mechanic
+├── Mechanic must be avoidable through skill
+├── Phase transition at 50% HP
+└── Checkpoint after completion
+
+Boss (5-10 minutes):
+├── Multi-phase encounter
+├── Each phase introduces new mechanic
+├── Phases: Learn → Execute → Survive
+└── Generous rewards for completion
+```
+
+---
+
+### SECTION 2: USER-REQUESTED FEATURES (From User Input)
+
+The user explicitly stated:
+- "Henchman fit in perfectly to the 40k system"
+- "Make sure to use henchmen/heroes"
+- "Small tactical missions on rails where you just murder hordes of enemies"
+- "minoris, majoris, extremis, terminus classifications"
+- "white, blue, yellow, purple enemies"
+
+---
+
+### SECTION 3: PROPOSED NEW DESIGN (Not in Docs - Requires Design Decisions)
+
+#### 3.1 Henchman System (PROPOSED)
+
+**Purpose:** Fill empty party slots with AI-controlled NPCs for solo/small group play.
+
+**PROPOSED Henchman Properties:**
+| Property | Proposed Value | Rationale |
+|----------|---------------|-----------|
+| Stats | ~70-80% of equivalent player class | Must be worse than real players |
+| Skill Bar | Fixed 4-skill loadout per type | Simple AI, no customization |
+| AI Behavior | Follow player, auto-target player's target | GW1-style behavior |
+| Acquisition | Available in hub cities | Low barrier to entry |
+| Cost | Free to hire, maintenance through consumables | Accessible for solo |
+
+**PROPOSED Henchman Types (Per Faction):**
+
+**Imperial:**
+- Guardsman Conscript (Ranged DPS)
+- Hospitaller (Healer)
+- Ogryn Bodyguard (Tank)
+- Tech-Adept (Support/Summons)
+
+**Tau:**
+- Fire Caste Shas'la (Ranged DPS)
+- Earth Caste Medic (Healer)
+- Kroot Carnivore (Melee DPS)
+- Drone Controller (Support)
+
+**Ork:**
+- Grot Mob (Ranged, swarm)
+- Painboy (Healer, crude)
+- Slugga Boy (Melee DPS)
+- Mekboy (Support)
+
+---
+
+#### 3.2 Hero System (PROPOSED)
+
+**Purpose:** Named, customizable NPC companions with story ties.
+
+**PROPOSED Hero Properties:**
+| Property | Proposed Value | Rationale |
+|----------|---------------|-----------|
+| Stats | 85-95% of player equivalent | Better than henchmen, still below players |
+| Skill Bar | Player-configurable 8-skill bar | Customization depth |
+| AI Behavior | Role-based (tank/dps/support), user configurable | Tactical flexibility |
+| Acquisition | Quest rewards, story completion | Feel earned |
+| Progression | Gain XP, level with player | Investment grows |
+
+**PROPOSED Number:** 2-3 heroes per faction, earned through story progression.
+
+---
+
+#### 3.3 Threat Tier System (PROPOSED - User Requested)
+
+**User's Request:** minoris/majoris/extremis/terminus (white/blue/yellow/purple)
+
+**PROPOSED Classification:**
+| Tier | Color | Design Intent | HP Multiplier | Damage Multiplier |
+|------|-------|---------------|---------------|-------------------|
+| MINORIS | White | Fodder, swarm | 0.5x | 0.5x |
+| MAJORIS | Blue | Standard enemy | 1.0x | 1.0x |
+| EXTREMIS | Yellow | Elite/Special | 2.0x | 1.5x |
+| TERMINUS | Purple | Boss-tier | 5.0x+ | 2.0x |
+
+**Mapping to Existing System:**
+- MINORIS → Replaces "COMMON" (weak variant)
+- MAJORIS → Maps to "COMMON" (standard)
+- EXTREMIS → Maps to "ELITE"
+- TERMINUS → Maps to "BOSS" / "MINI_BOSS"
+
+**DECISION REQUIRED:** Replace existing enemy_type or add as parallel classification?
+
+---
+
+### SECTION 4: IMPLEMENTATION CHECKLIST
+
+#### 4.1 Database Requirements
+- [ ] Create `henchman_templates` table
+- [ ] Create `hero_templates` table
+- [ ] Create `character_heroes` junction table
+- [ ] Add `threat_tier` enum (if approved)
+- [ ] Update `enemy_templates` with threat_tier column
+
+#### 4.2 API Requirements
+- [ ] GET `/api/v1/henchmen` - list available henchmen
+- [ ] POST `/api/v1/parties/{party_id}/henchmen` - add henchman to party
+- [ ] GET `/api/v1/characters/{character_id}/heroes` - list owned heroes
+- [ ] PUT `/api/v1/characters/{character_id}/heroes/{hero_id}/skills` - configure hero skills
+- [ ] WebSocket: Hero/Henchman state updates in combat
+
+#### 4.3 Client Requirements
+- [ ] Henchman selection UI (hub city)
+- [ ] Hero management screen (skill bar, equipment)
+- [ ] Party frame showing henchmen/heroes
+- [ ] AI companion rendering and animations
+- [ ] Threat tier color coding on enemy nameplates
+
+#### 4.4 AI Requirements
+- [ ] Henchman AI behavior: follow, target player's target, use skill rotation
+- [ ] Hero AI behavior: configurable roles (aggressive/defensive/support)
+- [ ] Threat response: prioritize based on tier
+
+#### 4.5 Balance Requirements
+- [ ] Henchman stats: 70-80% of player equivalent
+- [ ] Hero stats: 85-95% of player equivalent
+- [ ] Content tuning: Solo with henchmen viable but slower than group
+- [ ] Threat tier stat multipliers validated
+
+---
+
+### SECTION 5: DESIGN DECISIONS NEEDED FROM USER
+
+1. **Henchman Stats:** Should henchmen be 70-80% player power, or different ratio?
+
+2. **Hero Customization:** Full 8-skill bar like GW1, or reduced (4-6 skills)?
+
+3. **Threat Tier Integration:** 
+   - Replace existing COMMON/ELITE/BOSS system?
+   - Add as parallel classification (both systems coexist)?
+   - Only visual indicator (color) without mechanical changes?
+
+4. **Hero Count per Faction:** 2-3 heroes per faction, or more?
+
+5. **Party Composition Rules:**
+   - Can a 4-player party include henchmen? (GW1: No)
+   - Maximum henchmen in solo play? (GW1: Fill remaining slots)
+
+6. **Progression:** Do heroes level independently or match player level?
+
+---
+
+DECISION: requirements_extracted

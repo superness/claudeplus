@@ -1,0 +1,565 @@
+## Database Architecture for MineBox Platform
+
+Based on the thesis document, I'll design a comprehensive database architecture to support MineBox's multi-coin hobbyist mining infrastructure platform.
+
+---
+
+## Data Model Overview
+
+### Core Domain Entities
+
+The MineBox platform requires databases for:
+1. **User/Account Management** - Hobbyist miners, subscriptions, authentication
+2. **Node Infrastructure** - Multi-coin daemon configurations, snapshots, sync status
+3. **Mining Operations** - Stratum connections, share submissions, block discoveries
+4. **Snapshot Service** - Snapshot metadata, verification hashes, download tracking
+5. **Analytics/Telemetry** - Performance metrics, uptime, profitability calculations
+
+---
+
+## Conceptual Data Model
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│     USERS       │────<│  SUBSCRIPTIONS  │>────│  SNAPSHOT_PLANS │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                       │
+        │                       │
+        ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│   DEVICES       │────<│  DEVICE_COINS   │
+│  (Raspberry Pi) │     │  (active nodes) │
+└─────────────────┘     └─────────────────┘
+        │                       │
+        │                       ▼
+        │               ┌─────────────────┐
+        │               │     COINS       │
+        │               │ (SHA256 alts)   │
+        │               └─────────────────┘
+        │                       │
+        ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│    MINERS       │     │   SNAPSHOTS     │
+│   (Bitaxe)      │     │  (blockchain)   │
+└─────────────────┘     └─────────────────┘
+        │                       │
+        ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│    SHARES       │     │ SNAPSHOT_CHUNKS │
+└─────────────────┘     └─────────────────┘
+        │
+        ▼
+┌─────────────────┐
+│    BLOCKS       │
+│  (discovered)   │
+└─────────────────┘
+```
+
+---
+
+## Physical Schema Design (PostgreSQL)
+
+### Users & Authentication
+
+```sql
+-- Core user accounts
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    display_name VARCHAR(100),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    email_verified BOOLEAN DEFAULT FALSE,
+    last_login_at TIMESTAMPTZ,
+    preferences JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_created_at ON users(created_at);
+
+-- Subscription management
+CREATE TABLE subscription_plans (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,           -- 'free', 'hobbyist', 'enthusiast'
+    monthly_price_cents INTEGER NOT NULL,
+    snapshot_downloads_per_month INTEGER, -- NULL = unlimited
+    coins_supported INTEGER,              -- max coins per device
+    priority_support BOOLEAN DEFAULT FALSE,
+    features JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE TABLE subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    plan_id INTEGER REFERENCES subscription_plans(id),
+    status VARCHAR(20) DEFAULT 'active',  -- active, cancelled, expired
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    stripe_subscription_id VARCHAR(255),
+    UNIQUE(user_id)
+);
+
+CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
+CREATE INDEX idx_subscriptions_status ON subscriptions(status);
+```
+
+### Coin Configuration
+
+```sql
+-- Supported SHA256 coins
+CREATE TABLE coins (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(10) UNIQUE NOT NULL,    -- 'BTC', 'BSV', 'BTCZ'
+    name VARCHAR(100) NOT NULL,
+    algorithm VARCHAR(50) DEFAULT 'sha256d',
+    is_active BOOLEAN DEFAULT TRUE,
+    
+    -- Network parameters
+    default_rpc_port INTEGER,
+    default_p2p_port INTEGER,
+    default_stratum_port INTEGER,
+    
+    -- Profitability metrics (updated regularly)
+    current_difficulty NUMERIC(30, 8),
+    network_hashrate NUMERIC(30, 0),
+    block_reward NUMERIC(20, 8),
+    block_time_seconds INTEGER,
+    
+    -- Storage requirements
+    blockchain_size_gb NUMERIC(10, 2),
+    growth_rate_gb_per_month NUMERIC(6, 2),
+    
+    -- Daemon configuration
+    daemon_config_template JSONB,
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Expected block discovery times (pre-calculated)
+CREATE TABLE coin_profitability (
+    id SERIAL PRIMARY KEY,
+    coin_id INTEGER REFERENCES coins(id),
+    hashrate_ths NUMERIC(10, 4),           -- Bitaxe hashrate in TH/s
+    expected_blocks_per_year NUMERIC(10, 4),
+    expected_revenue_usd_per_year NUMERIC(12, 2),
+    calculated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_coin_profitability_coin ON coin_profitability(coin_id);
+```
+
+### Device & Node Management
+
+```sql
+-- User devices (Raspberry Pi deployments)
+CREATE TABLE devices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(100),
+    hardware_type VARCHAR(50) DEFAULT 'raspberry_pi_5',
+    
+    -- Device identification
+    device_fingerprint VARCHAR(255) UNIQUE,
+    last_seen_at TIMESTAMPTZ,
+    ip_address INET,
+    
+    -- Status
+    status VARCHAR(20) DEFAULT 'provisioning', -- provisioning, online, offline
+    version VARCHAR(20),                        -- MineBox software version
+    
+    -- Hardware metrics
+    storage_total_gb INTEGER,
+    storage_used_gb INTEGER,
+    memory_total_mb INTEGER,
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_devices_user ON devices(user_id);
+CREATE INDEX idx_devices_status ON devices(status);
+
+-- Coins configured on each device
+CREATE TABLE device_coins (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
+    coin_id INTEGER REFERENCES coins(id),
+    
+    -- Node status
+    sync_status VARCHAR(20) DEFAULT 'pending', -- pending, syncing, synced, error
+    sync_progress_percent NUMERIC(5, 2),
+    block_height INTEGER,
+    
+    -- Stratum configuration
+    stratum_enabled BOOLEAN DEFAULT TRUE,
+    stratum_port INTEGER,
+    
+    -- RPC configuration
+    rpc_port INTEGER,
+    rpc_user VARCHAR(100),
+    rpc_password_encrypted BYTEA,
+    
+    -- Snapshot used
+    snapshot_id UUID,
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    UNIQUE(device_id, coin_id)
+);
+
+CREATE INDEX idx_device_coins_device ON device_coins(device_id);
+CREATE INDEX idx_device_coins_coin ON device_coins(coin_id);
+CREATE INDEX idx_device_coins_status ON device_coins(sync_status);
+```
+
+### Miner Management
+
+```sql
+-- Connected mining hardware
+CREATE TABLE miners (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id UUID REFERENCES devices(id) ON DELETE CASCADE,
+    
+    -- Miner identification
+    name VARCHAR(100),
+    hardware_type VARCHAR(50),              -- 'bitaxe_ultra', 'bitaxe_hex', etc.
+    worker_name VARCHAR(100),
+    
+    -- Connection info
+    last_connected_at TIMESTAMPTZ,
+    connection_status VARCHAR(20) DEFAULT 'disconnected',
+    connected_coin_id INTEGER REFERENCES coins(id),
+    
+    -- Performance metrics
+    hashrate_ths NUMERIC(10, 4),
+    shares_submitted_total BIGINT DEFAULT 0,
+    shares_valid_total BIGINT DEFAULT 0,
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_miners_device ON miners(device_id);
+CREATE INDEX idx_miners_status ON miners(connection_status);
+
+-- Share submissions (partitioned by time)
+CREATE TABLE shares (
+    id BIGSERIAL,
+    miner_id UUID NOT NULL,
+    coin_id INTEGER NOT NULL,
+    device_coin_id UUID NOT NULL,
+    
+    -- Share data
+    share_diff NUMERIC(30, 8) NOT NULL,
+    network_diff NUMERIC(30, 8),
+    nonce BYTEA,
+    extra_nonce BYTEA,
+    
+    -- Validation
+    is_valid BOOLEAN NOT NULL,
+    is_block BOOLEAN DEFAULT FALSE,
+    error_code VARCHAR(50),
+    
+    submitted_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (id, submitted_at)
+) PARTITION BY RANGE (submitted_at);
+
+-- Create monthly partitions
+CREATE TABLE shares_2024_01 PARTITION OF shares
+    FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
+-- ... additional partitions
+
+CREATE INDEX idx_shares_miner ON shares(miner_id, submitted_at);
+CREATE INDEX idx_shares_coin ON shares(coin_id, submitted_at);
+CREATE INDEX idx_shares_is_block ON shares(is_block) WHERE is_block = TRUE;
+```
+
+### Block Discovery
+
+```sql
+-- Discovered blocks (the exciting part!)
+CREATE TABLE blocks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    coin_id INTEGER REFERENCES coins(id),
+    device_id UUID REFERENCES devices(id),
+    miner_id UUID REFERENCES miners(id),
+    share_id BIGINT,
+    
+    -- Block data
+    block_hash VARCHAR(64) NOT NULL,
+    block_height INTEGER NOT NULL,
+    block_reward NUMERIC(20, 8),
+    block_reward_usd NUMERIC(12, 2),     -- At time of discovery
+    
+    -- Verification
+    confirmations INTEGER DEFAULT 0,
+    is_orphaned BOOLEAN DEFAULT FALSE,
+    is_mature BOOLEAN DEFAULT FALSE,
+    
+    -- Timing
+    discovered_at TIMESTAMPTZ DEFAULT NOW(),
+    confirmed_at TIMESTAMPTZ,
+    
+    UNIQUE(coin_id, block_hash)
+);
+
+CREATE INDEX idx_blocks_coin ON blocks(coin_id);
+CREATE INDEX idx_blocks_device ON blocks(device_id);
+CREATE INDEX idx_blocks_discovered ON blocks(discovered_at);
+CREATE INDEX idx_blocks_orphaned ON blocks(is_orphaned);
+```
+
+### Snapshot Infrastructure
+
+```sql
+-- Blockchain snapshots (core monetization)
+CREATE TABLE snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    coin_id INTEGER REFERENCES coins(id),
+    
+    -- Snapshot metadata
+    version INTEGER NOT NULL,
+    block_height INTEGER NOT NULL,
+    block_hash VARCHAR(64) NOT NULL,
+    
+    -- Size and storage
+    size_bytes BIGINT NOT NULL,
+    compressed_size_bytes BIGINT NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    
+    -- Cryptographic verification
+    merkle_root VARCHAR(64) NOT NULL,      -- For chunk verification
+    utxo_set_hash VARCHAR(64),             -- UTXO commitment
+    checksum_sha256 VARCHAR(64) NOT NULL,
+    
+    -- Status
+    status VARCHAR(20) DEFAULT 'generating', -- generating, available, deprecated
+    is_current BOOLEAN DEFAULT FALSE,
+    
+    -- S3/Storage location
+    storage_bucket VARCHAR(255),
+    storage_prefix VARCHAR(255),
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    deprecated_at TIMESTAMPTZ,
+    
+    UNIQUE(coin_id, block_height)
+);
+
+CREATE INDEX idx_snapshots_coin ON snapshots(coin_id);
+CREATE INDEX idx_snapshots_current ON snapshots(coin_id, is_current) WHERE is_current = TRUE;
+
+-- Snapshot chunks for resumable downloads
+CREATE TABLE snapshot_chunks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    snapshot_id UUID REFERENCES snapshots(id) ON DELETE CASCADE,
+    
+    chunk_index INTEGER NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    checksum_sha256 VARCHAR(64) NOT NULL,
+    storage_key VARCHAR(255) NOT NULL,
+    
+    UNIQUE(snapshot_id, chunk_index)
+);
+
+CREATE INDEX idx_snapshot_chunks_snapshot ON snapshot_chunks(snapshot_id);
+
+-- Download tracking (for billing and analytics)
+CREATE TABLE snapshot_downloads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    snapshot_id UUID REFERENCES snapshots(id),
+    user_id UUID REFERENCES users(id),
+    device_id UUID REFERENCES devices(id),
+    
+    -- Download progress
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    chunks_downloaded INTEGER DEFAULT 0,
+    bytes_downloaded BIGINT DEFAULT 0,
+    
+    -- Verification
+    verification_passed BOOLEAN,
+    verified_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_snapshot_downloads_user ON snapshot_downloads(user_id);
+CREATE INDEX idx_snapshot_downloads_snapshot ON snapshot_downloads(snapshot_id);
+CREATE INDEX idx_snapshot_downloads_month ON snapshot_downloads(user_id, started_at);
+```
+
+### Telemetry & Analytics
+
+```sql
+-- Device performance metrics (time-series, consider InfluxDB for production)
+CREATE TABLE device_metrics (
+    device_id UUID NOT NULL,
+    recorded_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    -- System metrics
+    cpu_usage_percent NUMERIC(5, 2),
+    memory_usage_percent NUMERIC(5, 2),
+    disk_usage_percent NUMERIC(5, 2),
+    temperature_celsius NUMERIC(5, 2),
+    
+    -- Network metrics
+    network_in_bytes BIGINT,
+    network_out_bytes BIGINT,
+    
+    -- Per-coin daemon status
+    daemon_status JSONB,    -- {coin_symbol: {synced: true, height: 123456}}
+    
+    PRIMARY KEY (device_id, recorded_at)
+);
+
+-- Partition by time for efficient retention
+SELECT create_hypertable('device_metrics', 'recorded_at', 
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE);
+
+-- Aggregated mining statistics
+CREATE TABLE mining_stats_daily (
+    id SERIAL PRIMARY KEY,
+    device_id UUID NOT NULL,
+    coin_id INTEGER NOT NULL,
+    stat_date DATE NOT NULL,
+    
+    shares_submitted BIGINT DEFAULT 0,
+    shares_valid BIGINT DEFAULT 0,
+    shares_invalid BIGINT DEFAULT 0,
+    blocks_found INTEGER DEFAULT 0,
+    
+    avg_hashrate_ths NUMERIC(10, 4),
+    uptime_percent NUMERIC(5, 2),
+    
+    UNIQUE(device_id, coin_id, stat_date)
+);
+
+CREATE INDEX idx_mining_stats_device ON mining_stats_daily(device_id, stat_date);
+```
+
+---
+
+## Indexing Strategy
+
+### Primary Query Patterns
+
+1. **User dashboard**: Device status, mining stats, block discoveries
+2. **Snapshot downloads**: Current snapshots per coin, download tracking
+3. **Share processing**: High-volume insert, periodic aggregation
+4. **Block verification**: Confirmation updates, orphan detection
+
+### Key Indexes
+
+```sql
+-- Composite indexes for common queries
+CREATE INDEX idx_device_coins_active 
+    ON device_coins(device_id, coin_id) 
+    WHERE sync_status = 'synced';
+
+CREATE INDEX idx_shares_recent 
+    ON shares(miner_id, submitted_at DESC) 
+    WHERE submitted_at > NOW() - INTERVAL '24 hours';
+
+CREATE INDEX idx_blocks_user_recent 
+    ON blocks(device_id, discovered_at DESC);
+
+-- Partial index for active subscriptions
+CREATE INDEX idx_subscriptions_active 
+    ON subscriptions(user_id) 
+    WHERE status = 'active';
+```
+
+---
+
+## Scalability Considerations
+
+### Partitioning Strategy
+
+1. **Shares table**: Partition by month (high-volume writes)
+2. **Device metrics**: TimescaleDB hypertable with daily chunks
+3. **Snapshot downloads**: Partition by quarter for billing queries
+
+### Read Replicas
+
+```
+Primary (writes) ──────► Read Replica 1 (dashboard queries)
+                  └────► Read Replica 2 (analytics/reporting)
+```
+
+### Connection Pooling
+
+- PgBouncer for connection management
+- Target: 50 connections per Pi device, pooled to 500 max DB connections
+
+---
+
+## Security Implementation
+
+```sql
+-- Row-level security for multi-tenant isolation
+ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY devices_user_isolation ON devices
+    USING (user_id = current_setting('app.current_user_id')::uuid);
+
+-- Encrypt sensitive fields
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- RPC passwords stored encrypted
+-- Decryption handled in application layer with user-specific keys
+```
+
+---
+
+## Backup Strategy
+
+| Component | RPO | RTO | Method |
+|-----------|-----|-----|--------|
+| User data | 1 hour | 4 hours | WAL streaming + daily snapshots |
+| Share data | 24 hours | 8 hours | Daily backups (reconstructable) |
+| Snapshots metadata | 1 hour | 2 hours | Same as user data |
+| Metrics | 7 days | 24 hours | Weekly exports to cold storage |
+
+---
+
+## Revenue-Critical Queries
+
+```sql
+-- Monthly snapshot downloads per user (billing)
+SELECT 
+    u.id,
+    u.email,
+    sp.name as plan,
+    sp.snapshot_downloads_per_month as limit,
+    COUNT(sd.id) as downloads_this_month
+FROM users u
+JOIN subscriptions s ON s.user_id = u.id
+JOIN subscription_plans sp ON sp.id = s.plan_id
+LEFT JOIN snapshot_downloads sd ON sd.user_id = u.id 
+    AND sd.started_at >= DATE_TRUNC('month', CURRENT_DATE)
+GROUP BY u.id, u.email, sp.name, sp.snapshot_downloads_per_month;
+
+-- Block discovery leaderboard (community engagement)
+SELECT 
+    u.display_name,
+    c.symbol,
+    COUNT(b.id) as blocks_found,
+    SUM(b.block_reward) as total_rewards
+FROM blocks b
+JOIN devices d ON d.id = b.device_id
+JOIN users u ON u.id = d.user_id
+JOIN coins c ON c.id = b.coin_id
+WHERE b.is_orphaned = FALSE
+GROUP BY u.display_name, c.symbol
+ORDER BY blocks_found DESC;
+```
+
+---
+
+This database architecture supports MineBox's core value proposition: making multi-coin solo mining accessible to hobbyists through snapshot-accelerated synchronization, while enabling the subscription-based business model through granular download tracking and usage metering.
+
+DECISION: completed: Go to fullstack_developer

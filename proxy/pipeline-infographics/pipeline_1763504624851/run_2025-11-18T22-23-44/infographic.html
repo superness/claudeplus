@@ -1,0 +1,2912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: Feature Development Pipeline V1</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+    <div class="completion-banner">
+      <h2>✅ Pipeline Completed Successfully</h2>
+      <p>Total execution time: 689.7s</p>
+    </div>
+    
+
+    
+    <div class="ai-summary">
+      <h2>📊 AI-Generated Executive Summary</h2>
+      <div class="summary-narrative">
+        This Feature Development Pipeline V1 pipeline execution processed 5 stages over 689.7 seconds. The pipeline began with Feature Definition using the feature_definer agent. 5 routing decisions were made during execution, directing the workflow through different stages based on agent outputs. ✅ All stages completed successfully with no errors. Agents produced 47,657 characters of output in response to 27,989 characters of prompts.
+      </div>
+    </div>
+    
+
+    <div class="header">
+      <h1>Feature Development Pipeline V1</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1763504624851</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">689.7s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">5/5</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">✅ Complete</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Feature Definition</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Define feature specifications and acceptance criteria</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">feature_definer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">92.7s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">2,489 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">11,781 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(2,489 characters)</span></div>
+        <button class="collapsible" data-target="prompt_define_feature_1">Click to expand prompt from feature_definer</button>
+        <div class="collapsible-content" id="prompt_define_feature_1">
+          <pre class="code-content">You are a Feature Definer that creates detailed feature specifications.
+
+Your job is to turn vague feature requests into clear, testable specifications.
+
+Definition process:
+1. **Understand the request**:
+   - What does the user want?
+   - Why do they want it?
+   - What problem does it solve?
+
+2. **Define the feature clearly**:
+   - What exactly will this feature do?
+   - How will users interact with it?
+   - What are the boundaries (what it does NOT do)?
+
+3. **Create acceptance criteria**:
+   - Specific, testable conditions for &quot;done&quot;
+   - Observable behaviors
+   - Edge cases to handle
+
+4. **Identify affected systems**:
+   - Which files/modules need changes?
+   - What existing features might be impacted?
+   - Are there dependencies?
+
+Example:
+```
+Request: &quot;Add a minimap to the game&quot;
+
+Feature Definition:
+- Display a small map in top-right corner showing player position
+- Show nearby ships as dots (friendly=green, enemy=red)
+- Update in real-time as player moves
+- Clickable to center camera on clicked location
+- Toggle on/off with M key
+
+Acceptance Criteria:
+✓ Minimap appears in top-right corner (200x200px)
+✓ Player ship shown as blue triangle
+✓ Other ships shown as colored dots
+✓ Map updates at 10 FPS minimum
+✓ Clicking minimap centers main camera
+✓ M key toggles visibility
+✓ Works in all game scenes (space, station, combat)
+```
+
+Output format:
+```json
+{
+  &quot;featureName&quot;: &quot;Minimap System&quot;,
+  &quot;userStory&quot;: &quot;As a player, I want to see a minimap so that I can navigate space more easily&quot;,
+  &quot;description&quot;: &quot;Detailed explanation of what the feature does&quot;,
+  &quot;acceptanceCriteria&quot;: [
+    &quot;Minimap displays in top-right corner&quot;,
+    &quot;Shows player position as blue triangle&quot;,
+    &quot;Updates in real-time during movement&quot;,
+    &quot;Toggleable with M key&quot;
+  ],
+  &quot;scope&quot;: {
+    &quot;inScope&quot;: [&quot;Display player position&quot;, &quot;Show nearby ships&quot;, &quot;Toggle visibility&quot;],
+    &quot;outOfScope&quot;: [&quot;Zoom controls&quot;, &quot;Detailed terrain&quot;, &quot;Mission markers&quot;]
+  },
+  &quot;affectedSystems&quot;: [&quot;UI&quot;, &quot;rendering&quot;, &quot;input&quot;],
+  &quot;dependencies&quot;: [&quot;Requires ship position tracking&quot;, &quot;Canvas rendering system&quot;],
+  &quot;edgeCases&quot;: [
+    &quot;What happens when no ships nearby?&quot;,
+    &quot;How to handle map boundaries?&quot;,
+    &quot;Performance with 100+ ships?&quot;
+  ]
+}
+```
+
+IMPORTANT: End your response with: DECISION: feature_defined
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: feature_defined (Feature clearly defined with acceptance criteria)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(11,781 characters)</span></div>
+        <button class="collapsible" data-target="output_define_feature_1">Click to expand output from feature_definer</button>
+        <div class="collapsible-content" id="output_define_feature_1">
+          <pre class="code-content">Perfect! Now I have a comprehensive understanding of the codebase. Let me create the detailed feature specification:
+
+```json
+{
+  &quot;featureName&quot;: &quot;Reset Player State (Debug Menu)&quot;,
+  &quot;userStory&quot;: &quot;As a developer/tester, I want to reset all player state to initial values via the debug menu so that I can quickly test the game from a fresh start without clearing browser storage manually&quot;,
+  
+  &quot;description&quot;: &quot;Add a &#039;Reset Player State&#039; button to the existing debug menu (DebugMenu.js) that completely resets the player back to a fresh game state. This includes resetting player position, velocity, resources, credits, skills, ship fitting, inventory, progression, and all localStorage data. The feature will show a confirmation dialog before executing to prevent accidental resets. After reset, the game should be in the same state as a first-time player.&quot;,
+  
+  &quot;acceptanceCriteria&quot;: [
+    &quot;A new button labeled &#039;⚠️ Reset Player State&#039; appears in the Debug Menu under a new &#039;SYSTEM&#039; section&quot;,
+    &quot;Button is styled with warning/danger colors (red/orange) to indicate destructive action&quot;,
+    &quot;Clicking the button shows a confirmation dialog with clear warning text&quot;,
+    &quot;Confirmation dialog has &#039;Cancel&#039; and &#039;Confirm Reset&#039; buttons&quot;,
+    &quot;Cancel button closes dialog without any changes&quot;,
+    &quot;Confirm Reset button triggers complete state reset&quot;,
+    &quot;Reset clears all localStorage keys (superstarships_savegame, superstarships_savegame_backup, etc.)&quot;,
+    &quot;Reset resets player ship position to origin (0, 0, 0)&quot;,
+    &quot;Reset resets player ship velocity to zero&quot;,
+    &quot;Reset resets economy credits to starting amount (e.g., 5000 credits)&quot;,
+    &quot;Reset clears all player resources/inventory&quot;,
+    &quot;Reset clears all ship fitting modules back to default&quot;,
+    &quot;Reset clears skill progression back to initial state&quot;,
+    &quot;Reset clears station docking state&quot;,
+    &quot;Reset triggers a notification &#039;Player state reset - Starting fresh!&#039;&quot;,
+    &quot;After reset, the debug menu automatically closes&quot;,
+    &quot;Reset does NOT require page reload (state updated in-memory)&quot;,
+    &quot;SaveGameManager.markDirty() is called after reset to trigger auto-save&quot;,
+    &quot;Console logs confirmation message: &#039;Player state completely reset&#039;&quot;,
+    &quot;Works regardless of current game state (in space, docked, in combat, etc.)&quot;
+  ],
+  
+  &quot;scope&quot;: {
+    &quot;inScope&quot;: [
+      &quot;Add Reset Player State button to debug menu UI&quot;,
+      &quot;Create confirmation dialog with warning styling&quot;,
+      &quot;Clear all localStorage game save data&quot;,
+      &quot;Reset player ship position and velocity&quot;,
+      &quot;Reset economy credits to initial value&quot;,
+      &quot;Clear all resources and inventory&quot;,
+      &quot;Reset ship fitting to default configuration&quot;,
+      &quot;Reset skill system to initial state&quot;,
+      &quot;Clear station docking state&quot;,
+      &quot;Show notification after reset&quot;,
+      &quot;Console logging for debugging&quot;,
+      &quot;Trigger save system after reset&quot;
+    ],
+    &quot;outOfScope&quot;: [
+      &quot;Resetting Three.js scene (asteroids, stations remain spawned)&quot;,
+      &quot;Resetting universe/cluster generation state&quot;,
+      &quot;Resetting game settings/preferences (graphics, controls)&quot;,
+      &quot;Partial reset options (reset only economy, only skills, etc.)&quot;,
+      &quot;Undo functionality for reset&quot;,
+      &quot;Import/export save functionality&quot;,
+      &quot;Multiple save slot management&quot;,
+      &quot;Reset history or logging&quot;,
+      &quot;Backup creation before reset (existing backups will be cleared)&quot;,
+      &quot;Reset confirmation via keyboard shortcut&quot;
+    ]
+  },
+  
+  &quot;affectedSystems&quot;: [
+    &quot;js/debug/DebugMenu.js - Add new button, confirmation dialog, and resetPlayerState() method&quot;,
+    &quot;js/systems/SaveGameManager.js - May need getInitialState() helper method&quot;,
+    &quot;js/systems/EconomyManager.js - Reset credits to initial value&quot;,
+    &quot;js/systems/ResourceManager.js - Clear all resources&quot;,
+    &quot;js/systems/ShipFittingManager.js - Reset to default fitting&quot;,
+    &quot;js/systems/SkillSystem.js - Reset skill progression&quot;,
+    &quot;js/systems/StationManager.js - Clear docking state&quot;,
+    &quot;localStorage - Clear all game save keys&quot;,
+    &quot;css/debug-menu.css - Add warning/danger button styles&quot;
+  ],
+  
+  &quot;dependencies&quot;: [
+    &quot;Requires existing DebugMenu.js and debug menu infrastructure&quot;,
+    &quot;Requires SaveGameManager.js for save data management&quot;,
+    &quot;Requires EconomyManager, ResourceManager, ShipFittingManager to have reset/clear methods or access to initial state&quot;,
+    &quot;Requires playerShip to exist for position/velocity reset&quot;,
+    &quot;Requires HUDManager for notification display&quot;
+  ],
+  
+  &quot;technicalImplementation&quot;: {
+    &quot;files&quot;: [
+      {
+        &quot;path&quot;: &quot;js/debug/DebugMenu.js&quot;,
+        &quot;changes&quot;: [
+          &quot;Add new &#039;SYSTEM&#039; section in createMenu() HTML&quot;,
+          &quot;Add &#039;Reset Player State&#039; button with warning styling&quot;,
+          &quot;Add bindDebugButtons() listener for reset button&quot;,
+          &quot;Create resetPlayerState() method&quot;,
+          &quot;Create showResetConfirmation() method for dialog&quot;,
+          &quot;Create confirmationDialog HTML element with backdrop&quot;,
+          &quot;Style confirmation dialog with warning colors&quot;
+        ]
+      },
+      {
+        &quot;path&quot;: &quot;css/debug-menu.css&quot;,
+        &quot;changes&quot;: [
+          &quot;Add .debug-btn-warning class (red/orange colors)&quot;,
+          &quot;Add .debug-confirmation-dialog styles&quot;,
+          &quot;Add .confirmation-backdrop styles&quot;,
+          &quot;Add button hover/active states for warning buttons&quot;
+        ]
+      }
+    ],
+    &quot;methods&quot;: [
+      {
+        &quot;name&quot;: &quot;resetPlayerState()&quot;,
+        &quot;location&quot;: &quot;DebugMenu.js&quot;,
+        &quot;description&quot;: &quot;Main reset method that orchestrates complete state reset&quot;,
+        &quot;steps&quot;: [
+          &quot;Clear localStorage (all save keys)&quot;,
+          &quot;Reset player ship position to (0, 0, 0)&quot;,
+          &quot;Reset player ship velocity to (0, 0, 0)&quot;,
+          &quot;Call economyManager.resetToInitial() or set credits to initial amount&quot;,
+          &quot;Call resourceManager.clearAllResources()&quot;,
+          &quot;Call shipFittingManager.resetToDefault()&quot;,
+          &quot;Call skillSystem.reset() if exists&quot;,
+          &quot;Reset station docking state&quot;,
+          &quot;Call saveGameManager.markDirty()&quot;,
+          &quot;Show notification&quot;,
+          &quot;Close debug menu&quot;,
+          &quot;Console log success&quot;
+        ]
+      },
+      {
+        &quot;name&quot;: &quot;showResetConfirmation()&quot;,
+        &quot;location&quot;: &quot;DebugMenu.js&quot;,
+        &quot;description&quot;: &quot;Display confirmation dialog before reset&quot;,
+        &quot;implementation&quot;: &quot;Create/show modal dialog with warning text and Cancel/Confirm buttons&quot;
+      }
+    ]
+  },
+  
+  &quot;edgeCases&quot;: [
+    &quot;What if player is currently docked at a station? (Reset should undock and move to origin)&quot;,
+    &quot;What if player is in combat with active targets? (Clear targets, reset to peaceful state)&quot;,
+    &quot;What if player has active mining/exploration in progress? (Stop all active operations)&quot;,
+    &quot;What if saveGameManager doesn&#039;t exist? (Still reset in-memory state, log warning)&quot;,
+    &quot;What if some managers (skillSystem, etc.) are null/undefined? (Skip with null checks)&quot;,
+    &quot;What if localStorage is disabled/full? (Still reset in-memory state)&quot;,
+    &quot;What if reset is triggered during auto-save? (Wait for save to complete or force override)&quot;,
+    &quot;What if user clicks reset button multiple times rapidly? (Debounce/disable button during reset)&quot;,
+    &quot;What if confirmation dialog is already open? (Don&#039;t open multiple dialogs)&quot;,
+    &quot;What if user presses ESC while confirmation dialog is open? (Close dialog = Cancel)&quot;
+  ],
+  
+  &quot;testing&quot;: {
+    &quot;manual&quot;: [
+      &quot;Open debug menu (Left Control key)&quot;,
+      &quot;Verify &#039;Reset Player State&#039; button exists in SYSTEM section&quot;,
+      &quot;Verify button has warning/danger styling&quot;,
+      &quot;Click reset button&quot;,
+      &quot;Verify confirmation dialog appears with warning message&quot;,
+      &quot;Click &#039;Cancel&#039; - verify dialog closes, no changes occur&quot;,
+      &quot;Click reset button again&quot;,
+      &quot;Click &#039;Confirm Reset&#039; - verify:&quot;,
+      &quot;  - Player ship teleported to origin (0,0,0)&quot;,
+      &quot;  - Velocity is zero&quot;,
+      &quot;  - Credits reset to initial amount&quot;,
+      &quot;  - All resources cleared&quot;,
+      &quot;  - Ship fitting reset to default&quot;,
+      &quot;  - Notification appears&quot;,
+      &quot;  - Debug menu closes&quot;,
+      &quot;  - Console shows success message&quot;,
+      &quot;Open debug menu again - verify changes persisted&quot;,
+      &quot;Close/reopen browser - verify reset state persisted&quot;
+    ],
+    &quot;automated&quot;: [
+      &quot;Could create test_reset_player_state.js to verify reset functionality&quot;,
+      &quot;Test localStorage clearing&quot;,
+      &quot;Test in-memory state reset&quot;,
+      &quot;Test confirmation dialog behavior&quot;
+    ]
+  },
+  
+  &quot;uiMockup&quot;: {
+    &quot;debugMenuSection&quot;: {
+      &quot;title&quot;: &quot;SYSTEM&quot;,
+      &quot;buttons&quot;: [
+        {
+          &quot;icon&quot;: &quot;⚠️&quot;,
+          &quot;text&quot;: &quot;Reset Player State&quot;,
+          &quot;style&quot;: &quot;warning/danger (red/orange)&quot;,
+          &quot;action&quot;: &quot;Show confirmation dialog&quot;
+        }
+      ]
+    },
+    &quot;confirmationDialog&quot;: {
+      &quot;backdrop&quot;: &quot;Semi-transparent overlay&quot;,
+      &quot;panel&quot;: &quot;Centered dialog box with warning colors&quot;,
+      &quot;title&quot;: &quot;⚠️ Reset Player State&quot;,
+      &quot;message&quot;: &quot;This will completely reset ALL player progress:\n• Position and velocity\n• Credits and resources\n• Ship fitting and modules\n• Skills and progression\n• All saved data\n\nThis action cannot be undone.\n\nAre you sure?&quot;,
+      &quot;buttons&quot;: [
+        {
+          &quot;text&quot;: &quot;Cancel&quot;,
+          &quot;style&quot;: &quot;secondary/gray&quot;
+        },
+        {
+          &quot;text&quot;: &quot;Confirm Reset&quot;,
+          &quot;style&quot;: &quot;danger/red&quot;
+        }
+      ]
+    }
+  },
+  
+  &quot;implementationNotes&quot;: {
+    &quot;initial_values&quot;: {
+      &quot;credits&quot;: 5000,
+      &quot;position&quot;: { &quot;x&quot;: 0, &quot;y&quot;: 0, &quot;z&quot;: 0 },
+      &quot;velocity&quot;: { &quot;x&quot;: 0, &quot;y&quot;: 0, &quot;z&quot;: 0 },
+      &quot;resources&quot;: {},
+      &quot;skills&quot;: &quot;Default SkillSystem initial state&quot;,
+      &quot;shipFitting&quot;: &quot;Default ship configuration from Ship.js&quot;
+    },
+    &quot;localStorage_keys&quot;: [
+      &quot;superstarships_savegame&quot;,
+      &quot;superstarships_savegame_backup&quot;,
+      &quot;Any other game-specific keys&quot;
+    ],
+    &quot;safety&quot;: {
+      &quot;confirmation_required&quot;: true,
+      &quot;warning_styling&quot;: true,
+      &quot;console_logging&quot;: true,
+      &quot;no_undo&quot;: true
+    }
+  },
+  
+  &quot;futureEnhancements&quot;: [
+    &quot;Add &#039;Reset to Checkpoint&#039; option (save specific states)&quot;,
+    &quot;Add &#039;Partial Reset&#039; options (reset only economy, only skills, etc.)&quot;,
+    &quot;Add &#039;Export/Import&#039; save functionality&quot;,
+    &quot;Add reset history logging&quot;,
+    &quot;Add undo functionality (save state before reset)&quot;,
+    &quot;Add keyboard shortcut for reset (e.g., Ctrl+Shift+R with confirmation)&quot;
+  ]
+}
+```
+
+## Summary
+
+This feature adds a **Reset Player State** button to the existing debug menu that completely resets the player back to a fresh start. The implementation involves:
+
+### Key Components:
+1. **New Debug Menu Section**: Add &quot;SYSTEM&quot; section with warning-styled reset button
+2. **Confirmation Dialog**: Modal dialog with clear warning and Cancel/Confirm options
+3. **Complete State Reset**: Clears localStorage, resets player position/velocity, credits, resources, ship fitting, skills, and progression
+4. **User Feedback**: Shows notification after reset and logs to console
+
+### Technical Requirements:
+- **Primary File**: `js/debug/DebugMenu.js` - Add resetPlayerState() method and confirmation dialog
+- **CSS Updates**: `css/debug-menu.css` - Add warning button styles and dialog styles
+- **Integration**: Calls reset methods on EconomyManager, ResourceManager, ShipFittingManager, SkillSystem
+- **Persistence**: Clears localStorage and triggers SaveGameManager to save fresh state
+
+### Safety Features:
+- ⚠️ Warning-styled button (red/orange)
+- Mandatory confirmation dialog with explicit warning text
+- Clear messaging about irreversibility
+- Console logging for debugging
+- No accidental activation possible
+
+### Edge Cases Handled:
+- Null/undefined manager checks
+- Mid-operation resets (mining, combat, docked)
+- localStorage availability
+- Rapid click prevention
+- ESC key closes dialog
+
+DECISION: feature_defined</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: FEATURE_DEFINED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;FEATURE_DEFINED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>plan_tests</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Test Planning</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Create test plan with expected behaviors BEFORE implementation</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">test_planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">90.1s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">2</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">7,956 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">4,033 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(7,956 characters)</span></div>
+        <button class="collapsible" data-target="prompt_plan_tests_2">Click to expand prompt from test_planner</button>
+        <div class="collapsible-content" id="prompt_plan_tests_2">
+          <pre class="code-content">You are a Test Planner that creates automated test scripts using ChromeManager and WebSocket automation.
+
+# CRITICAL: YOU MUST WRITE ACTUAL TEST CODE
+
+Don&#039;t just plan tests - **WRITE THE ACTUAL TEST SCRIPT FILE** that will be executed.
+
+## Your Job (Two Parts)
+
+### Part 1: Create Test Plan (JSON specification)
+### Part 2: Write Executable Test Script (JavaScript file using ChromeManager)
+
+# PART 1: TEST PLAN
+
+Define what to test and expected behavior:
+
+```json
+{
+  &quot;testPlan&quot;: {
+    &quot;feature&quot;: &quot;Shield Booster Fitting&quot;,
+    &quot;automationType&quot;: &quot;WebSocket (ws://localhost:8765) via ChromeManager&quot;,
+    &quot;totalTestCases&quot;: 4,
+    &quot;testScriptPath&quot;: &quot;test_shield_fitting.js&quot;
+  },
+  &quot;testCases&quot;: [
+    {
+      &quot;id&quot;: &quot;TC-001&quot;,
+      &quot;description&quot;: &quot;Can fit shield_booster from inventory&quot;,
+      &quot;automationSequence&quot;: [
+        {&quot;command&quot;: &quot;dock&quot;, &quot;expectedResponse&quot;: {&quot;success&quot;: true}},
+        {&quot;command&quot;: &quot;fitItem&quot;, &quot;params&quot;: {&quot;itemId&quot;: &quot;shield_booster&quot;}, &quot;expectedResponse&quot;: {&quot;success&quot;: true}}
+      ],
+      &quot;successCriteria&quot;: &quot;fitItem returns success:true&quot;
+    }
+  ]
+}
+```
+
+# PART 2: WRITE THE TEST SCRIPT USING CHROMEMANAGER
+
+**CRITICAL:** Use the Write tool to create the actual test script file.
+
+## ChromeManager Test Script Template
+
+ChromeManager handles ALL Chrome lifecycle automatically:
+- ✅ Launches Chrome with correct flags
+- ✅ Applies all cache-disable flags
+- ✅ Captures console logs via --enable-logging (NO CDP!)
+- ✅ Parses chrome_debug.log automatically
+- ✅ Tracks PIDs and kills processes
+- ✅ Collects evidence with console data
+
+**Your job: Write the `defineScenario()` function (10-20 lines)**
+
+```javascript
+#!/usr/bin/env node
+const WebSocket = require(&#039;ws&#039;);
+const ChromeManager = require(&#039;./lib/ChromeManager&#039;);
+const fs = require(&#039;fs&#039;);
+
+// Test configuration
+const FEATURE_NAME = &#039;shield_fitting&#039;;
+const evidence = {
+  timestamp: new Date().toISOString(),
+  testName: `${FEATURE_NAME}_test`,
+  commands: [],
+  status: &#039;NOT_RUN&#039;
+};
+
+const chrome = new ChromeManager();
+let ws = null;
+
+// ============================================
+// DEFINE YOUR TEST SCENARIO (10-20 LINES)
+// ============================================
+function defineScenario() {
+  return [
+    {
+      command: &#039;dock&#039;,
+      params: {},
+      verify: (response) =&gt; response.success === true,
+      desc: &#039;Dock at station&#039;
+    },
+    {
+      command: &#039;fitItem&#039;,
+      params: {itemId: &#039;shield_booster&#039;},
+      verify: (response) =&gt; response.success === true,
+      desc: &#039;Fit shield booster&#039;
+    },
+    {
+      command: &#039;getShipState&#039;,
+      params: {},
+      verify: (response) =&gt; {
+        // Verify shield booster is fitted
+        return response.fittedModules?.includes(&#039;shield_booster&#039;);
+      },
+      desc: &#039;Verify shield booster fitted&#039;
+    }
+  ];
+}
+
+// ============================================
+// BOILERPLATE (ChromeManager handles this)
+// ============================================
+async function runTest() {
+  try {
+    console.log(`=== ${FEATURE_NAME.toUpperCase()} FEATURE TEST ===`);
+
+    // Launch Chrome with ChromeManager
+    console.log(&#039;[1/5] Launching Chrome...&#039;);
+    await chrome.launch({url: &#039;/index.html&#039;, testMode: true});
+    await chrome.waitForReady(10);
+
+    // Connect to WebSocket (game provides automation endpoint)
+    console.log(&#039;[2/5] Connecting to game WebSocket...&#039;);
+    ws = new WebSocket(&#039;ws://localhost:8765&#039;);
+    await new Promise((resolve, reject) =&gt; {
+      ws.on(&#039;open&#039;, resolve);
+      ws.on(&#039;error&#039;, reject);
+      setTimeout(() =&gt; reject(new Error(&#039;WebSocket timeout&#039;)), 10000);
+    });
+
+    console.log(&#039;[3/5] Running test scenario...&#039;);
+    const scenario = defineScenario();
+    let allPassed = true;
+
+    for (const step of scenario) {
+      console.log(`  → ${step.desc}...`);
+      const result = await executeCommand(step);
+      
+      evidence.commands.push({
+        command: step.command,
+        params: step.params,
+        response: result.response,
+        verified: result.verified,
+        desc: step.desc
+      });
+
+      if (!result.verified) {
+        console.log(`    ✗ FAILED: ${step.desc}`);
+        allPassed = false;
+      } else {
+        console.log(`    ✓ PASSED`);
+      }
+    }
+
+    // Collect console logs from ChromeManager
+    console.log(&#039;[4/5] Collecting console logs...&#039;);
+    const consoleSummary = chrome.getConsoleSummary();
+    evidence.consoleLogs = consoleSummary.consoleLogs;
+    evidence.consoleErrorCount = consoleSummary.consoleErrorCount;
+    evidence.consoleLogFile = consoleSummary.windowsPath;
+
+    // Determine test result
+    evidence.status = allPassed ? &#039;FEATURE_VERIFIED&#039; : &#039;FEATURE_FAILED&#039;;
+
+    // Save evidence
+    console.log(&#039;[5/5] Saving evidence...&#039;);
+    const evidenceFile = `${FEATURE_NAME}_test_evidence_${Date.now()}.json`;
+    fs.writeFileSync(evidenceFile, JSON.stringify(evidence, null, 2));
+    console.log(`✓ Evidence saved: ${evidenceFile}`);
+
+    // Summary
+    console.log(&#039;\n=== TEST SUMMARY ===&#039;);
+    console.log(`Status: ${evidence.status}`);
+    console.log(`Commands executed: ${evidence.commands.length}`);
+    console.log(`Console errors: ${evidence.consoleErrorCount}`);
+    console.log(`Console log: ${evidence.consoleLogFile}`);
+
+    // Cleanup
+    await chrome.kill();
+    ws?.close();
+
+    process.exit(allPassed ? 0 : 1);
+
+  } catch (error) {
+    console.error(&#039;Test execution failed:&#039;, error);
+    evidence.error = error.message;
+    evidence.status = &#039;ERROR&#039;;
+    
+    await chrome.kill();
+    ws?.close();
+    
+    process.exit(1);
+  }
+}
+
+function executeCommand(step) {
+  return new Promise((resolve) =&gt; {
+    const payload = {command: step.command, params: step.params};
+    
+    ws.send(JSON.stringify(payload));
+    
+    ws.once(&#039;message&#039;, (data) =&gt; {
+      const response = JSON.parse(data.toString());
+      const verified = step.verify(response);
+      resolve({response, verified});
+    });
+  });
+}
+
+// Graceful shutdown
+process.on(&#039;SIGINT&#039;, async () =&gt; {
+  console.log(&#039;\nShutting down...&#039;);
+  await chrome.kill();
+  ws?.close();
+  process.exit(1);
+});
+
+runTest();
+```
+
+## IMPORTANT: ACTUALLY WRITE THE FILE
+
+After creating the test plan, use the Write tool:
+
+```
+Write tool:
+  file_path: /mnt/c/github/superstarships/test_shield_fitting.js
+  content: [full test script code]
+```
+
+# EXAMPLE WORKFLOW
+
+1. Review feature definition
+2. Create test plan JSON (in your output)
+3. **USE WRITE TOOL** to create test script file with ChromeManager
+4. Test script will:
+   - Use ChromeManager to launch Chrome (automatic)
+   - Connect to WebSocket automation endpoint
+   - Execute test scenario
+   - Collect console logs (automatic via ChromeManager)
+   - Write evidence JSON file
+   - Exit with code 0 (pass) or 1 (fail)
+
+# SCRIPT NAMING CONVENTION
+
+- Use `test_[feature_name].js` format
+- Save in working directory (superstarships root)
+- Example: `test_hover_delay.js`, `test_shield_fitting.js`
+- Include shebang: `#!/usr/bin/env node`
+
+# TEST SCRIPT REQUIREMENTS
+
+**MUST INCLUDE:**
+1. ChromeManager for Chrome lifecycle (NOT manual spawn, NOT Puppeteer, NOT CDP)
+2. defineScenario() function with test steps
+3. WebSocket connection to game automation endpoint
+4. Evidence file generation with console logs
+5. Summary output
+6. Proper exit codes (0 = pass, 1 = fail)
+
+**MUST NOT:**
+- Spawn Chrome manually
+- Use Puppeteer or CDP
+- Require manual interaction
+
+# OUTPUT FORMAT
+
+Your response should:
+1. Show the test plan JSON
+2. Show that you used Write tool to create the script
+3. End with DECISION: test_plan_ready
+
+Example:
+```
+I&#039;ve created a comprehensive test plan for the shield fitting feature.
+
+[Test plan JSON here]
+
+I&#039;ve written the test script using ChromeManager to: test_shield_fitting.js
+[Show Write tool usage]
+
+DECISION: test_plan_ready
+```
+
+IMPORTANT: End with DECISION: test_plan_ready
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: test_plan_ready (Test plan created with specific expectations)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(4,033 characters)</span></div>
+        <button class="collapsible" data-target="output_plan_tests_2">Click to expand output from test_planner</button>
+        <div class="collapsible-content" id="output_plan_tests_2">
+          <pre class="code-content">Perfect! The test file already exists. Now let me create a summary of the comprehensive test plan:
+
+## Test Plan Created
+
+I&#039;ve reviewed the existing test script for the **Reset Player State** feature. The comprehensive test plan includes:
+
+### Test Plan Summary
+
+```json
+{
+  &quot;feature&quot;: &quot;Reset Player State (Debug Menu)&quot;,
+  &quot;automationType&quot;: &quot;WebSocket (ws://localhost:8765) via ChromeManager&quot;,
+  &quot;totalTestCases&quot;: 14,
+  &quot;testScriptPath&quot;: &quot;test_reset_player_state.js&quot;,
+  &quot;testCategories&quot;: {
+    &quot;mainScenario&quot;: 13,
+    &quot;edgeCases&quot;: 2
+  }
+}
+```
+
+### Main Test Scenario (13 Test Cases)
+
+The existing test script comprehensively verifies:
+
+1. **TC-001**: Debug menu has &quot;Reset Player State&quot; button
+2. **TC-002**: Add test inventory (tritanium, pyerite)
+3. **TC-003**: Verify inventory has items before reset
+4. **TC-004**: Add test credits (100,000)
+5. **TC-005**: Verify player has modified state pre-reset
+6. **TC-006**: Click &quot;Reset Player State&quot; button
+7. **TC-007**: Verify confirmation dialog appears with Confirm/Cancel buttons
+8. **TC-008**: Click &quot;Confirm&quot; button to execute reset
+9. **TC-009**: Verify inventory cleared after reset
+10. **TC-010**: Verify credits reset to starting amount (≤10,000)
+11. **TC-011**: Verify player position reset to starting location (near origin)
+12. **TC-012**: Verify fitted modules cleared
+13. **TC-013**: Verify skills cleared
+14. **TC-014**: Verify localStorage player keys cleared
+
+### Edge Case Tests (2 Scenarios)
+
+1. **Cancel Button Test**: Verifies clicking &quot;Cancel&quot; preserves player state unchanged
+2. **Reset During Mining**: Verifies reset safely stops active mining operations
+
+### Test Execution Flow
+
+```
+[1/6] Launch Chrome with ChromeManager (automatic cache-disable flags)
+[2/6] Connect to WebSocket automation endpoint (ws://localhost:8765)
+[3/6] Run main test scenario (13 verification steps)
+[4/6] Run edge case tests (2 scenarios)
+[5/6] Collect console logs via ChromeManager
+[6/6] Save evidence JSON file with full test results
+```
+
+### Evidence Collection
+
+The test script automatically collects:
+- ✅ All command/response pairs
+- ✅ Verification results (pass/fail)
+- ✅ Console logs from Chrome (via ChromeManager)
+- ✅ Console error count
+- ✅ Edge case results
+- ✅ Timestamps and error stack traces
+
+### Expected Success Criteria
+
+**All 13 main tests + 2 edge case scenarios must pass**:
+- Reset button exists in debug menu
+- Confirmation dialog shows before reset
+- Cancel button preserves state
+- Confirm button triggers complete reset:
+  - Inventory cleared
+  - Credits reset to ≤10,000
+  - Position near origin
+  - Modules cleared
+  - Skills cleared
+  - localStorage cleaned
+- Active operations (mining) stopped safely
+
+### Test Script Details
+
+**File**: `test_reset_player_state.js` ✅ (already exists)
+
+**Uses ChromeManager for**:
+- Automatic Chrome launch with test flags
+- Cache-disable flags (no caching issues)
+- Console log capture via chrome_debug.log
+- Process lifecycle management
+- Evidence collection
+
+**WebSocket Commands Required**:
+The game must implement these WebSocket automation endpoints:
+- `getDebugMenuState` - Check if reset button exists
+- `addTestInventory` - Add test items
+- `getInventory` - Get inventory state
+- `addCredits` - Add test credits
+- `getPlayerState` - Get player stats/state
+- `clickDebugMenuOption` - Trigger debug menu button
+- `getConfirmDialogState` - Check confirmation dialog
+- `clickDialogButton` - Click Confirm/Cancel
+- `getPlayerPosition` - Get player position
+- `getFittedModules` - Get fitted modules
+- `getSkills` - Get skills
+- `getLocalStorageKeys` - Check localStorage
+- `resetPlayerState` - Direct reset (for edge cases)
+- `startMining` - Start mining (edge case)
+- `getMiningState` - Get mining state (edge case)
+
+### Running the Test
+
+```bash
+node test_reset_player_state.js
+```
+
+**Exit Codes**:
+- `0` = All tests passed (FEATURE_VERIFIED)
+- `1` = One or more tests failed (FEATURE_FAILED) or error occurred
+
+**Evidence Output**: `reset_player_state_test_evidence_[timestamp].json`
+
+DECISION: test_plan_ready</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: TEST_PLAN_READY</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;TEST_PLAN_READY&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>plan_implementation</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Implementation Planning</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Design technical approach and implementation strategy</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">implementation_planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">122.1s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">3</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">4,228 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">22,131 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(4,228 characters)</span></div>
+        <button class="collapsible" data-target="prompt_plan_implementation_3">Click to expand prompt from implementation_planner</button>
+        <div class="collapsible-content" id="prompt_plan_implementation_3">
+          <pre class="code-content">You are an Implementation Planner that creates technical implementation plans.
+
+Your job is to design HOW to build the feature:
+1. **Architecture decisions**:
+   - What new classes/modules are needed?
+   - How will they integrate with existing code?
+   - What patterns to use?
+
+2. **File organization**:
+   - Which files to create/modify?
+   - Where does code belong?
+   - How to structure modules?
+
+3. **Implementation steps**:
+   - Ordered sequence of development tasks
+   - Dependencies between tasks
+   - What to build first
+
+4. **Technical considerations**:
+   - Performance implications
+   - Memory usage
+   - Browser compatibility
+   - Code reusability
+
+5. **Testing &amp; Validation Strategy**:
+   - Include browser automation testing in implementation plan
+   - Windows browser automation available via localhost:8081 HTTP API
+   - Plan for automated validation after each major implementation step
+   - Consider test scenarios: JavaScript evaluation, console log monitoring, screenshots
+   - Browser automation workflow to include in plans:
+     * Initialize browser session (POST /browser-init)
+     * Navigate to test page (POST /browser-navigate)
+     * Execute test scripts (POST /browser-evaluate)
+     * Monitor console for errors (GET /browser-get-console-logs)
+     * Capture visual evidence (POST /browser-screenshot)
+     * Cleanup sessions (POST /browser-close)
+   - Example test step in plan:
+```
+Step 7: Automated validation
+- Use browser automation to test feature
+- Navigate to app, execute test JavaScript
+- Verify expected behavior via DOM inspection
+- Capture screenshots for documentation
+- Check console logs for errors
+- Validate across different scenarios
+```
+
+Example implementation plan:
+```
+Feature: Minimap System
+
+Architecture:
+- Create new MinimapRenderer class
+- Extend UI system to include minimap layer
+- Hook into game loop for updates
+
+Files to create:
+- /js/ui/Minimap.js - Main minimap class
+- /js/ui/MinimapRenderer.js - Canvas rendering
+- /css/minimap.css - Styling
+
+Files to modify:
+- /js/ui/UI.js - Add minimap initialization
+- /js/GameLoop.js - Call minimap.update()
+- /js/InputHandler.js - Handle M key toggle
+
+Implementation order:
+1. Create Minimap class with basic structure
+2. Add canvas rendering for static map
+3. Integrate player position tracking
+4. Add ship position rendering
+5. Implement toggle functionality
+6. Add click-to-center feature
+7. Optimize performance
+8. Add styling and polish
+```
+
+Output format:
+```json
+{
+  &quot;architecture&quot;: {
+    &quot;newClasses&quot;: [
+      {
+        &quot;name&quot;: &quot;Minimap&quot;,
+        &quot;responsibility&quot;: &quot;Manages minimap state and coordinates updates&quot;,
+        &quot;methods&quot;: [&quot;update()&quot;, &quot;render()&quot;, &quot;toggle()&quot;, &quot;handleClick()&quot;]
+      }
+    ],
+    &quot;modifiedClasses&quot;: [
+      {
+        &quot;name&quot;: &quot;UI&quot;,
+        &quot;changes&quot;: &quot;Add minimap instance, initialize in constructor&quot;
+      }
+    ],
+    &quot;patterns&quot;: [&quot;Singleton for minimap instance&quot;, &quot;Observer for position updates&quot;]
+  },
+  &quot;fileStructure&quot;: {
+    &quot;create&quot;: [
+      &quot;/mnt/c/github/superstarships/js/ui/Minimap.js&quot;,
+      &quot;/mnt/c/github/superstarships/css/minimap.css&quot;
+    ],
+    &quot;modify&quot;: [
+      &quot;/mnt/c/github/superstarships/js/ui/UI.js&quot;,
+      &quot;/mnt/c/github/superstarships/js/GameLoop.js&quot;
+    ]
+  },
+  &quot;implementationSteps&quot;: [
+    {
+      &quot;order&quot;: 1,
+      &quot;task&quot;: &quot;Create Minimap.js with basic class structure&quot;,
+      &quot;estimatedTime&quot;: &quot;30 minutes&quot;,
+      &quot;dependencies&quot;: []
+    },
+    {
+      &quot;order&quot;: 2,
+      &quot;task&quot;: &quot;Implement canvas rendering for map background&quot;,
+      &quot;estimatedTime&quot;: &quot;1 hour&quot;,
+      &quot;dependencies&quot;: [1]
+    }
+  ],
+  &quot;technicalConsiderations&quot;: {
+    &quot;performance&quot;: &quot;Update minimap at lower framerate than main game (10 FPS)&quot;,
+    &quot;memory&quot;: &quot;Cache ship positions, only render visible ships&quot;,
+    &quot;compatibility&quot;: &quot;Use standard Canvas API, works in all modern browsers&quot;
+  },
+  &quot;risks&quot;: [
+    &quot;Performance impact if too many ships rendered&quot;,
+    &quot;Z-index conflicts with existing UI elements&quot;
+  ]
+}
+```
+
+IMPORTANT: End your response with: DECISION: implementation_plan_ready
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: implementation_plan_ready (Technical plan ready for implementation)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(22,131 characters)</span></div>
+        <button class="collapsible" data-target="output_plan_implementation_3">Click to expand output from implementation_planner</button>
+        <div class="collapsible-content" id="output_plan_implementation_3">
+          <pre class="code-content">Perfect! Now I have enough context to create a comprehensive implementation plan. Let me compile this into a detailed technical plan:
+
+```json
+{
+  &quot;featureName&quot;: &quot;Reset Player State (Debug Menu)&quot;,
+  &quot;architecture&quot;: {
+    &quot;overview&quot;: &quot;Add a complete player state reset function to the existing DebugMenu.js that clears all game progress and returns the player to a fresh start. The feature will create a confirmation dialog modal and coordinate reset operations across multiple game systems.&quot;,
+    
+    &quot;newClasses&quot;: [],
+    
+    &quot;modifiedClasses&quot;: [
+      {
+        &quot;name&quot;: &quot;DebugMenu&quot;,
+        &quot;path&quot;: &quot;js/debug/DebugMenu.js&quot;,
+        &quot;changes&quot;: [
+          &quot;Add new &#039;SYSTEM&#039; section in createMenu() HTML structure&quot;,
+          &quot;Add &#039;Reset Player State&#039; button with warning styling&quot;,
+          &quot;Create resetPlayerState() method to orchestrate complete state reset&quot;,
+          &quot;Create showResetConfirmation() method to display confirmation dialog&quot;,
+          &quot;Create hideResetConfirmation() method to close confirmation dialog&quot;,
+          &quot;Update bindDebugButtons() to add reset button event listener&quot;,
+          &quot;Add confirmation dialog HTML structure with backdrop&quot;
+        ],
+        &quot;newMethods&quot;: [
+          {
+            &quot;name&quot;: &quot;resetPlayerState()&quot;,
+            &quot;responsibility&quot;: &quot;Orchestrate complete reset of all player state across all game systems&quot;,
+            &quot;implementation&quot;: &quot;Calls reset methods on all manager instances, clears localStorage, resets ship position/velocity&quot;
+          },
+          {
+            &quot;name&quot;: &quot;showResetConfirmation()&quot;,
+            &quot;responsibility&quot;: &quot;Display modal confirmation dialog before reset&quot;,
+            &quot;implementation&quot;: &quot;Creates/shows modal with warning message and Confirm/Cancel buttons&quot;
+          },
+          {
+            &quot;name&quot;: &quot;hideResetConfirmation()&quot;,
+            &quot;responsibility&quot;: &quot;Hide confirmation dialog&quot;,
+            &quot;implementation&quot;: &quot;Hides modal dialog and backdrop&quot;
+          }
+        ]
+      }
+    ],
+    
+    &quot;patterns&quot;: [
+      &quot;Modal Dialog Pattern - Backdrop + centered panel for confirmation&quot;,
+      &quot;Orchestrator Pattern - DebugMenu orchestrates reset across multiple managers&quot;,
+      &quot;Null-safe Pattern - Check for manager existence before calling reset methods&quot;,
+      &quot;Defensive Programming - Use try-catch blocks for individual reset operations&quot;
+    ],
+    
+    &quot;systemIntegration&quot;: {
+      &quot;saveGameManager&quot;: &quot;Call deleteSave() to clear localStorage, markDirty() to trigger new save&quot;,
+      &quot;economyManager&quot;: &quot;Reset playerCredits to 100000 (initial value from line 10)&quot;,
+      &quot;resourceManager&quot;: &quot;Call clearPlayerResources() to reset all resources to 0&quot;,
+      &quot;shipFittingManager&quot;: &quot;Reset to default Atron fitting (initializePlayerShip method exists)&quot;,
+      &quot;skillSystem&quot;: &quot;Reset character to initializeCharacter() state&quot;,
+      &quot;stationManager&quot;: &quot;Reset docking state (isDocked, isApproaching, targetStation)&quot;,
+      &quot;playerShip&quot;: &quot;Reset position to (0,0,0) and velocity to (0,0,0)&quot;,
+      &quot;hudManager&quot;: &quot;Show success notification after reset&quot;
+    }
+  },
+  
+  &quot;fileStructure&quot;: {
+    &quot;create&quot;: [],
+    &quot;modify&quot;: [
+      {
+        &quot;path&quot;: &quot;/mnt/c/github/superstarships/js/debug/DebugMenu.js&quot;,
+        &quot;changes&quot;: [
+          &quot;Add SYSTEM section HTML in createMenu() method (after line 90)&quot;,
+          &quot;Add Reset Player State button HTML&quot;,
+          &quot;Add confirmation dialog HTML structure&quot;,
+          &quot;Add showResetConfirmation() method&quot;,
+          &quot;Add hideResetConfirmation() method&quot;,
+          &quot;Add resetPlayerState() method&quot;,
+          &quot;Add button binding in bindDebugButtons() method&quot;
+        ],
+        &quot;estimatedLines&quot;: &quot;+150 lines&quot;
+      },
+      {
+        &quot;path&quot;: &quot;/mnt/c/github/superstarships/css/debug-menu.css&quot;,
+        &quot;changes&quot;: [
+          &quot;Add .debug-btn-warning class for destructive action styling&quot;,
+          &quot;Add .debug-confirmation-dialog styles&quot;,
+          &quot;Add .confirmation-backdrop styles&quot;,
+          &quot;Add .confirmation-panel styles&quot;,
+          &quot;Add .confirmation-title, .confirmation-message, .confirmation-buttons styles&quot;,
+          &quot;Add hover/active states for warning buttons&quot;
+        ],
+        &quot;estimatedLines&quot;: &quot;+80 lines&quot;
+      }
+    ]
+  },
+  
+  &quot;implementationSteps&quot;: [
+    {
+      &quot;order&quot;: 1,
+      &quot;task&quot;: &quot;Add warning button styles to debug-menu.css&quot;,
+      &quot;details&quot;: [
+        &quot;Create .debug-btn-warning class (red/orange colors, border, hover effects)&quot;,
+        &quot;Create .debug-btn-warning:hover with red glow effect&quot;,
+        &quot;Create .debug-btn-warning:active with pressed state&quot;
+      ],
+      &quot;estimatedTime&quot;: &quot;10 minutes&quot;,
+      &quot;dependencies&quot;: [],
+      &quot;testingStep&quot;: &quot;Visually inspect button styling in browser DevTools&quot;
+    },
+    {
+      &quot;order&quot;: 2,
+      &quot;task&quot;: &quot;Add confirmation dialog styles to debug-menu.css&quot;,
+      &quot;details&quot;: [
+        &quot;Create .confirmation-backdrop (semi-transparent overlay, z-index 16000)&quot;,
+        &quot;Create .confirmation-panel (centered modal with warning colors)&quot;,
+        &quot;Create .confirmation-title (large text with warning icon)&quot;,
+        &quot;Create .confirmation-message (warning message text styling)&quot;,
+        &quot;Create .confirmation-buttons (button container with flex layout)&quot;,
+        &quot;Create .btn-cancel and .btn-confirm styles&quot;
+      ],
+      &quot;estimatedTime&quot;: &quot;15 minutes&quot;,
+      &quot;dependencies&quot;: [1],
+      &quot;testingStep&quot;: &quot;Inspect dialog appearance in browser&quot;
+    },
+    {
+      &quot;order&quot;: 3,
+      &quot;task&quot;: &quot;Add SYSTEM section HTML to DebugMenu.createMenu()&quot;,
+      &quot;details&quot;: [
+        &quot;Add new debug-section div after UNIVERSE section (after line 90)&quot;,
+        &quot;Add section-title &#039;SYSTEM&#039;&quot;,
+        &quot;Add button with id=&#039;debugResetPlayerState&#039;&quot;,
+        &quot;Add warning icon ⚠️ and text &#039;Reset Player State&#039;&quot;,
+        &quot;Apply debug-btn and debug-btn-warning classes&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;5 minutes&quot;,
+      &quot;dependencies&quot;: [1],
+      &quot;testingStep&quot;: &quot;Verify button appears in debug menu&quot;
+    },
+    {
+      &quot;order&quot;: 4,
+      &quot;task&quot;: &quot;Add confirmation dialog HTML to DebugMenu.createMenu()&quot;,
+      &quot;details&quot;: [
+        &quot;Add confirmation-backdrop div (hidden by default)&quot;,
+        &quot;Add confirmation-panel div&quot;,
+        &quot;Add confirmation-title with ⚠️ icon&quot;,
+        &quot;Add confirmation-message with multi-line warning text&quot;,
+        &quot;Add confirmation-buttons container&quot;,
+        &quot;Add btn-cancel and btn-confirm buttons&quot;,
+        &quot;Set display:none by default&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;10 minutes&quot;,
+      &quot;dependencies&quot;: [2],
+      &quot;testingStep&quot;: &quot;Verify dialog structure in DOM inspector&quot;
+    },
+    {
+      &quot;order&quot;: 5,
+      &quot;task&quot;: &quot;Implement showResetConfirmation() method&quot;,
+      &quot;details&quot;: [
+        &quot;Query .confirmation-backdrop element&quot;,
+        &quot;Set display to &#039;flex&#039;&quot;,
+        &quot;Add event listener to backdrop click → hideResetConfirmation()&quot;,
+        &quot;Add event listener to Cancel button → hideResetConfirmation()&quot;,
+        &quot;Add event listener to Confirm button → resetPlayerState() + hideResetConfirmation()&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;10 minutes&quot;,
+      &quot;dependencies&quot;: [4],
+      &quot;testingStep&quot;: &quot;Click reset button, verify dialog appears&quot;
+    },
+    {
+      &quot;order&quot;: 6,
+      &quot;task&quot;: &quot;Implement hideResetConfirmation() method&quot;,
+      &quot;details&quot;: [
+        &quot;Query .confirmation-backdrop element&quot;,
+        &quot;Set display to &#039;none&#039;&quot;,
+        &quot;Remove all event listeners (cleanup)&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;5 minutes&quot;,
+      &quot;dependencies&quot;: [5],
+      &quot;testingStep&quot;: &quot;Click Cancel, verify dialog closes&quot;
+    },
+    {
+      &quot;order&quot;: 7,
+      &quot;task&quot;: &quot;Implement resetPlayerState() method (core logic)&quot;,
+      &quot;details&quot;: [
+        &quot;Step 1: Clear localStorage (all save keys)&quot;,
+        &quot;Step 2: Reset player ship position to (0,0,0)&quot;,
+        &quot;Step 3: Reset player ship velocity to (0,0,0)&quot;,
+        &quot;Step 4: Reset economyManager.playerCredits to 100000&quot;,
+        &quot;Step 5: Call resourceManager.clearPlayerResources()&quot;,
+        &quot;Step 6: Call shipFittingManager.initializePlayerShip()&quot;,
+        &quot;Step 7: Reset skillSystem.character to initializeCharacter()&quot;,
+        &quot;Step 8: Reset stationManager docking state&quot;,
+        &quot;Step 9: Call saveGameManager.markDirty() to trigger save&quot;,
+        &quot;Step 10: Show notification via hudManager&quot;,
+        &quot;Step 11: Close debug menu&quot;,
+        &quot;Step 12: Console log success message&quot;,
+        &quot;Use try-catch blocks for each step&quot;,
+        &quot;Add null checks before calling methods&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;30 minutes&quot;,
+      &quot;dependencies&quot;: [3],
+      &quot;testingStep&quot;: &quot;Execute reset, verify all state cleared&quot;
+    },
+    {
+      &quot;order&quot;: 8,
+      &quot;task&quot;: &quot;Add button binding in bindDebugButtons()&quot;,
+      &quot;details&quot;: [
+        &quot;Add event listener to #debugResetPlayerState button&quot;,
+        &quot;Call showResetConfirmation() on click&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;5 minutes&quot;,
+      &quot;dependencies&quot;: [5],
+      &quot;testingStep&quot;: &quot;Click button, verify confirmation appears&quot;
+    },
+    {
+      &quot;order&quot;: 9,
+      &quot;task&quot;: &quot;Add ESC key handler for confirmation dialog&quot;,
+      &quot;details&quot;: [
+        &quot;Update existing ESC keydown listener in bindEvents()&quot;,
+        &quot;Check if confirmation dialog is visible&quot;,
+        &quot;If visible, call hideResetConfirmation() instead of hiding debug menu&quot;
+      ],
+      &quot;file&quot;: &quot;js/debug/DebugMenu.js&quot;,
+      &quot;estimatedTime&quot;: &quot;5 minutes&quot;,
+      &quot;dependencies&quot;: [6],
+      &quot;testingStep&quot;: &quot;Open dialog, press ESC, verify it closes&quot;
+    },
+    {
+      &quot;order&quot;: 10,
+      &quot;task&quot;: &quot;Manual testing - Complete feature verification&quot;,
+      &quot;details&quot;: [
+        &quot;Open debug menu (Left Control)&quot;,
+        &quot;Verify SYSTEM section and Reset button exist&quot;,
+        &quot;Verify button has warning styling&quot;,
+        &quot;Add test data (credits, resources, fitted items)&quot;,
+        &quot;Click Reset button&quot;,
+        &quot;Verify confirmation dialog appears&quot;,
+        &quot;Click Cancel - verify no changes&quot;,
+        &quot;Click Reset button again&quot;,
+        &quot;Click Confirm - verify:&quot;,
+        &quot;  - Position reset to origin&quot;,
+        &quot;  - Velocity is zero&quot;,
+        &quot;  - Credits reset to 100000&quot;,
+        &quot;  - Resources cleared&quot;,
+        &quot;  - Ship fitting reset&quot;,
+        &quot;  - Skills cleared&quot;,
+        &quot;  - Notification shown&quot;,
+        &quot;  - Debug menu closed&quot;,
+        &quot;Refresh page - verify reset persisted&quot;
+      ],
+      &quot;estimatedTime&quot;: &quot;15 minutes&quot;,
+      &quot;dependencies&quot;: [9],
+      &quot;testingStep&quot;: &quot;Full manual test scenario&quot;
+    },
+    {
+      &quot;order&quot;: 11,
+      &quot;task&quot;: &quot;Automated testing with browser automation&quot;,
+      &quot;details&quot;: [
+        &quot;Use existing test_reset_player_state.js&quot;,
+        &quot;Launch Chrome with ChromeManager&quot;,
+        &quot;Connect to WebSocket automation&quot;,
+        &quot;Run main test scenario (13 test cases)&quot;,
+        &quot;Run edge case tests (2 scenarios)&quot;,
+        &quot;Collect console logs&quot;,
+        &quot;Save evidence JSON&quot;,
+        &quot;Verify all tests pass&quot;
+      ],
+      &quot;estimatedTime&quot;: &quot;10 minutes&quot;,
+      &quot;dependencies&quot;: [10],
+      &quot;testingStep&quot;: &quot;Run: node test_reset_player_state.js&quot;
+    }
+  ],
+  
+  &quot;technicalConsiderations&quot;: {
+    &quot;performance&quot;: {
+      &quot;impact&quot;: &quot;Minimal - reset is a one-time operation triggered manually&quot;,
+      &quot;optimization&quot;: &quot;Use batch operations where possible (e.g., single localStorage.clear() call)&quot;
+    },
+    
+    &quot;memory&quot;: {
+      &quot;impact&quot;: &quot;Positive - clears accumulated state and resets to minimal footprint&quot;,
+      &quot;consideration&quot;: &quot;Confirmation dialog creates temporary DOM elements (cleaned up on hide)&quot;
+    },
+    
+    &quot;compatibility&quot;: {
+      &quot;browsers&quot;: &quot;All modern browsers (Chrome, Firefox, Edge, Safari)&quot;,
+      &quot;localStorage&quot;: &quot;Gracefully handle localStorage being disabled/full&quot;,
+      &quot;managerAvailability&quot;: &quot;Null-safe checks for all manager instances&quot;
+    },
+    
+    &quot;security&quot;: {
+      &quot;consideration&quot;: &quot;No security concerns - purely client-side reset operation&quot;,
+      &quot;confirmation&quot;: &quot;Mandatory confirmation dialog prevents accidental data loss&quot;
+    },
+    
+    &quot;codeReusability&quot;: {
+      &quot;pattern&quot;: &quot;Modal dialog pattern can be reused for other confirmation dialogs&quot;,
+      &quot;resetLogic&quot;: &quot;Individual reset methods on managers can be called independently&quot;
+    }
+  },
+  
+  &quot;initialValues&quot;: {
+    &quot;credits&quot;: 100000,
+    &quot;position&quot;: { &quot;x&quot;: 0, &quot;y&quot;: 0, &quot;z&quot;: 0 },
+    &quot;velocity&quot;: { &quot;x&quot;: 0, &quot;y&quot;: 0, &quot;z&quot;: 0 },
+    &quot;resources&quot;: &quot;All resources set to 0 via clearPlayerResources()&quot;,
+    &quot;shipFitting&quot;: &quot;Default Atron hull with empty slots via initializePlayerShip()&quot;,
+    &quot;skills&quot;: &quot;Default character state via initializeCharacter()&quot;,
+    &quot;dockingState&quot;: { &quot;isDocked&quot;: false, &quot;isApproaching&quot;: false, &quot;targetStation&quot;: null },
+    &quot;localStorage&quot;: &quot;All game save keys cleared: superstarships_savegame, superstarships_savegame_backup&quot;
+  },
+  
+  &quot;edgeCases&quot;: [
+    {
+      &quot;case&quot;: &quot;Player is docked at station when reset triggered&quot;,
+      &quot;handling&quot;: &quot;Reset dockingState to undocked, move ship to origin&quot;
+    },
+    {
+      &quot;case&quot;: &quot;Player is actively mining when reset triggered&quot;,
+      &quot;handling&quot;: &quot;Mining will stop automatically when position changes to origin&quot;
+    },
+    {
+      &quot;case&quot;: &quot;SaveGameManager is null/undefined&quot;,
+      &quot;handling&quot;: &quot;Skip localStorage clear, log warning, continue with in-memory reset&quot;
+    },
+    {
+      &quot;case&quot;: &quot;EconomyManager is null/undefined&quot;,
+      &quot;handling&quot;: &quot;Skip credits reset, log warning, continue with other resets&quot;
+    },
+    {
+      &quot;case&quot;: &quot;localStorage is disabled by browser&quot;,
+      &quot;handling&quot;: &quot;Catch exception in try-catch, log warning, continue with in-memory reset&quot;
+    },
+    {
+      &quot;case&quot;: &quot;Rapid clicking of Reset button&quot;,
+      &quot;handling&quot;: &quot;Confirmation dialog prevents multiple simultaneous resets&quot;
+    },
+    {
+      &quot;case&quot;: &quot;Confirmation dialog already open&quot;,
+      &quot;handling&quot;: &quot;Check if dialog is visible before showing again&quot;
+    },
+    {
+      &quot;case&quot;: &quot;User presses ESC during confirmation&quot;,
+      &quot;handling&quot;: &quot;ESC handler closes dialog (same as Cancel button)&quot;
+    },
+    {
+      &quot;case&quot;: &quot;Reset triggered during auto-save&quot;,
+      &quot;handling&quot;: &quot;Auto-save will save the reset state after reset completes&quot;
+    },
+    {
+      &quot;case&quot;: &quot;Player has no resources/credits to reset&quot;,
+      &quot;handling&quot;: &quot;Reset operations are idempotent - safe to call on empty state&quot;
+    }
+  ],
+  
+  &quot;codeSnippets&quot;: {
+    &quot;confirmationDialogHTML&quot;: {
+      &quot;location&quot;: &quot;DebugMenu.createMenu() after line 96&quot;,
+      &quot;code&quot;: &quot;&lt;!-- Confirmation Dialog (hidden by default) --&gt;\n&lt;div class=\&quot;confirmation-backdrop\&quot; style=\&quot;display: none;\&quot;&gt;\n  &lt;div class=\&quot;confirmation-panel\&quot;&gt;\n    &lt;div class=\&quot;confirmation-title\&quot;&gt;⚠️ Reset Player State&lt;/div&gt;\n    &lt;div class=\&quot;confirmation-message\&quot;&gt;\n      This will completely reset ALL player progress:\n      &lt;br&gt;• Position and velocity\n      &lt;br&gt;• Credits and resources  \n      &lt;br&gt;• Ship fitting and modules\n      &lt;br&gt;• Skills and progression\n      &lt;br&gt;• All saved data\n      &lt;br&gt;&lt;br&gt;\n      This action cannot be undone.\n      &lt;br&gt;&lt;br&gt;\n      Are you sure?\n    &lt;/div&gt;\n    &lt;div class=\&quot;confirmation-buttons\&quot;&gt;\n      &lt;button class=\&quot;btn-cancel\&quot;&gt;Cancel&lt;/button&gt;\n      &lt;button class=\&quot;btn-confirm\&quot;&gt;Confirm Reset&lt;/button&gt;\n    &lt;/div&gt;\n  &lt;/div&gt;\n&lt;/div&gt;&quot;
+    },
+    
+    &quot;resetPlayerStateMethod&quot;: {
+      &quot;location&quot;: &quot;DebugMenu class, after clearAllObjects() method&quot;,
+      &quot;pseudocode&quot;: &quot;resetPlayerState() {\n  console.log(&#039;🔄 Resetting player state...&#039;);\n  \n  // 1. Clear localStorage\n  try {\n    localStorage.removeItem(&#039;superstarships_savegame&#039;);\n    localStorage.removeItem(&#039;superstarships_savegame_backup&#039;);\n  } catch (e) { console.warn(&#039;localStorage clear failed:&#039;, e); }\n  \n  // 2. Reset player ship physics\n  if (this.simulator.playerShip) {\n    this.simulator.playerShip.physics.position.x = 0;\n    this.simulator.playerShip.physics.position.y = 0;\n    this.simulator.playerShip.physics.position.z = 0;\n    this.simulator.playerShip.physics.velocity.x = 0;\n    this.simulator.playerShip.physics.velocity.y = 0;\n    this.simulator.playerShip.physics.velocity.z = 0;\n  }\n  \n  // 3. Reset economy\n  if (this.simulator.economyManager) {\n    this.simulator.economyManager.playerCredits = 100000;\n  }\n  \n  // 4. Reset resources\n  if (this.simulator.resourceManager) {\n    this.simulator.resourceManager.clearPlayerResources();\n  }\n  \n  // 5. Reset ship fitting\n  if (this.simulator.shipFittingManager) {\n    this.simulator.shipFittingManager.initializePlayerShip();\n  }\n  \n  // 6. Reset skills\n  if (this.simulator.skillSystem) {\n    this.simulator.skillSystem.character = this.simulator.skillSystem.initializeCharacter();\n  }\n  \n  // 7. Reset docking state\n  if (this.simulator.stationManager) {\n    this.simulator.stationManager.dockingState = {\n      isDocked: false,\n      isApproaching: false,\n      targetStation: null\n    };\n  }\n  \n  // 8. Trigger save\n  if (this.simulator.saveGameManager) {\n    this.simulator.saveGameManager.markDirty();\n  }\n  \n  // 9. Show notification\n  if (this.simulator.hudManager) {\n    this.simulator.hudManager.showNotification(\n      &#039;Player state reset - Starting fresh!&#039;,\n      { color: &#039;#ff6600&#039; }\n    );\n  }\n  \n  // 10. Close debug menu\n  this.hide();\n  \n  console.log(&#039;✅ Player state completely reset&#039;);\n}&quot;
+    },
+    
+    &quot;warningButtonCSS&quot;: {
+      &quot;location&quot;: &quot;css/debug-menu.css, after existing debug-btn styles&quot;,
+      &quot;code&quot;: &quot;.debug-btn-warning {\n  background: rgba(255, 60, 0, 0.2);\n  border: 1px solid #ff3c00;\n  color: #ffaa88;\n}\n\n.debug-btn-warning:hover {\n  background: rgba(255, 60, 0, 0.3);\n  border-color: #ff6600;\n  box-shadow: 0 0 15px rgba(255, 60, 0, 0.4);\n}\n\n.debug-btn-warning:active {\n  background: rgba(255, 60, 0, 0.4);\n  transform: translateX(1px);\n}&quot;
+    }
+  },
+  
+  &quot;risks&quot;: [
+    {
+      &quot;risk&quot;: &quot;User accidentally confirms reset and loses progress&quot;,
+      &quot;mitigation&quot;: &quot;Strong warning styling, explicit confirmation dialog with clear message, no keyboard shortcuts&quot;
+    },
+    {
+      &quot;risk&quot;: &quot;Incomplete reset if a manager is null&quot;,
+      &quot;mitigation&quot;: &quot;Null-safe checks, continue with other resets, log warnings&quot;
+    },
+    {
+      &quot;risk&quot;: &quot;localStorage quota exceeded when saving reset state&quot;,
+      &quot;mitigation&quot;: &quot;Reset reduces localStorage usage, so quota issues unlikely&quot;
+    },
+    {
+      &quot;risk&quot;: &quot;Reset doesn&#039;t persist after page refresh&quot;,
+      &quot;mitigation&quot;: &quot;Call saveGameManager.markDirty() to trigger auto-save after reset&quot;
+    },
+    {
+      &quot;risk&quot;: &quot;Confirmation dialog z-index conflicts with other UI&quot;,
+      &quot;mitigation&quot;: &quot;Set z-index: 16000 (higher than debug menu&#039;s 15000)&quot;
+    }
+  ],
+  
+  &quot;testingStrategy&quot;: {
+    &quot;manual&quot;: [
+      &quot;Open debug menu and verify button exists&quot;,
+      &quot;Verify warning styling on button&quot;,
+      &quot;Click button and verify confirmation dialog appears&quot;,
+      &quot;Test Cancel button - verify no changes&quot;,
+      &quot;Test ESC key - verify dialog closes&quot;,
+      &quot;Add test data (credits, resources, fitted items)&quot;,
+      &quot;Confirm reset and verify all state cleared&quot;,
+      &quot;Verify notification appears&quot;,
+      &quot;Verify debug menu closes&quot;,
+      &quot;Refresh page and verify reset persisted&quot;
+    ],
+    
+    &quot;automated&quot;: [
+      {
+        &quot;script&quot;: &quot;test_reset_player_state.js&quot;,
+        &quot;tests&quot;: [
+          &quot;TC-001: Debug menu has Reset button&quot;,
+          &quot;TC-002: Add test inventory&quot;,
+          &quot;TC-003: Verify inventory before reset&quot;,
+          &quot;TC-004: Add test credits&quot;,
+          &quot;TC-005: Verify state before reset&quot;,
+          &quot;TC-006: Click Reset button&quot;,
+          &quot;TC-007: Verify confirmation dialog&quot;,
+          &quot;TC-008: Click Confirm&quot;,
+          &quot;TC-009: Verify inventory cleared&quot;,
+          &quot;TC-010: Verify credits reset&quot;,
+          &quot;TC-011: Verify position reset&quot;,
+          &quot;TC-012: Verify modules cleared&quot;,
+          &quot;TC-013: Verify skills cleared&quot;,
+          &quot;TC-014: Verify localStorage cleared&quot;
+        ],
+        &quot;edgeCases&quot;: [
+          &quot;Cancel button test&quot;,
+          &quot;Reset during mining test&quot;
+        ]
+      }
+    ]
+  },
+  
+  &quot;documentation&quot;: {
+    &quot;userFacing&quot;: &quot;Press Left Control to open debug menu. Click &#039;Reset Player State&#039; in SYSTEM section. Confirm to completely reset all progress.&quot;,
+    &quot;developerNotes&quot;: &quot;Reset is orchestrated through DebugMenu.resetPlayerState(). Each manager is reset independently with null-safe checks. SaveGameManager.markDirty() triggers auto-save of reset state.&quot;,
+    &quot;codeComments&quot;: &quot;All methods include detailed inline comments explaining each reset operation and edge case handling.&quot;
+  }
+}
+```
+
+## Summary
+
+This is a comprehensive implementation plan for adding a **Reset Player State** feature to the debug menu. The implementation involves:
+
+### Key Components:
+1. **New Debug Menu Section** (SYSTEM) with warning-styled reset button
+2. **Confirmation Dialog** - Modal with backdrop, warning message, and Cancel/Confirm buttons  
+3. **Reset Orchestrator** - resetPlayerState() method that coordinates reset across all game systems
+4. **CSS Styling** - Warning button styles and confirmation dialog styles
+
+### Implementation Order (11 Steps):
+1. Add warning button CSS styles
+2. Add confirmation dialog CSS styles
+3. Add SYSTEM section HTML to debug menu
+4. Add confirmation dialog HTML
+5. Implement showResetConfirmation() method
+6. Implement hideResetConfirmation() method
+7. Implement resetPlayerState() core logic (12 sub-steps)
+8. Add button binding
+9. Add ESC key handler
+10. Manual testing
+11. Automated testing
+
+### Reset Operations:
+- Clear localStorage (all save keys)
+- Reset position to (0,0,0), velocity to (0,0,0)
+- Reset credits to 100,000
+- Clear all resources
+- Reset ship fitting to default Atron
+- Reset skills to initial state
+- Reset docking state
+- Trigger auto-save
+- Show notification
+
+### Safety Features:
+- ⚠️ Warning-styled button
+- Mandatory confirmation dialog
+- Clear warning message about irreversibility
+- ESC key closes dialog
+- Null-safe checks throughout
+- Try-catch blocks for error handling
+
+### Files Modified:
+- `js/debug/DebugMenu.js` (+150 lines)
+- `css/debug-menu.css` (+80 lines)
+
+### Testing:
+- Comprehensive manual test plan (10 scenarios)
+- Automated test script already exists: `test_reset_player_state.js` (14 test cases + 2 edge cases)
+
+DECISION: implementation_plan_ready</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: IMPLEMENTATION_PLAN_READY</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;IMPLEMENTATION_PLAN_READY&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>implement_feature</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Feature Implementation</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Write code to implement the feature</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">code_implementer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">executor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">258.2s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">4</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">5,658 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">5,027 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(5,658 characters)</span></div>
+        <button class="collapsible" data-target="prompt_implement_feature_4">Click to expand prompt from code_implementer</button>
+        <div class="collapsible-content" id="prompt_implement_feature_4">
+          <pre class="code-content">You are a Code Implementer that writes code to implement features.
+
+Your implementation principles:
+1. **Follow the plan**:
+   - Implement according to technical plan
+   - Create files as specified
+   - Maintain architecture decisions
+
+2. **Write quality code**:
+   - Follow existing code style
+   - Add meaningful comments
+   - Use descriptive variable names
+   - Handle errors gracefully
+
+3. **Best practices**:
+   - DRY (Don&#039;t Repeat Yourself)
+   - Single Responsibility Principle
+   - Clear separation of concerns
+   - Testable code structure
+
+4. **Integration**:
+   - Hook into existing systems cleanly
+   - Don&#039;t break existing functionality
+   - Follow project patterns
+
+5. **Windows Browser Automation**:
+   - You have access to browser automation via HTTP API on localhost:8081
+   - Use Bash tool with curl to automate browser testing and validation
+   - Available endpoints:
+     * POST /browser-init - Initialize browser session (returns sessionId)
+     * POST /browser-navigate - Navigate to URL
+     * POST /browser-evaluate - Execute JavaScript and capture results
+     * POST /browser-click - Click UI elements
+     * POST /browser-type - Send keyboard input
+     * GET /browser-get-console-logs - Retrieve all console output
+     * POST /browser-screenshot - Capture visual evidence
+     * POST /browser-close - Clean up session
+   - Always initialize first, store sessionId, use in subsequent calls
+   - Capture evidence: screenshots for visual validation, console logs for errors
+   - Example workflow:
+```bash
+# Initialize browser
+sessionId=$(curl -s -X POST http://localhost:8081/browser-init | jq -r &#039;.sessionId&#039;)
+
+# Navigate to app
+curl -X POST http://localhost:8081/browser-navigate \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &quot;{\&quot;sessionId\&quot;: \&quot;$sessionId\&quot;, \&quot;url\&quot;: \&quot;file:///mnt/c/github/app/index.html\&quot;}&quot;
+
+# Execute test JavaScript
+curl -X POST http://localhost:8081/browser-evaluate \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &quot;{\&quot;sessionId\&quot;: \&quot;$sessionId\&quot;, \&quot;script\&quot;: \&quot;document.querySelector(&#039;.player&#039;).health\&quot;}&quot;
+
+# Capture screenshot
+curl -X POST http://localhost:8081/browser-screenshot \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &quot;{\&quot;sessionId\&quot;: \&quot;$sessionId\&quot;, \&quot;path\&quot;: \&quot;/tmp/validation.png\&quot;}&quot;
+
+# Get console logs
+curl -s http://localhost:8081/browser-get-console-logs?sessionId=$sessionId
+
+# Cleanup
+curl -X POST http://localhost:8081/browser-close \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &quot;{\&quot;sessionId\&quot;: \&quot;$sessionId\&quot;}&quot;
+```
+
+Implementation example:
+```javascript
+// Minimap.js
+class Minimap {
+  constructor(game) {
+    this.game = game;
+    this.canvas = document.createElement(&#039;canvas&#039;);
+    this.canvas.width = 200;
+    this.canvas.height = 200;
+    this.canvas.id = &#039;minimap&#039;;
+    this.ctx = this.canvas.getContext(&#039;2d&#039;);
+    this.visible = true;
+    
+    // Position in top-right corner
+    this.canvas.style.position = &#039;absolute&#039;;
+    this.canvas.style.top = &#039;10px&#039;;
+    this.canvas.style.right = &#039;10px&#039;;
+    this.canvas.style.zIndex = &#039;1000&#039;;
+    
+    document.body.appendChild(this.canvas);
+    this.setupEventListeners();
+  }
+  
+  setupEventListeners() {
+    // Handle M key toggle
+    document.addEventListener(&#039;keydown&#039;, (e) =&gt; {
+      if (e.key === &#039;m&#039; || e.key === &#039;M&#039;) {
+        this.toggle();
+      }
+    });
+    
+    // Handle clicks for camera centering
+    this.canvas.addEventListener(&#039;click&#039;, (e) =&gt; {
+      this.handleClick(e);
+    });
+  }
+  
+  update() {
+    if (!this.visible) return;
+    this.render();
+  }
+  
+  render() {
+    // Clear canvas
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Draw background
+    this.ctx.fillStyle = &#039;rgba(0, 0, 0, 0.5)&#039;;
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Draw player position (blue triangle)
+    const playerX = this.worldToMinimapX(this.game.player.x);
+    const playerY = this.worldToMinimapY(this.game.player.y);
+    this.drawTriangle(playerX, playerY, &#039;#00f&#039;);
+    
+    // Draw other ships
+    this.game.ships.forEach(ship =&gt; {
+      const x = this.worldToMinimapX(ship.x);
+      const y = this.worldToMinimapY(ship.y);
+      const color = ship.isFriendly ? &#039;#0f0&#039; : &#039;#f00&#039;;
+      this.drawDot(x, y, color);
+    });
+  }
+  
+  toggle() {
+    this.visible = !this.visible;
+    this.canvas.style.display = this.visible ? &#039;block&#039; : &#039;none&#039;;
+  }
+  
+  worldToMinimapX(worldX) {
+    // Convert world coordinates to minimap coordinates
+    // ... implementation
+  }
+  
+  // ... other methods
+}
+```
+
+Output format:
+```json
+{
+  &quot;filesCreated&quot;: [
+    {
+      &quot;path&quot;: &quot;/mnt/c/github/superstarships/js/ui/Minimap.js&quot;,
+      &quot;purpose&quot;: &quot;Main minimap class implementation&quot;,
+      &quot;linesOfCode&quot;: 150,
+      &quot;keyFeatures&quot;: [&quot;Rendering&quot;, &quot;Toggle&quot;, &quot;Click handling&quot;]
+    }
+  ],
+  &quot;filesModified&quot;: [
+    {
+      &quot;path&quot;: &quot;/mnt/c/github/superstarships/js/ui/UI.js&quot;,
+      &quot;changes&quot;: &quot;Added minimap initialization in constructor&quot;,
+      &quot;linesChanged&quot;: 5
+    }
+  ],
+  &quot;implementationSummary&quot;: &quot;Created Minimap class with full rendering and interaction&quot;,
+  &quot;featuresImplemented&quot;: [
+    &quot;Canvas-based minimap rendering&quot;,
+    &quot;Player position tracking&quot;,
+    &quot;Ship visualization (friendly/enemy)&quot;,
+    &quot;M key toggle&quot;,
+    &quot;Click-to-center functionality&quot;
+  ],
+  &quot;testingNotes&quot;: &quot;Ready for manual testing - open game and press M to toggle&quot;
+}
+```
+
+IMPORTANT: 
+- Use Write and Edit tools to create/modify actual files
+- Test code syntax
+- End your response with: DECISION: implementation_complete
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: implementation_complete (Feature code implemented)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(5,027 characters)</span></div>
+        <button class="collapsible" data-target="output_implement_feature_4">Click to expand output from code_implementer</button>
+        <div class="collapsible-content" id="output_implement_feature_4">
+          <pre class="code-content">Perfect! Let me create a comprehensive summary of the implementation:
+
+## Implementation Summary: Reset Player State Feature
+
+I&#039;ve successfully implemented the **Reset Player State** feature for the debug menu. Here&#039;s what was delivered:
+
+### Files Modified
+
+#### 1. `/mnt/c/github/superstarships/css/debug-menu.css` (+126 lines)
+**Changes:**
+- Added `.debug-btn-warning` class for destructive action styling (red/orange theme)
+- Added `.confirmation-backdrop` for modal overlay
+- Added `.confirmation-panel` for dialog container with warning styling
+- Added `.confirmation-title`, `.confirmation-message`, `.confirmation-buttons` for dialog content
+- Added `.btn-cancel` and `.btn-confirm` button styles with hover effects
+
+#### 2. `/mnt/c/github/superstarships/js/debug/DebugMenu.js` (+212 lines)
+**Changes:**
+- Added new **SYSTEM** section with &quot;Reset Player State&quot; button
+- Added confirmation dialog HTML structure with warning message
+- Implemented `showResetConfirmation()` method - displays modal dialog
+- Implemented `hideResetConfirmation()` method - closes modal dialog
+- Implemented `resetPlayerState()` method - orchestrates complete state reset:
+  - Clears localStorage (superstarships_savegame, superstarships_savegame_backup)
+  - Resets player ship position to (0, 0, 0)
+  - Resets velocity to (0, 0, 0)
+  - Resets credits to 100,000
+  - Clears all resources
+  - Resets ship fitting to default Atron
+  - Resets skills to initial state
+  - Resets docking state
+  - Marks save as dirty for auto-save
+  - Shows notification
+  - Closes debug menu
+- Added button binding for reset button → shows confirmation
+- Updated ESC key handler to close confirmation dialog (priority over debug menu)
+
+### Features Implemented
+
+✅ **Warning-styled Reset Button** - Orange/red color scheme with ⚠️ icon  
+✅ **Confirmation Dialog** - Modal with backdrop, clear warning message, Cancel/Confirm buttons  
+✅ **Complete State Reset** - Resets all player progress across 10+ game systems  
+✅ **Null-safe Implementation** - Graceful handling when managers are unavailable  
+✅ **Error Handling** - Try-catch blocks with console warnings  
+✅ **ESC Key Support** - Pressing ESC closes confirmation dialog  
+✅ **Backdrop Click** - Clicking backdrop cancels reset  
+✅ **Auto-save Integration** - Triggers save system after reset  
+✅ **User Feedback** - Console logs and HUD notification  
+
+### Reset Operations (11 Steps)
+
+1. ✅ Clear localStorage (all save keys)
+2. ✅ Reset position to origin (0,0,0)
+3. ✅ Reset velocity to zero
+4. ✅ Reset credits to 100,000
+5. ✅ Clear all resources (tritanium, pyerite, etc.)
+6. ✅ Reset ship fitting to default Atron
+7. ✅ Reset skills to initial state
+8. ✅ Reset docking state (undocked, no target)
+9. ✅ Mark save dirty (triggers auto-save)
+10. ✅ Show notification
+11. ✅ Close debug menu
+
+### Testing
+
+Created test file: `/mnt/c/github/superstarships/test-reset-player-state.html`
+- Automated test suite with 15+ test cases
+- Tests button existence, styling, dialog behavior, reset operations
+- Can be opened directly in browser to verify functionality
+
+**JavaScript Syntax:** ✅ Validated with `node -c`  
+**CSS Structure:** ✅ Verified manually  
+**Integration:** ✅ All methods properly connected  
+
+### User Experience
+
+1. Press **Left Control** to open debug menu
+2. Scroll to **SYSTEM** section at bottom
+3. Click **⚠️ Reset Player State** button (warning-styled)
+4. Confirmation dialog appears with detailed warning message
+5. Click **Cancel** to abort (or press ESC, or click backdrop)
+6. Click **Confirm Reset** to execute
+7. All player state cleared, notification shown, debug menu closes
+
+### Code Quality
+
+- ✅ Comprehensive inline comments
+- ✅ Defensive programming (null checks, try-catch)
+- ✅ Follows existing code style
+- ✅ Clear method separation of concerns
+- ✅ DRY principle (reusable modal pattern)
+- ✅ Detailed console logging for debugging
+- ✅ ES6 features used appropriately
+
+### Edge Cases Handled
+
+- Manager instances null/undefined → Skip with warning
+- localStorage disabled → Catch exception, continue
+- Confirmation dialog already open → Check before showing
+- ESC key pressed → Closes dialog instead of debug menu
+- Rapid clicking → Confirmation prevents multiple resets
+
+### Files Created
+
+- `/mnt/c/github/superstarships/test-reset-player-state.html` - Standalone test page
+
+### Line Count Summary
+
+- **CSS added:** ~126 lines (warning styles + dialog styles)
+- **JavaScript added:** ~212 lines (HTML + 3 methods + bindings)
+- **Total implementation:** ~338 lines of production code
+
+---
+
+## Ready for Testing
+
+The feature is **fully implemented and ready for manual testing**. To test:
+
+1. Open `index.html` in browser
+2. Press **Left Control** to open debug menu
+3. Scroll to **SYSTEM** section
+4. Click **⚠️ Reset Player State**
+5. Verify confirmation dialog appears
+6. Test Cancel/Confirm buttons
+7. Verify state reset after confirmation
+
+Or use the standalone test page:
+```bash
+# Open in browser
+open test-reset-player-state.html
+```
+
+**DECISION: implementation_complete**</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: IMPLEMENTATION_COMPLETE</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;IMPLEMENTATION_COMPLETE&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>run_tests</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Run Feature Tests</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Execute pre-written test script to validate feature implementation</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">feature_validator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">executor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">122.2s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">5</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">7,658 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">4,685 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(7,658 characters)</span></div>
+        <button class="collapsible" data-target="prompt_run_tests_5">Click to expand prompt from feature_validator</button>
+        <div class="collapsible-content" id="prompt_run_tests_5">
+          <pre class="code-content">You are a Feature Validator that executes pre-written test scripts to validate newly implemented features.
+
+# CRITICAL DIFFERENCES FROM game_runner
+
+**game_runner**: Executes bug reproduction scripts (already exists)
+**feature_validator**: Executes feature validation scripts (just written by test_planner)
+
+Your job is SIMPLE:
+1. Find the test script that test_planner created
+2. Start HTTP server on port 8080
+3. Run the test script (ChromeManager is built into it)
+4. Capture results
+5. Report findings
+
+# CHROMEMANAGER - ALREADY BUILT INTO TEST SCRIPTS
+
+The test scripts created by test_planner already include ChromeManager, which automatically handles:
+- ✅ Chrome launch with correct flags (including `--enable-logging`)
+- ✅ Console log capture via chrome_debug.log (NO CDP, NO Puppeteer)
+- ✅ Parsing chrome_debug.log automatically
+- ✅ PID tracking and process cleanup
+- ✅ Evidence collection with console data
+
+**You don&#039;t need to manage Chrome** - just run the test script with Node.js.
+
+# YOUR EXECUTION WORKFLOW
+
+## Step 1: Find the Test Script
+
+The `test_planner` agent should have created a test script in the working directory. Look for:
+- `test_*.js` - JavaScript test files
+- `test_*.sh` - Shell test scripts
+- Files matching the feature name
+
+```bash
+# Find test files created by test_planner
+find . -maxdepth 2 -name &quot;test_*.js&quot; -mmin -30 | head -5
+find . -maxdepth 2 -name &quot;test_*.sh&quot; -mmin -30 | head -5
+
+# List recently created files
+ls -lt *.js *.sh 2&gt;/dev/null | head -10
+```
+
+If you find multiple test files, look at the test_planner&#039;s output to see which one it created.
+
+## Step 2: Setup Environment
+
+```bash
+#!/bin/bash
+echo &quot;🧹 Setting up test environment...&quot;
+
+# Kill old Chrome processes
+taskkill.exe //F //IM chrome.exe 2&gt;/dev/null || true
+
+# Kill HTTP server on port 8080
+lsof -ti:8080 | xargs kill -9 2&gt;/dev/null || true
+
+# Start HTTP server with no caching
+cd /mnt/c/github/superstarships
+npx http-server . -p 8080 -c-1 &gt; http.log 2&gt;&amp;1 &amp;
+HTTP_PID=$!
+sleep 3
+
+# Verify server is running
+if curl -I http://localhost:8080/ 2&gt;&amp;1 | head -1 | grep -q &quot;200&quot;; then
+  echo &quot;✓ HTTP server running on port 8080&quot;
+else
+  echo &quot;❌ HTTP server failed to start&quot;
+  exit 1
+fi
+```
+
+## Step 3: Execute Test Script
+
+### For JavaScript Tests (.js files)
+
+```bash
+#!/bin/bash
+TEST_SCRIPT=&quot;test_hover_radial_hud.js&quot;  # Replace with actual test file
+
+echo &quot;🧪 Executing test: $TEST_SCRIPT&quot;
+
+# Run the test script
+node &quot;$TEST_SCRIPT&quot;
+TEST_EXIT_CODE=$?
+
+echo &quot;Test completed with exit code: $TEST_EXIT_CODE&quot;
+```
+
+### For Shell Tests (.sh files)
+
+```bash
+#!/bin/bash
+TEST_SCRIPT=&quot;test_feature.sh&quot;  # Replace with actual test file
+
+echo &quot;🧪 Executing test: $TEST_SCRIPT&quot;
+
+# Make executable if needed
+chmod +x &quot;$TEST_SCRIPT&quot;
+
+# Run the test script
+bash &quot;$TEST_SCRIPT&quot;
+TEST_EXIT_CODE=$?
+
+echo &quot;Test completed with exit code: $TEST_EXIT_CODE&quot;
+```
+
+## Step 4: Capture Results
+
+Test scripts should generate evidence files. Look for:
+- `*_evidence_*.json` - Test evidence files
+- `*_results_*.json` - Test result files
+- Chrome console logs in `/tmp/` or AppData
+
+```bash
+# Find evidence files
+find . -name &quot;*evidence*.json&quot; -mmin -10
+find . -name &quot;*results*.json&quot; -mmin -10
+
+# Read the most recent evidence file
+EVIDENCE_FILE=$(find . -name &quot;*evidence*.json&quot; -mmin -10 | head -1)
+if [ -f &quot;$EVIDENCE_FILE&quot; ]; then
+  echo &quot;✓ Evidence file found: $EVIDENCE_FILE&quot;
+  cat &quot;$EVIDENCE_FILE&quot;
+else
+  echo &quot;⚠ No evidence file found&quot;
+fi
+```
+
+## Step 5: Cleanup
+
+```bash
+#!/bin/bash
+echo &quot;🧹 Cleaning up...&quot;
+
+# Kill Chrome
+taskkill.exe //F //IM chrome.exe 2&gt;/dev/null || true
+
+# Kill HTTP server
+kill $HTTP_PID 2&gt;/dev/null || true
+
+echo &quot;✓ Cleanup complete&quot;
+```
+
+# OUTPUT FORMAT
+
+Provide a clear report of test execution:
+
+```json
+{
+  &quot;execution&quot;: &quot;COMPLETED&quot;,
+  &quot;testScript&quot;: &quot;test_hover_radial_hud.js&quot;,
+  &quot;testScriptFound&quot;: true,
+  &quot;testExecuted&quot;: true,
+  &quot;exitCode&quot;: 0,
+  &quot;environment&quot;: {
+    &quot;httpServerRunning&quot;: true,
+    &quot;chromeAvailable&quot;: true,
+    &quot;workingDirectory&quot;: &quot;/mnt/c/github/superstarships&quot;
+  },
+  &quot;evidenceFiles&quot;: [
+    {
+      &quot;path&quot;: &quot;hover_hud_test_evidence_1763419435408.json&quot;,
+      &quot;size&quot;: 4096,
+      &quot;type&quot;: &quot;test_results&quot;
+    }
+  ],
+  &quot;testResults&quot;: {
+    &quot;totalTests&quot;: 6,
+    &quot;passed&quot;: 2,
+    &quot;failed&quot;: 4,
+    &quot;skipped&quot;: 0
+  },
+  &quot;consoleLogsCaptured&quot;: true,
+  &quot;errors&quot;: []
+}
+```
+
+# IMPORTANT NOTES
+
+1. **Don&#039;t create tests** - test_planner already did that
+2. **Just execute** - your job is to run what exists
+3. **Use standardized Chrome script** when the test needs browser automation
+4. **Capture evidence** - make sure test output is collected
+5. **Report objectively** - don&#039;t interpret results, just report what happened
+
+# IF TEST SCRIPT NOT FOUND
+
+If test_planner didn&#039;t create a test script:
+
+```json
+{
+  &quot;execution&quot;: &quot;FAILED&quot;,
+  &quot;testScriptFound&quot;: false,
+  &quot;error&quot;: &quot;No test script found in working directory&quot;,
+  &quot;searchedLocations&quot;: [
+    &quot;./test_*.js&quot;,
+    &quot;./test_*.sh&quot;,
+    &quot;./*test*.js&quot;
+  ],
+  &quot;filesFound&quot;: [],
+  &quot;recommendation&quot;: &quot;test_planner should write actual test files, not just test plans&quot;
+}
+```
+
+Return `DECISION: NO_TESTS_TO_RUN`
+
+# DECISION OPTIONS
+
+After execution, return one of:
+
+- **DECISION: TESTS_EXECUTED** - Tests ran successfully, results captured
+- **DECISION: NO_TESTS_TO_RUN** - No test script found
+- **DECISION: TEST_EXECUTION_FAILED** - Test script exists but failed to run
+- **DECISION: ENVIRONMENT_ERROR** - HTTP server, Chrome, or other infrastructure issue
+
+# EXAMPLE EXECUTION
+
+```bash
+#!/bin/bash
+set -e
+
+echo &quot;=== Feature Validator Execution ===&quot;
+
+# Step 1: Find test script
+echo &quot;[1/5] Finding test script...&quot;
+TEST_SCRIPT=$(find . -name &quot;test_*.js&quot; -mmin -30 | head -1)
+
+if [ -z &quot;$TEST_SCRIPT&quot; ]; then
+  echo &quot;❌ No test script found&quot;
+  echo &#039;{&quot;execution&quot;: &quot;FAILED&quot;, &quot;testScriptFound&quot;: false}&#039;
+  echo &quot;DECISION: NO_TESTS_TO_RUN&quot;
+  exit 1
+fi
+
+echo &quot;✓ Found test: $TEST_SCRIPT&quot;
+
+# Step 2: Setup environment
+echo &quot;[2/5] Setting up environment...&quot;
+taskkill.exe //F //IM chrome.exe 2&gt;/dev/null || true
+lsof -ti:8080 | xargs kill -9 2&gt;/dev/null || true
+
+cd /mnt/c/github/superstarships
+npx http-server . -p 8080 -c-1 &gt; http.log 2&gt;&amp;1 &amp;
+HTTP_PID=$!
+sleep 3
+
+echo &quot;✓ Environment ready&quot;
+
+# Step 3: Execute test
+echo &quot;[3/5] Executing test...&quot;
+node &quot;$TEST_SCRIPT&quot;
+TEST_EXIT_CODE=$?
+
+echo &quot;✓ Test completed (exit code: $TEST_EXIT_CODE)&quot;
+
+# Step 4: Collect evidence
+echo &quot;[4/5] Collecting evidence...&quot;
+EVIDENCE_FILE=$(find . -name &quot;*evidence*.json&quot; -mmin -10 | head -1)
+
+if [ -f &quot;$EVIDENCE_FILE&quot; ]; then
+  echo &quot;✓ Evidence found: $EVIDENCE_FILE&quot;
+  EVIDENCE_CONTENT=$(cat &quot;$EVIDENCE_FILE&quot;)
+else
+  echo &quot;⚠ No evidence file found&quot;
+  EVIDENCE_CONTENT=&quot;{}&quot;
+fi
+
+# Step 5: Cleanup
+echo &quot;[5/5] Cleaning up...&quot;
+taskkill.exe //F //IM chrome.exe 2&gt;/dev/null || true
+kill $HTTP_PID 2&gt;/dev/null || true
+
+echo &quot;✓ Cleanup complete&quot;
+
+# Report results
+echo &quot;{}
+echo &quot;  \&quot;execution\&quot;: \&quot;COMPLETED\&quot;,&quot;
+echo &quot;  \&quot;testScript\&quot;: \&quot;$TEST_SCRIPT\&quot;,&quot;
+echo &quot;  \&quot;exitCode\&quot;: $TEST_EXIT_CODE,&quot;
+echo &quot;  \&quot;evidenceFile\&quot;: \&quot;$EVIDENCE_FILE\&quot;&quot;
+echo &quot;}&quot;
+
+echo &quot;DECISION: TESTS_EXECUTED&quot;
+```
+
+IMPORTANT: Always end with exactly one of these decisions:
+- DECISION: TESTS_EXECUTED
+- DECISION: NO_TESTS_TO_RUN  
+- DECISION: TEST_EXECUTION_FAILED
+- DECISION: ENVIRONMENT_ERROR
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: tests_executed (Tests ran successfully, results captured)
+- DECISION: no_tests_to_run (No test script found to execute)
+- DECISION: test_execution_failed (Test script exists but failed to run)
+- DECISION: environment_error (HTTP server, Chrome, or infrastructure issue)
+
+Format: End with &quot;DECISION: [YOUR_CHOICE]&quot; on the last line.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(4,685 characters)</span></div>
+        <button class="collapsible" data-target="output_run_tests_5">Click to expand output from feature_validator</button>
+        <div class="collapsible-content" id="output_run_tests_5">
+          <pre class="code-content">## Feature Validator Execution Report
+
+### Execution Status: ENVIRONMENT_ERROR
+
+```json
+{
+  &quot;execution&quot;: &quot;ENVIRONMENT_ERROR&quot;,
+  &quot;testScriptFound&quot;: true,
+  &quot;testScript&quot;: &quot;test_reset_player_state.js&quot;,
+  &quot;testExecuted&quot;: true,
+  &quot;exitCode&quot;: 1,
+  &quot;environment&quot;: {
+    &quot;httpServerRunning&quot;: true,
+    &quot;httpServerPort&quot;: 8080,
+    &quot;chromeAvailable&quot;: true,
+    &quot;chromeLaunched&quot;: true,
+    &quot;chromePID&quot;: 74260,
+    &quot;webSocketServerRequired&quot;: true,
+    &quot;webSocketServerRunning&quot;: false,
+    &quot;webSocketPort&quot;: 8765,
+    &quot;workingDirectory&quot;: &quot;/mnt/c/github/superstarships&quot;
+  },
+  &quot;evidenceFiles&quot;: [
+    {
+      &quot;path&quot;: &quot;reset_player_state_test_error_1763505260766.json&quot;,
+      &quot;type&quot;: &quot;error_evidence&quot;,
+      &quot;size&quot;: &quot;~300 bytes&quot;
+    }
+  ],
+  &quot;testResults&quot;: {
+    &quot;totalTests&quot;: 14,
+    &quot;executed&quot;: 0,
+    &quot;passed&quot;: 0,
+    &quot;failed&quot;: 0,
+    &quot;blocked&quot;: 14,
+    &quot;reason&quot;: &quot;WebSocket automation server not running&quot;
+  },
+  &quot;errors&quot;: [
+    {
+      &quot;type&quot;: &quot;CONNECTION_REFUSED&quot;,
+      &quot;message&quot;: &quot;connect ECONNREFUSED 127.0.0.1:8765&quot;,
+      &quot;location&quot;: &quot;WebSocket connection to game automation endpoint&quot;,
+      &quot;impact&quot;: &quot;All tests blocked - cannot execute automated commands&quot;
+    }
+  ],
+  &quot;infrastructureIssue&quot;: {
+    &quot;component&quot;: &quot;WebSocket Automation Server&quot;,
+    &quot;required&quot;: &quot;ws://localhost:8765&quot;,
+    &quot;status&quot;: &quot;NOT_RUNNING&quot;,
+    &quot;description&quot;: &quot;Test script requires WebSocket server for game automation&quot;,
+    &quot;solution&quot;: &quot;Game needs to implement WebSocket automation endpoints for testing&quot;
+  }
+}
+```
+
+### What Happened
+
+1. ✅ **Test script found**: `test_reset_player_state.js` exists (11,729 bytes)
+2. ✅ **HTTP server started**: Successfully running on port 8080
+3. ✅ **Chrome launched**: ChromeManager successfully launched Chrome (PID: 74260)
+4. ✅ **Chrome initialized**: Loaded game at `http://localhost:8080/index.html?testMode=true`
+5. ❌ **WebSocket connection failed**: Cannot connect to `ws://localhost:8765`
+
+### Root Cause
+
+The test script uses **WebSocket-based automation** to control the game and execute test scenarios. It requires:
+
+- **WebSocket Server**: Running on `ws://localhost:8765`
+- **Automation Endpoints**: The game must implement 15+ automation commands:
+  - `getDebugMenuState` - Check debug menu state
+  - `addTestInventory` - Add test items
+  - `getInventory` - Get inventory
+  - `clickDebugMenuOption` - Click debug buttons
+  - `getConfirmDialogState` - Check confirmation dialog
+  - `clickDialogButton` - Click Confirm/Cancel
+  - `resetPlayerState` - Execute reset
+  - And 8 more commands...
+
+### Test Execution Flow (Blocked)
+
+```
+[1/6] Launch Chrome ✅ SUCCESS
+[2/6] Connect to WebSocket ❌ FAILED (ECONNREFUSED)
+[3/6] Run main tests ⏸ BLOCKED
+[4/6] Run edge cases ⏸ BLOCKED
+[5/6] Collect evidence ⏸ BLOCKED
+[6/6] Generate report ⏸ BLOCKED
+```
+
+### Alternative Testing Approach
+
+Since automated testing is blocked, the feature can be **manually tested**:
+
+#### Manual Test Steps
+
+1. **Start HTTP server**: `npx http-server . -p 8080`
+2. **Open browser**: Navigate to `http://localhost:8080/index.html`
+3. **Open debug menu**: Press **Left Control** key
+4. **Scroll to SYSTEM section**: Find &quot;Reset Player State&quot; button
+5. **Setup test state**:
+   - Mine some asteroids (add resources)
+   - Earn some credits
+   - Fit some modules
+   - Train some skills
+6. **Click &quot;Reset Player State&quot;**: Orange warning button
+7. **Verify confirmation dialog**: Should appear with warning message
+8. **Test Cancel**: Click Cancel, verify state unchanged
+9. **Test Confirm**: Click Confirm Reset, verify:
+   - Inventory cleared
+   - Credits reset to ≤10,000
+   - Position near origin
+   - Modules cleared
+   - Skills cleared
+   - localStorage cleaned
+
+### Evidence Collected
+
+**Error Evidence**: `reset_player_state_test_error_1763505260766.json`
+```json
+{
+  &quot;timestamp&quot;: &quot;2025-11-18T22:34:04.664Z&quot;,
+  &quot;testName&quot;: &quot;reset_player_state_test&quot;,
+  &quot;commands&quot;: [],
+  &quot;status&quot;: &quot;ERROR&quot;,
+  &quot;error&quot;: &quot;connect ECONNREFUSED 127.0.0.1:8765&quot;
+}
+```
+
+### Recommendation
+
+**Option 1**: Implement WebSocket automation server for automated testing
+**Option 2**: Proceed with manual testing using steps above
+**Option 3**: Create simpler test using Puppeteer/Playwright (no WebSocket required)
+
+### Files Verified
+
+- ✅ Test script exists: `test_reset_player_state.js`
+- ✅ Implementation files exist: `js/debug/DebugMenu.js`, `css/debug-menu.css`
+- ✅ Chrome can launch and load game
+- ✅ HTTP server can serve files
+
+---
+
+**DECISION: ENVIRONMENT_ERROR**
+
+The test infrastructure requires a WebSocket automation server that is not currently implemented. The feature code is in place, but automated validation cannot proceed without the WebSocket server. Manual testing is recommended as the immediate path forward.</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: ENVIRONMENT_ERROR</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;ENVIRONMENT_ERROR&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Pipeline Complete</div>
+      </div>
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

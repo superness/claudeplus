@@ -1,0 +1,127 @@
+Now I have enough information to provide a comprehensive technical validation report. Let me compile my findings:
+
+---
+
+# Technical Validation Report: Warhammer 40K MMO Implementation
+
+## 1. CODE QUALITY: Design Patterns, Readability, Maintainability
+
+### Strengths
+- **Clean layered architecture**: Proper separation between API, Service, Repository, and Model layers
+- **TypeScript usage**: Strong typing throughout with interfaces and type guards
+- **Consistent code organization**: Files well-organized with clear sections and comments
+- **Factory pattern**: Good use of factory functions (`createNewCharacter`, `createDefaultAccount`)
+- **Singleton pattern**: Appropriate use for services (`getAuthService`, `getCharacterService`)
+- **Error handling pattern**: Custom error classes with error codes (`AuthServiceError`, `CharacterServiceError`)
+
+### Issues Found
+1. **Inconsistent service implementation**: `CharacterService` uses in-memory `Map` storage while `auth.service.ts` uses database repositories - the service layer has two different patterns coexisting
+2. **Missing `isOwner` method**: The `CharacterService` class (`character.service.ts:76-486`) does not export an `isOwner` method, but it's called in `api/index.ts:147`. Only `verifyOwnership` exists which throws instead of returning a boolean
+3. **Duplicate model files**: The exploration noted files like `economy.ts` vs `economy.model.ts`, `skill.ts` vs `skill.model.ts` - incomplete consolidation
+4. **Test-service mismatch**: Tests in `character.service.test.ts` reference methods that don't exist in the actual service implementation (e.g., `validateCharacterCreation`, `calculateAttributeChange`, `isValidClassForFaction`)
+
+## 2. SECURITY ISSUES: Vulnerabilities Found
+
+### Critical Issues - NONE FOUND
+
+### Medium Issues
+1. **Missing character ownership validation in updatePosition/updateZone** (`character.service.ts:375-402`): These methods don't verify account ownership before updating - only check if character exists
+2. **Auth API response leak** (`auth.api.ts:85-87`): Uses `(account as any).displayName` which could mask type errors and expose unexpected properties
+
+### Low Issues
+1. **Rate limiter memory growth**: `api/index.ts:180-196` - The rate limiter stores timestamps indefinitely until cleanup interval; under high load could grow large
+2. **JWT secret in config**: Referenced via `config.auth.jwtSecret` - ensure this is loaded from environment variables in production
+
+### Addressed (Previously Fixed)
+- SQL injection in `loginAttemptRepository.cleanup()` - now uses parameterized queries
+- SQL parameter bug in `updateStatus()` - fixed parameter ordering
+- WebSocket rate limiting added
+- Position validation for move commands added
+- Token not passed in URL for WebSocket auth
+
+## 3. PERFORMANCE CONCERNS: Bottlenecks or Inefficiencies
+
+### Medium Concerns
+1. **In-memory character storage** (`character.service.ts:69-71`): Full iteration through `Map` for queries like `getCharactersByAccount` - O(n) for every request. Won't scale.
+
+2. **Rate limiter cleanup** (`api/index.ts:183-196`): Iterates through all entries on each cleanup - consider using an expiring cache like `node-cache`
+
+3. **Combat service cleanup intervals** (`combat.service.ts:130-133`): Two separate intervals for cleanup could be consolidated
+
+### Low Concerns
+1. **Sorting in memory** (`character.service.ts:89-91`): Characters sorted after retrieval instead of at database level
+
+## 4. BUGS AND ISSUES: Correctness Problems
+
+### Critical Bugs
+1. **Missing `isOwner` method** - The `characterOwnershipMiddleware` in `api/index.ts:147` calls `characterService.isOwner()` which does not exist in `CharacterService`. This will cause runtime errors.
+
+```typescript
+// api/index.ts:145-148
+characterService.isOwner(characterId, accountId)  // This method doesn't exist!
+  .then((isOwner: boolean) => {
+```
+
+The service only has `verifyOwnership()` which throws errors instead of returning boolean.
+
+2. **RegisterResponse field mismatch** (`auth.api.ts:85`):
+```typescript
+id: account.accountId,  // Should be account.id based on Account model
+```
+The Account model uses `id`, not `accountId`.
+
+### Medium Bugs
+3. **Character router applies auth twice**: In `api/index.ts:439`, auth middleware is applied at mount point, AND `character.api.ts:470` applies `requireAuth` again via `router.use(requireAuth)`. This redundancy is harmless but wasteful.
+
+4. **Test files reference non-existent methods**: `character.service.test.ts` tests methods like `validateCharacterCreation`, `calculateXpGain`, `isValidClassForFaction` that don't exist in the actual implementation.
+
+### Low Bugs
+5. **`substr` deprecated** (`combat.service.ts:634,638`): Uses deprecated `substr()` instead of `substring()` or template literals
+
+## 5. RECOMMENDATIONS: Required Fixes
+
+### Must Fix Before Deployment
+1. **Add `isOwner` method to CharacterService**:
+```typescript
+async isOwner(characterId: string, accountId: string): Promise<boolean> {
+  const character = await this.getCharacterById(characterId);
+  return character?.accountId === accountId;
+}
+```
+
+2. **Fix RegisterResponse field name** in `auth.api.ts:85`:
+```typescript
+id: account.id,  // Not account.accountId
+```
+
+3. **Add ownership checks** to `updatePosition` and `updateZone` methods in CharacterService
+
+4. **Update tests** to match actual service implementation or add missing service methods
+
+### Should Fix
+5. Replace in-memory character storage with actual database repository calls
+6. Consolidate duplicate model files (remove `economy.ts`, `skill.ts` if `.model.ts` versions exist)
+7. Remove duplicate auth middleware application
+8. Replace deprecated `substr()` with `substring()`
+
+### Consider
+9. Add database indices review for query patterns used
+10. Add integration tests that test actual DB operations
+11. Consider Redis for rate limiting in production
+
+## 6. VERDICT
+
+**NEEDS_REVISION**
+
+### Rationale
+The implementation has a **critical bug** (missing `isOwner` method) that will cause runtime failures when the character ownership middleware is invoked. Additionally:
+
+- The `auth.api.ts` uses `account.accountId` when the model defines `account.id`
+- Tests don't match the actual service implementation
+- Service methods that modify characters don't verify ownership
+
+These issues must be resolved before the implementation can be approved. The architectural design is sound, security practices are generally good (SQL injection fixed, rate limiting added, proper JWT handling), but the correctness bugs prevent approval.
+
+---
+
+DECISION: needs_revision

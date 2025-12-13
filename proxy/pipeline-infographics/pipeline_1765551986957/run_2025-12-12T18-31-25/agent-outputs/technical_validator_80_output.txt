@@ -1,0 +1,154 @@
+Now I have enough information to provide a comprehensive technical validation. Here is my assessment:
+
+---
+
+# Technical Validation Report: Warhammer 40K MMO Backend
+
+## 1. CODE QUALITY
+
+### Design Patterns ✅ Good
+- **Repository Pattern**: Properly implemented with `AccountRepository`, `RefreshTokenRepository`, `LoginAttemptRepository`
+- **Service Layer**: Clean separation between API handlers and business logic
+- **Dependency Injection**: `AuthService` constructor accepts repository dependencies, enabling testing
+- **Singleton Pattern**: Appropriately used for services (`getAuthService()`, `combatService`)
+
+### Readability ✅ Good
+- Consistent TypeScript interfaces and types
+- Well-documented code with JSDoc comments
+- Clear naming conventions (e.g., `verifyOwnership`, `checkAccountLockout`)
+
+### Maintainability ⚠️ Minor Issues
+- **Model Mismatch**: `account.model.ts:6` uses `id` but `account.repository.ts:41` maps to `accountId` - inconsistent interface
+- **Type Casting**: `auth.service.ts:377` uses `(account as any).displayName` suggesting interface alignment issues
+- Some code duplication in API error handling
+
+---
+
+## 2. SECURITY ISSUES
+
+### ✅ Fixed Security Issues (from prior validation)
+1. **Database-backed refresh tokens**: Tokens stored in `refresh_tokens` table with SHA-256 hashing (`account.repository.ts:260-261`)
+2. **Database-backed login attempts**: Rate limiting persisted in `login_attempts` table for horizontal scaling
+3. **Character ownership verification**: `characterService.isOwner()` and `verifyOwnership()` properly implemented
+4. **WebSocket first-message auth**: Combat service uses message-based authentication, not URL query params
+5. **JWT secret validation**: Config blocks startup with default secret in production (`config/index.ts:51-57`)
+
+### ⚠️ Remaining Security Concerns
+
+1. **Missing `await` in logout** (`auth.api.ts:200`):
+   ```typescript
+   authService.revokeRefreshToken(refreshToken); // Should be await
+   ```
+   This is a fire-and-forget that could fail silently.
+
+2. **IP Address Trust**: Rate limiting uses `req.ip` directly without X-Forwarded-For handling for proxied environments (`api/index.ts:205`)
+
+3. **Missing CSRF Protection**: No CSRF tokens for state-changing operations on web clients
+
+4. **Password Reset Token Storage**: Schema has `password_reset_token` stored in plaintext - should be hashed like refresh tokens
+
+---
+
+## 3. PERFORMANCE CONCERNS
+
+### ✅ Good Practices
+- Connection pooling configured (`database.ts:65-75`)
+- Slow query logging (`database.ts:132-134`)
+- Cleanup intervals for stale WebSocket connections and empty instances
+- Pagination with limit caps (max 100 per page)
+
+### ⚠️ Potential Bottlenecks
+
+1. **In-Memory Rate Limiting** (`api/index.ts:176-242`): Despite database-backed login attempts, API rate limiting still uses in-memory Map. Not suitable for horizontal scaling.
+
+2. **Missing Database Indexes**: The `login_attempts` table has a partial unique constraint issue - the ON CONFLICT clause (`account.repository.ts:374-378`) assumes a unique index on `ip_address WHERE account_email IS NULL` but the migration doesn't create one.
+
+3. **WebSocket Broadcast**: `broadcastToInstance()` iterates all clients for each message (`combat.service.ts:554-570`). Should maintain per-instance client sets.
+
+---
+
+## 4. BUGS AND ISSUES
+
+### 🔴 Critical Bugs
+
+1. **Missing Unique Constraint** (`001_initial_schema.sql`):
+   ```sql
+   -- Line 373-378 in repository assumes this exists:
+   ON CONFLICT (ip_address) WHERE account_email IS NULL
+   ```
+   But the migration only has `CREATE INDEX idx_login_attempts_ip ON login_attempts(ip_address);` - missing the partial unique index.
+
+2. **Login Handler Missing IP Parameter** (`auth.api.ts:109-114`):
+   ```typescript
+   const { account, tokens } = await authService.login({
+     email,
+     password,
+     deviceId,
+     platform
+   });
+   ```
+   The `login()` method expects `ipAddress` as second parameter but it's not passed!
+
+### 🟡 Moderate Issues
+
+3. **Character Ownership Middleware `require()`** (`api/index.ts:145`):
+   ```typescript
+   const { characterService } = require('../services/character.service');
+   ```
+   Using `require()` inside middleware causes potential caching issues and breaks TypeScript type checking.
+
+4. **Auth API Login Signature Mismatch**: `authService.login()` expects `(request, ipAddress, userAgent?)` but `auth.api.ts:109` calls it with only the request object.
+
+---
+
+## 5. RECOMMENDATIONS
+
+### Required Fixes (Must Address)
+
+1. **Fix login handler to pass IP address**:
+   ```typescript
+   const ipAddress = req.ip || req.socket.remoteAddress || '0.0.0.0';
+   const userAgent = req.headers['user-agent'];
+   const { account, tokens } = await authService.login(
+     { email, password },
+     ipAddress,
+     userAgent
+   );
+   ```
+
+2. **Add missing partial unique index** in migration:
+   ```sql
+   CREATE UNIQUE INDEX idx_login_attempts_ip_unique 
+   ON login_attempts(ip_address) WHERE account_email IS NULL;
+   ```
+
+3. **Add `await` to logout token revocation**:
+   ```typescript
+   await authService.revokeRefreshToken(refreshToken);
+   ```
+
+4. **Fix model interface consistency** - align `Account` interface to use either `id` or `accountId` consistently.
+
+### Recommended Improvements
+
+5. Replace in-memory rate limiting with Redis for horizontal scaling
+6. Add CSRF protection for web clients
+7. Hash password reset tokens like refresh tokens
+8. Optimize WebSocket broadcast with per-instance client tracking
+
+---
+
+## 6. VERDICT
+
+**NEEDS_REVISION**
+
+The implementation has solid architecture and addresses prior security concerns well. However, there are **critical bugs** that will cause runtime failures:
+
+1. The login API handler doesn't pass the required `ipAddress` parameter to the auth service
+2. Missing database constraint will cause ON CONFLICT to fail
+
+These must be fixed before the code can be considered production-ready.
+
+---
+
+DECISION: needs_revision

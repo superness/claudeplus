@@ -1,0 +1,228 @@
+# Deep Analysis: Bitcoin Stratum Pool Protocol & Block Submission
+
+## TOPIC_BREAKDOWN
+
+This is a **technical protocol analysis** spanning multiple layers of the Bitcoin mining ecosystem:
+
+### Core Components:
+
+1. **Stratum Protocol Layer** - The communication protocol between miners and pools
+2. **Block Template Generation** - How pools construct work from daemon's `getblocktemplate`
+3. **Job Distribution** - How work units are packaged and sent to miners
+4. **Share Submission** - The structure miners use to report work
+5. **Block Submission** - The complete pipeline from found block to blockchain
+
+### Scope Boundaries:
+- SHA256 (Bitcoin/BTC) specifically (not Scrypt, Equihash, etc.)
+- Stratum v1 protocol (the dominant implementation)
+- Full lifecycle: template → job → share → block
+
+---
+
+## CONTROVERSIES & DEBATABLE ASPECTS
+
+### 1. **Coinbase Transaction Construction**
+- **Extranonce placement**: extranonce1 (pool-assigned) vs extranonce2 (miner-iterated)
+- **Coinbase scriptSig structure**: Where exactly pool signature, extranonces, and block height go
+- **Witness commitment**: SegWit blocks require witness merkle root in coinbase output
+
+### 2. **Merkle Branch vs Full Merkle Tree**
+- Pools send **merkle branches** (not full tree) - miner reconstructs root
+- Single transaction (coinbase only): Empty merkle branch array
+- Multiple transactions: Branch is path from coinbase to root
+
+### 3. **Byte Order Confusion** (Major Source of Bugs)
+- **Block header fields**: Some little-endian, some big-endian
+- **Merkle root**: Calculated in natural order, placed in header reversed
+- **Previous block hash**: Reversed when displayed, natural in header
+- **Target/nBits**: Compact format with specific encoding rules
+
+### 4. **Address Type Variations**
+- P2PKH (legacy 1xxx addresses)
+- P2SH (3xxx addresses)
+- P2WPKH (native SegWit bc1q)
+- P2WSH (bc1q longer)
+- P2TR (Taproot bc1p)
+- Each produces different coinbase output script structures
+
+---
+
+## PERSPECTIVES & TECHNICAL ANGLES
+
+### From Pool Operator Perspective:
+```
+getblocktemplate (RPC) → Parse → Construct Coinbase → Build Merkle → Create Job → Distribute
+```
+
+### From Miner Perspective:
+```
+Receive Job → Iterate extranonce2 + nonce → Hash Header → Compare Target → Submit Share
+```
+
+### From Protocol Perspective:
+
+**Job Notification (`mining.notify`):**
+```json
+{
+  "params": [
+    "job_id",           // Arbitrary string
+    "prevhash",         // 32 bytes, specific byte order
+    "coinb1",           // Coinbase part 1 (before extranonce)
+    "coinb2",           // Coinbase part 2 (after extranonce)
+    "merkle_branch",    // Array of 32-byte hashes
+    "version",          // Block version (4 bytes)
+    "nbits",            // Target in compact form
+    "ntime",            // Current timestamp
+    "clean_jobs"        // Boolean - discard old work?
+  ]
+}
+```
+
+**Share Submission (`mining.submit`):**
+```json
+{
+  "params": [
+    "worker_name",
+    "job_id",
+    "extranonce2",      // Miner's iteration value
+    "ntime",            // May be rolled by miner
+    "nonce"             // 4-byte winning nonce
+  ]
+}
+```
+
+---
+
+## EVIDENCE_SOURCES
+
+1. **Stratum Protocol Documentation** - slushpool's original spec
+2. **Bitcoin Core RPC** - `getblocktemplate`, `submitblock` specifications
+3. **BIP 22/23** - getblocktemplate protocol
+4. **BIP 141** - SegWit transaction/block structure
+5. **Reference Implementations** - CoiniumServ, ckpool, stratum-mining
+6. **Bitcoin Block Structure** - 80-byte header specification
+
+---
+
+## ARGUABILITY & THESIS-LEVEL UNDERSTANDING
+
+### The Core Technical Thesis:
+
+**"A valid Bitcoin block submission through Stratum requires precise coordination of byte ordering, merkle tree construction, and coinbase serialization across four distinct system boundaries (miner→pool→daemon→network), where each boundary has different endianness expectations and the coinbase transaction structure varies significantly based on address type and witness commitment requirements."**
+
+### Key Thesis Components to Defend:
+
+#### 1. **Block Header Construction (80 bytes)**
+```
+[version:4][prev_hash:32][merkle_root:32][time:4][bits:4][nonce:4]
+```
+- Version: little-endian
+- Prev hash: internal byte order (reversed from RPC display)
+- Merkle root: **THIS IS WHERE BUGS LIVE** - must match exact construction
+- Time: little-endian, can be rolled within constraints
+- Bits: little-endian compact target
+- Nonce: little-endian, miner's search space
+
+#### 2. **Coinbase Transaction Construction**
+
+**For P2PKH (legacy):**
+```
+Output script: OP_DUP OP_HASH160 <20-byte-pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
+```
+
+**For P2SH:**
+```
+Output script: OP_HASH160 <20-byte-scripthash> OP_EQUAL
+```
+
+**For P2WPKH (native SegWit):**
+```
+Output script: OP_0 <20-byte-pubkeyhash>
+```
+
+**For P2TR (Taproot):**
+```
+Output script: OP_1 <32-byte-tweaked-pubkey>
+```
+
+#### 3. **Merkle Tree Construction**
+
+**Zero transactions (coinbase only):**
+- Merkle root = txid of coinbase (double-SHA256 of serialized coinbase)
+- Merkle branch array is **empty** `[]`
+
+**One+ transactions:**
+- Build tree bottom-up, pairing hashes
+- Odd count: duplicate last hash
+- Branch contains sibling hashes from coinbase to root
+- Miner reconstructs: `hash(coinbase_txid + branch[0])`, then iterate
+
+#### 4. **The submitblock Pipeline**
+
+```
+MINER finds nonce where SHA256(SHA256(header)) < target
+   ↓
+MINER sends: mining.submit(worker, job_id, extranonce2, ntime, nonce)
+   ↓
+POOL reconstructs:
+   1. Coinbase = coinb1 + extranonce1 + extranonce2 + coinb2
+   2. Coinbase_txid = SHA256(SHA256(coinbase))
+   3. Merkle_root = reduce(merkle_branch, coinbase_txid)
+   4. Header = version + prevhash + merkle_root + ntime + nbits + nonce
+   5. Verify: SHA256(SHA256(header)) < network_target
+   ↓
+POOL constructs full block:
+   - Header (80 bytes)
+   - Varint transaction count
+   - Coinbase transaction (serialized)
+   - Other transactions (from template, serialized)
+   ↓
+POOL calls: submitblock(hex_encoded_block)
+   ↓
+DAEMON validates and broadcasts to network
+```
+
+#### 5. **Critical Byte Order Rules**
+
+| Field | In Header | In RPC Display | In Merkle Calc |
+|-------|-----------|----------------|----------------|
+| prev_hash | LE (internal) | BE (reversed) | N/A |
+| merkle_root | LE (internal) | BE (reversed) | Natural during calc |
+| txids | N/A | BE (reversed) | LE for hashing |
+
+---
+
+## The Controversial Technical Details
+
+### Why `bad-txnmrklroot` Errors Occur:
+
+1. **Double-reversal bug**: Reversing already-reversed data
+2. **Single tx edge case**: Empty merkle branch means root = coinbase txid directly
+3. **Witness vs non-witness txid**: SegWit uses wtxid for witness merkle, txid for block merkle
+4. **Serialization format**: Legacy vs SegWit coinbase serialization differences
+
+### SegWit Witness Commitment (When Transactions Exist):
+```
+Coinbase must include output with:
+OP_RETURN <witness_commitment>
+
+Where witness_commitment = SHA256(SHA256(witness_merkle_root || witness_reserved_value))
+```
+
+---
+
+## ARGUABILITY
+
+This topic is **highly arguable** at the thesis level because:
+
+1. **Implementation varies** - Different pools handle byte ordering differently
+2. **Documentation is scattered** - No single authoritative source
+3. **Edge cases are poorly documented** - Single-transaction blocks, various address types
+4. **Bugs are common** - The merkle root calculation is a notorious source of errors
+5. **Protocol evolved** - SegWit added complexity not in original Stratum spec
+
+**The thesis demands proving understanding through working implementation, not just theoretical knowledge.**
+
+---
+
+DECISION: analysis_complete

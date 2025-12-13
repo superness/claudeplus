@@ -1,0 +1,61 @@
+Perfect! Now I have all the evidence I need. Let me trace through the execution flow to identify the root cause:
+
+## Root Cause Analysis
+
+```json
+{
+  "rootCause": "Ship stat synchronization is DISABLED - syncStatsFromFitting() is NO LONGER called during physics updates. The 'shipStatsUpdated' event listener (Ship.js:50-56) expects to receive events when fitting changes, but this synchronization mechanism is broken. Without stat synchronization, fitted afterburners never actually modify the ship's physics properties (maxVelocity, agility, timeConstant), causing the base physics values to remain unchanged regardless of fitting.",
+  
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [210, 213, 216],
+      "currentCode": "updateWithNavigation(deltaTime, navigationCommand, inputManager = null) {\n    if (!this.isPlayer) return;\n\n    // Bug fix: REMOVED syncStatsFromFitting() from every-frame update\n    // This was causing multiply effects to compound exponentially (maxSpeed 350 → 525 → 787 → ...)\n    // Stats are now synced ONLY when fitting changes via 'shipStatsUpdated' event listener\n    // See constructor for event listener setup",
+      "problem": "Previous bug fix REMOVED every-frame stat sync to prevent multiply compounding, but the replacement event-driven system is not working. The event listener exists (lines 50-56) but events are never being dispatched when fitting changes."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [382, 392],
+      "currentCode": "dispatchStatsUpdatedEvent(shipId) {\n    const event = new CustomEvent('shipStatsUpdated', {...});\n    document.dispatchEvent(event);\n\n    // Also trigger immediate sync for player ship\n    if (shipId === this.playerShipId && window.simulator?.playerShip) {\n        window.simulator.playerShip.syncStatsFromFitting();\n    }",
+      "problem": "Event IS being dispatched, but the manual sync fallback (line 393) suggests the event listener approach is unreliable. The code tries both event dispatch AND immediate sync, indicating awareness of event system failures."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [315, 336, 337, 338, 339, 340],
+      "currentCode": "} else if (effect.type === 'multiply') {\n    const baseValue = fitting.currentStats[actualStatName] || 0;\n    if (baseValue === 0) { /* skip */ }\n    if (apply) {\n        fitting.currentStats[actualStatName] = baseValue * effect.value;\n    } else {\n        fitting.currentStats[actualStatName] = baseValue / effect.value;\n    }",
+      "problem": "Multiply effects REPLACE the value with (baseValue * multiplier) instead of applying a percentage bonus. This is correct for fitting.currentStats, but Ship.physics never receives these updated values because syncStatsFromFitting() is not being called reliably."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [71, 85, 86, 87],
+      "currentCode": "syncStatsFromFitting() {\n    if (!this.isPlayer) return; // Only sync for player ship\n    ...\n    const maxVel = (stats.maxSpeed && stats.maxSpeed > 0) ? stats.maxSpeed : stats.maxVelocity;\n    if (maxVel !== undefined && maxVel > 0) {\n        this.physics.maxVelocity = maxVel;\n    }",
+      "problem": "This function SHOULD copy stats from fitting to physics, but it's NEVER being called after fitting changes. Without this sync, fitted afterburners have NO effect on ship physics."
+    }
+  ],
+  
+  "executionFlow": [
+    "1. Player fits 'basic_afterburner' to ship",
+    "2. ShipFittingManager.fitItem() is called (line 187)",
+    "3. Item is added to fitting.slots[mid][slotIndex] (line 212-215)",
+    "4. ShipFittingManager.recalculateShipStats() is called (line 219)",
+    "5. fitting.currentStats.maxSpeed is calculated as baseStats.maxVelocity * 1.5 (line 337)",
+    "6. fitting.currentStats.agility is calculated as baseStats.agility * 0.9 (line 337)",
+    "7. ShipFittingManager.dispatchStatsUpdatedEvent() is called (line 222)",
+    "8. CustomEvent 'shipStatsUpdated' is dispatched (line 389)",
+    "9. Ship's event listener (line 50-56) SHOULD receive event and call syncStatsFromFitting()",
+    "10. **FAILURE POINT**: Event listener does NOT trigger reliably",
+    "11. Fallback: Manual sync is attempted at line 393",
+    "12. **SECOND FAILURE**: window.simulator.playerShip may not be initialized yet",
+    "13. Ship.physics.maxVelocity remains at base value (350 m/s)",
+    "14. Ship.physics.agility remains at base value",
+    "15. Ship.physics.timeConstant remains unchanged",
+    "16. Physics engine uses UNCHANGED values → no speed boost from afterburner"
+  ],
+  
+  "whyItHappens": "The stat synchronization system was refactored to prevent multiply effect compounding (removing every-frame sync), but the replacement event-driven system is unreliable. The event listener in Ship.js constructor (lines 50-56) listens for 'shipStatsUpdated' events, but either: (1) Events are dispatched before the listener is registered, (2) The listener is not registered in the correct execution context, or (3) The listener is removed/garbage collected prematurely. The fallback manual sync (ShipFittingManager.js:393) also fails because it accesses window.simulator.playerShip, which may not exist during early initialization.",
+  
+  "proposedFix": "OPTION 1 (Recommended): Restore periodic stat sync but prevent multiply compounding by tracking which stats have been synced\n\nIn Ship.js updateWithNavigation():\n- Add flag: this._statsNeedSync = true (set by event listener)\n- Check flag every frame: if (this._statsNeedSync) { this.syncStatsFromFitting(); this._statsNeedSync = false; }\n- Event listener sets flag: this._statsNeedSync = true\n\nThis ensures stats sync happens ONCE per fitting change (on next frame), not every frame.\n\nOPTION 2: Fix the event-driven system by ensuring listener registration happens BEFORE any fitItem() calls\n\nOPTION 3: Use a direct callback reference instead of DOM events:\n- Ship.registerFittingCallback(callback)\n- ShipFittingManager calls ship.fittingCallback() directly\n- Avoids DOM event timing issues"
+}
+```
+
+DECISION: root_cause_found

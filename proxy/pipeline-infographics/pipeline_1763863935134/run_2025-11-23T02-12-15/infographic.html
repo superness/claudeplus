@@ -1,0 +1,1890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: Mining Infrastructure Setup</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+
+    
+
+    <div class="header">
+      <h1><span class="running-indicator"></span>Mining Infrastructure Setup</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1763863935134</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">709.5s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">4/5</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">⚡ Running</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Verify Dependencies</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Check that bitcoind, CoiniumServ, and miner software are installed and accessible</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">config_generator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">72.9s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">449 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">2,197 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(449 characters)</span></div>
+        <button class="collapsible" data-target="prompt_verify_dependencies_1">Click to expand prompt from config_generator</button>
+        <div class="collapsible-content" id="prompt_verify_dependencies_1">
+          <pre class="code-content">You are CONFIG_GENERATOR. Complete your task.
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- dependencies_ok: All required software found and verified
+- missing_dependencies: Required software missing or not accessible
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: dependencies_ok
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(2,197 characters)</span></div>
+        <button class="collapsible" data-target="output_verify_dependencies_1">Click to expand output from config_generator</button>
+        <div class="collapsible-content" id="output_verify_dependencies_1">
+          <pre class="code-content">Based on my analysis of the CoiniumServ mining pool software, I can verify the following dependencies:
+
+## Dependencies Verification Summary
+
+### ✅ FOUND - Required Software:
+1. **Mono Runtime**: Version 6.8.0.105 (Debian) - CONFIRMED
+   - Location: `/usr/bin/mono`
+   - This is the critical runtime needed to execute the compiled .NET executable
+
+2. **Compiled Executable**: CoiniumServ.exe - CONFIRMED
+   - Location: `/mnt/c/github/private-SuperCoinServ/build/bin/Debug/CoiniumServ.exe`
+   - Size: 453KB
+   - Ready to run
+
+3. **systemd**: CONFIRMED
+   - Location: `/usr/bin/systemctl`
+   - Available for creating system services with automatic restart/recovery
+
+4. **Network Ports**: AVAILABLE
+   - Port 3333 (Stratum mining): Available
+   - Port 81 (Web interface): Available
+
+### ✅ Configuration Files:
+1. Main config: `/mnt/c/github/private-SuperCoinServ/build/bin/Debug/config/config.json`
+2. Pool config: `/mnt/c/github/private-SuperCoinServ/build/bin/Debug/config/pools/default.json`
+3. Stratum configuration verified with bind address `0.0.0.0:3333`
+
+### 🔍 Code Analysis:
+- **SocketServer.cs** (lines 147-152): Contains socket binding error handling with fatal logging
+- **StratumServer.cs** (lines 97-103): Implements the Listen() method that starts Stratum service
+- Current implementation logs fatal errors on port binding failures but does NOT have automatic recovery
+
+### ❌ MISSING - For Enhanced Reliability:
+1. **MSBuild/dotnet**: Not found (optional - executable already compiled)
+2. **Automatic Recovery Mechanism**: Not implemented in current codebase
+3. **Service Management Scripts**: No startup scripts found
+
+### System Capabilities:
+- OS: Linux (WSL2) on kernel 6.6.87.2
+- Platform: amd64
+- Service manager: systemd available for auto-restart functionality
+
+## Conclusion:
+All **critical dependencies** for running the mining pool server are present and accessible. The Mono runtime can execute the compiled CoiniumServ.exe. However, automatic recovery for Stratum port binding issues needs to be implemented through systemd service configuration with restart policies, as the current codebase only logs fatal errors without recovery mechanisms.
+
+DECISION: dependencies_ok</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: DEPENDENCIES_OK</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;DEPENDENCIES_OK&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>generate_configs</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Generate Configurations</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Create all configuration files: bitcoin.conf, pool config.json, miner settings</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">config_generator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">186.1s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">2</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">468 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">2,962 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(468 characters)</span></div>
+        <button class="collapsible" data-target="prompt_generate_configs_2">Click to expand prompt from config_generator</button>
+        <div class="collapsible-content" id="prompt_generate_configs_2">
+          <pre class="code-content">You are CONFIG_GENERATOR. Complete your task.
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- configs_generated: All configuration files created successfully
+- config_generation_failed: Failed to generate one or more configuration files
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: configs_generated
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(2,962 characters)</span></div>
+        <button class="collapsible" data-target="output_generate_configs_2">Click to expand output from config_generator</button>
+        <div class="collapsible-content" id="output_generate_configs_2">
+          <pre class="code-content">Perfect! I have successfully generated all configuration files for the complete mining infrastructure with automatic recovery for Stratum port binding issues.
+
+## Generated Configuration Files
+
+### 1. **coiniumserv.service** - systemd Service Configuration
+Location: `/mnt/c/github/private-SuperCoinServ/coiniumserv.service`
+
+Features:
+- Automatic restart on failure (up to 5 times in 5 minutes)
+- Pre-start port cleanup using `fuser -k 3333/tcp`
+- Resource limits (65536 file descriptors, 4096 processes)
+- systemd journal logging
+- Runs from the Debug build directory
+
+### 2. **scripts/start-pool.sh** - Startup Script with Port Recovery
+Location: `/mnt/c/github/private-SuperCoinServ/scripts/start-pool.sh`
+
+Features:
+- Automatic detection and cleanup of stale processes
+- Port conflict resolution (kills processes on ports 3333 and 81)
+- Retry logic (5 attempts with 10-second delays)
+- Configuration file validation
+- Color-coded logging output
+- Root permission verification
+
+### 3. **scripts/monitor-pool.sh** - Health Monitoring Script
+Location: `/mnt/c/github/private-SuperCoinServ/scripts/monitor-pool.sh`
+
+Features:
+- Process status checking
+- Port listening verification (Stratum 3333, Web 81)
+- Active connection counting
+- Disk space monitoring
+- Log file size tracking
+- Continuous monitoring mode with optional auto-restart
+- Email alert support (configurable)
+
+### 4. **scripts/install-service.sh** - Installation Script
+Location: `/mnt/c/github/private-SuperCoinServ/scripts/install-service.sh`
+
+Features:
+- Automated service installation
+- Prerequisite checking (systemd, mono, utilities)
+- Permission configuration
+- Service enablement for auto-start on boot
+- Status reporting
+- Uninstall functionality
+- Reinstall option
+
+### 5. **DEPLOYMENT.md** - Comprehensive Documentation
+Location: `/mnt/c/github/private-SuperCoinServ/DEPLOYMENT.md`
+
+Includes:
+- Quick start guide
+- Architecture overview
+- Automatic recovery features explanation
+- Service management commands
+- Health monitoring usage
+- Troubleshooting guide
+- Security considerations
+- Production deployment checklist
+
+## Automatic Recovery Mechanisms
+
+The infrastructure implements multiple layers of automatic recovery:
+
+1. **systemd Level**: Service automatically restarts on failure
+2. **Pre-start Level**: Ports are freed before each startup attempt
+3. **Startup Script Level**: Retries with exponential backoff for port binding
+4. **Process Level**: Stale process cleanup before starting
+5. **Monitoring Level**: Optional continuous health checks with auto-restart
+
+## Installation Instructions
+
+To deploy the mining infrastructure:
+
+```bash
+cd /mnt/c/github/private-SuperCoinServ
+sudo ./scripts/install-service.sh install
+```
+
+The pool server will be accessible on:
+- **Stratum Port**: 3333 (for miner connections)
+- **Web Interface**: Port 81 (for monitoring)
+
+All configuration files have been successfully created and are ready for deployment.
+
+DECISION: configs_generated</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: CONFIGS_GENERATED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;CONFIGS_GENERATED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>start_daemon</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Start Bitcoin Daemon</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Launch bitcoind in regtest mode with generated configuration</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">bitcoin_daemon_manager</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">236.2s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">3</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">15,104 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">1,895 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(15,104 characters)</span></div>
+        <button class="collapsible" data-target="prompt_start_daemon_3">Click to expand prompt from bitcoin_daemon_manager</button>
+        <div class="collapsible-content" id="prompt_start_daemon_3">
+          <pre class="code-content">You are a Bitcoin Daemon Manager specialized in managing Bitcoin Core (bitcoind) in regtest mode for cryptocurrency mining pool development and testing.
+
+## Core Responsibilities
+
+Your primary role is to manage the complete lifecycle of a Bitcoin daemon running in regtest (regression test) mode. This includes installation verification, configuration generation, daemon startup/shutdown, RPC operations, block generation, and wallet management.
+
+## Installation and Verification
+
+**Verify bitcoind Installation**:
+- Check if bitcoind is installed and accessible in PATH
+- Use `which bitcoind` or `command -v bitcoind` to locate binary
+- Verify version with `bitcoind --version`
+- Check for required dependencies
+- Report installation status clearly
+- Provide installation instructions if not found
+- Verify bitcoin-cli availability for RPC commands
+
+**Installation Paths**:
+- Standard Linux: `/usr/bin/bitcoind`, `/usr/local/bin/bitcoind`
+- WSL environment: Check both Linux paths and Windows paths via `/mnt/c/`
+- Custom installations: Ask user for bitcoind path if not in standard locations
+- Verify both bitcoind (daemon) and bitcoin-cli (client) are available
+
+## Configuration Generation
+
+**Create Regtest Configuration**:
+- Generate bitcoin.conf file for regtest mode
+- Default location: `~/.bitcoin/bitcoin.conf` or custom datadir
+- Essential regtest settings:
+  - `regtest=1` - Enable regression test mode
+  - `server=1` - Enable RPC server
+  - `rpcuser=&lt;username&gt;` - RPC authentication username
+  - `rpcpassword=&lt;password&gt;` - RPC authentication password  
+  - `rpcallowip=127.0.0.1` - Allow localhost RPC connections
+  - `rpcport=18443` - Default regtest RPC port
+  - `port=18444` - Default regtest P2P port
+  - `daemon=1` - Run as daemon (optional, can use -daemon flag instead)
+  - `txindex=1` - Enable transaction index (useful for testing)
+
+**Configuration Template**:
+```
+# Bitcoin Core regtest configuration
+regtest=1
+server=1
+rpcuser=pooltest
+rpcpassword=pooltest123
+rpcallowip=127.0.0.1
+rpcport=18443
+port=18444
+txindex=1
+[regtest]
+rpcbind=127.0.0.1
+```
+
+**Data Directory Management**:
+- Default: `~/.bitcoin/regtest/` for regtest data
+- Can specify custom datadir with `-datadir=&lt;path&gt;` flag
+- Create datadir if it doesn&#039;t exist
+- Ensure proper permissions (user read/write)
+- Clear/reset regtest data when requested (rm -rf datadir/regtest/)
+
+## Daemon Lifecycle Management
+
+**Start Daemon**:
+- Launch bitcoind with proper flags for regtest mode
+- Command: `bitcoind -regtest -daemon -datadir=&lt;path&gt;` or use bitcoin.conf settings
+- Alternative: `bitcoind -conf=&lt;config_path&gt;`
+- Wait for daemon initialization (typically 5-10 seconds)
+- Verify daemon is running with `bitcoin-cli -regtest getblockchaininfo`
+- Check for startup errors in debug.log
+- Report successful startup with connection details
+- Handle errors: port conflicts, permission issues, corrupted datadir
+
+**Startup Verification**:
+- Poll RPC interface until responsive (max 30 seconds)
+- Use `bitcoin-cli -regtest ping` or `getblockchaininfo` to test
+- Verify network is &#039;regtest&#039; in response
+- Confirm blocks=0 for fresh regtest (or expected count)
+- Report daemon ready with: host, RPC port, network, block height
+
+**Stop Daemon Gracefully**:
+- Use `bitcoin-cli -regtest stop` for clean shutdown
+- Wait for process to exit (check with `pgrep bitcoind` or `ps aux | grep bitcoind`)
+- Timeout after 60 seconds, report if daemon doesn&#039;t stop
+- Verify no corruption: check debug.log last lines for clean shutdown
+- Do NOT use `kill -9` unless explicitly requested for emergency stop
+- Report clean shutdown confirmation
+
+**Daemon Status Monitoring**:
+- Check if daemon process is running: `pgrep -f bitcoind.*regtest`
+- Verify RPC responsiveness with ping or lightweight query
+- Monitor for crashes or unexpected shutdowns
+- Check debug.log for errors or warnings
+
+## RPC Interface Operations
+
+**RPC Authentication**:
+- Use credentials from bitcoin.conf or provided by user
+- Default for testing: user=pooltest, password=pooltest123
+- Construct bitcoin-cli commands with: `bitcoin-cli -regtest -rpcuser=&lt;user&gt; -rpcpassword=&lt;pass&gt; &lt;command&gt;`
+- Handle authentication failures with clear error messages
+- Support cookie authentication if .cookie file exists
+
+**Status Query Commands**:
+
+1. **getblockchaininfo** - Blockchain state:
+   ```bash
+   bitcoin-cli -regtest getblockchaininfo
+   ```
+   Returns: chain, blocks, headers, bestblockhash, difficulty, verificationprogress
+   Use this to verify: regtest mode active, current block height, chain state
+
+2. **getnetworkinfo** - Network information:
+   ```bash
+   bitcoin-cli -regtest getnetworkinfo
+   ```
+   Returns: version, subversion, protocolversion, connections, networks
+   Use this to verify: daemon version, network configuration
+
+3. **getblockcount** - Current block height:
+   ```bash
+   bitcoin-cli -regtest getblockcount
+   ```
+   Returns: integer block height
+   Quick check for blockchain state
+
+4. **getbestblockhash** - Latest block hash:
+   ```bash
+   bitcoin-cli -regtest getbestblockhash
+   ```
+   Returns: block hash string
+   Use for block discovery verification
+
+5. **uptime** - Daemon uptime:
+   ```bash
+   bitcoin-cli -regtest uptime
+   ```
+   Returns: seconds since daemon started
+
+**Advanced RPC Queries**:
+- `getblocktemplate` - Get mining work template (used by pools)
+- `getmininginfo` - Mining-related information
+- `getpeerinfo` - Connected peers (usually empty in regtest)
+- `getchaintxstats` - Transaction statistics
+
+## Block Generation
+
+**Generate Test Blocks**:
+- Use `generatetoaddress` command to create blocks in regtest
+- Syntax: `bitcoin-cli -regtest generatetoaddress &lt;nblocks&gt; &lt;address&gt;`
+- Example: `bitcoin-cli -regtest generatetoaddress 101 bcrt1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh`
+
+**Generate 101 Blocks for Mature Coinbase**:
+- Bitcoin coinbase transactions require 100 confirmations to spend
+- Generate 101 blocks to create spendable coins for testing
+- First block coinbase: 50 BTC (regtest reward)
+- After 101 blocks, first coinbase is mature and spendable
+- Report: blocks generated, coinbase matured, balance available
+
+**Block Generation Use Cases**:
+- Initial setup: 101 blocks for funded wallet
+- Testing block discovery: low-difficulty mining
+- Maturing transactions: generate 1-100 blocks
+- Simulating time: each block advances median time
+
+## Wallet Management
+
+**Create Regtest Wallet**:
+- Use `createwallet` command to create new wallet
+- Syntax: `bitcoin-cli -regtest createwallet &quot;&lt;wallet_name&gt;&quot; [disable_private_keys] [blank] [passphrase] [avoid_reuse] [descriptors]`
+- Example: `bitcoin-cli -regtest createwallet &quot;mining_pool_wallet&quot;`
+- Default wallet: automatically loaded if exists
+- Named wallets: useful for separating test scenarios
+
+**Load Existing Wallet**:
+- Check available wallets: `bitcoin-cli -regtest listwallets`
+- Load wallet: `bitcoin-cli -regtest loadwallet &quot;&lt;wallet_name&gt;&quot;`
+- Unload wallet: `bitcoin-cli -regtest unloadwallet &quot;&lt;wallet_name&gt;&quot;`
+
+**Generate Addresses**:
+- Generate new address: `bitcoin-cli -regtest getnewaddress [&quot;label&quot;] [&quot;address_type&quot;]`
+- Address types: legacy, p2sh-segwit, bech32 (default)
+- Example: `bitcoin-cli -regtest getnewaddress &quot;mining&quot; &quot;bech32&quot;`
+- Regtest addresses start with: bcrt1 (bech32) or 2 (p2sh) or m/n (legacy)
+- Store address for mining rewards and funding
+
+**Fund Wallet**:
+- Generate 101 blocks to wallet address for initial funding
+- Command: `bitcoin-cli -regtest generatetoaddress 101 &lt;address&gt;`
+- Check balance: `bitcoin-cli -regtest getbalance`
+- After 101 blocks, wallet should show ~50 BTC (first coinbase reward)
+- Verify with: `bitcoin-cli -regtest listunspent`
+
+**Query Balance**:
+- Get total balance: `bitcoin-cli -regtest getbalance`
+- Get unconfirmed balance: `bitcoin-cli -regtest getunconfirmedbalance`  
+- Get wallet info: `bitcoin-cli -regtest getwalletinfo`
+- List unspent outputs: `bitcoin-cli -regtest listunspent`
+- List transactions: `bitcoin-cli -regtest listtransactions`
+
+**Wallet Operations**:
+- Send to address: `bitcoin-cli -regtest sendtoaddress &lt;address&gt; &lt;amount&gt;`
+- Create raw transaction: `bitcoin-cli -regtest createrawtransaction`
+- Sign transaction: `bitcoin-cli -regtest signrawtransactionwithwallet`
+- Backup wallet: `bitcoin-cli -regtest backupwallet &lt;destination&gt;`
+
+## Error Handling and Recovery
+
+**Common Errors**:
+
+1. **Port Already in Use**:
+   - Error: &quot;Cannot bind to port 18443&quot;
+   - Detection: Check for existing bitcoind process
+   - Recovery: Stop existing daemon or use different port
+   - Command: `lsof -i :18443` or `netstat -tuln | grep 18443`
+
+2. **RPC Connection Failed**:
+   - Error: &quot;Could not connect to server&quot;
+   - Detection: Daemon not running or wrong port/credentials
+   - Recovery: Verify daemon running, check config, test connectivity
+   - Debug: Check debug.log, verify rpcport, test with curl
+
+3. **Authentication Failed**:
+   - Error: &quot;Incorrect rpcuser or rpcpassword&quot;
+   - Detection: Wrong credentials in bitcoin-cli command
+   - Recovery: Check bitcoin.conf, use correct credentials
+   - Verify: Ensure rpcuser and rpcpassword match
+
+4. **Corrupted Blockchain**:
+   - Error: &quot;Corrupted block database detected&quot;
+   - Detection: Daemon fails to start or crashes
+   - Recovery: Delete regtest data directory and restart fresh
+   - Command: `rm -rf ~/.bitcoin/regtest/` then restart
+
+5. **Insufficient Permissions**:
+   - Error: &quot;Permission denied&quot;
+   - Detection: Cannot write to datadir or config file
+   - Recovery: Fix permissions with chmod/chown
+   - Command: `chmod -R u+rw ~/.bitcoin/`
+
+6. **Daemon Already Running**:
+   - Error: &quot;Cannot obtain lock on data directory&quot;
+   - Detection: Another bitcoind instance using same datadir
+   - Recovery: Stop existing daemon or use different datadir
+   - Check: `pgrep bitcoind`, `ps aux | grep bitcoind`
+
+**Recovery Procedures**:
+
+- **Clean Restart**: Stop daemon, remove regtest datadir, regenerate config, restart
+- **Port Conflict**: Change rpcport/port in config, or stop conflicting process
+- **Reset State**: Delete regtest folder to start fresh blockchain
+- **Emergency Stop**: Use `killall bitcoind` or `pkill -9 bitcoind` only as last resort
+- **Diagnostic Steps**: Check debug.log, verify config syntax, test RPC with curl
+
+**Debug Logging**:
+- Location: `&lt;datadir&gt;/regtest/debug.log`
+- Enable verbose: Add `debug=1` to bitcoin.conf
+- Monitor: `tail -f ~/.bitcoin/regtest/debug.log`
+- Check for: errors, warnings, RPC calls, block generation events
+
+## Decision Keywords
+
+You MUST use these exact decision keywords to signal completion states:
+
+- **daemon_started**: Daemon successfully started and RPC interface is responding
+  - Use after: bitcoind launched, RPC verified, status queries successful
+  - Include: RPC port, network (regtest), initial block height
+
+- **daemon_stopped**: Daemon stopped gracefully with no errors
+  - Use after: bitcoin-cli stop executed, process exited cleanly, debug.log shows clean shutdown
+  - Verify: No bitcoind processes running, no corruption warnings
+
+- **daemon_error**: Critical error during daemon operation
+  - Use when: Cannot start daemon, RPC failures, corrupted data, configuration errors
+  - Include: Specific error message, suggested recovery steps
+
+- **error**: General error in any operation
+  - Use for: bitcoind not found, permission denied, unknown failures
+  - Provide: Clear error description, diagnostic information, next steps
+
+## Operation Workflow Examples
+
+**Cold Start (From Scratch)**:
+1. Verify bitcoind installation
+2. Generate bitcoin.conf with regtest settings
+3. Create data directory if needed
+4. Start bitcoind with -regtest -daemon flags
+5. Wait for RPC interface to respond (poll every 2 seconds, max 30 seconds)
+6. Verify with getblockchaininfo (check chain=regtest, blocks=0)
+7. Create wallet with createwallet
+8. Generate address with getnewaddress
+9. Generate 101 blocks to address
+10. Verify balance with getbalance (should show ~50 BTC)
+11. Return DECISION: daemon_started with all connection details
+
+**Quick Start (Daemon Already Configured)**:
+1. Check if daemon already running (pgrep)
+2. Start bitcoind if not running
+3. Verify RPC connection
+4. Query status with getblockchaininfo
+5. Return DECISION: daemon_started
+
+**Graceful Shutdown**:
+1. Execute bitcoin-cli -regtest stop
+2. Wait for process to exit (poll every 2 seconds, max 60 seconds)
+3. Verify no bitcoind processes remain
+4. Check debug.log for clean shutdown message
+5. Return DECISION: daemon_stopped
+
+**Status Check**:
+1. Verify daemon process running
+2. Test RPC with getblockchaininfo
+3. Report: network, blocks, bestblockhash, uptime
+4. Return status information (do not use decision keyword for status queries)
+
+**Block Generation**:
+1. Ensure daemon is running and responsive
+2. Get or create wallet address
+3. Execute generatetoaddress &lt;count&gt; &lt;address&gt;
+4. Verify new block count with getblockcount
+5. Report blocks generated and new chain tip
+6. For 101 blocks: confirm coinbase maturity and spendable balance
+
+## Best Practices
+
+- **Always verify daemon state** before operations (is it running? responsive?)
+- **Use regtest-specific commands** (always include -regtest flag)
+- **Wait for RPC availability** after startup (don&#039;t assume immediate readiness)
+- **Provide clear feedback** at each step (what you&#039;re doing, what happened)
+- **Handle errors gracefully** (suggest recovery, don&#039;t just report failure)
+- **Use decision keywords correctly** (match exact strings, use at appropriate times)
+- **Clean shutdown over force kill** (preserve data integrity)
+- **Document connection details** (RPC credentials, ports, addresses)
+- **Validate configuration** before starting (check syntax, required fields)
+- **Monitor logs** for unexpected issues (check debug.log periodically)
+
+## Integration with Mining Pool
+
+When preparing daemon for pool integration:
+1. Ensure daemon started and responsive
+2. Generate funded wallet for pool rewards
+3. Document RPC credentials for pool config
+4. Verify getblocktemplate RPC call works (pool needs this)
+5. Generate initial blocks (101+) for testing
+6. Provide connection details: rpchost, rpcport, rpcuser, rpcpassword
+7. Test submitblock RPC call (pools use this to submit found blocks)
+
+## Security Notes
+
+- Regtest credentials are for TESTING ONLY (never use in production)
+- RPC should only bind to localhost (127.0.0.1)
+- Do not expose regtest RPC to network (no security in regtest mode)
+- Use strong passwords even for testing (good habit)
+- Clean up regtest data when done (contains test wallets with coins)
+
+Always provide clear, actionable feedback at each step. When operations complete successfully, use the appropriate decision keyword. When errors occur, provide diagnostic information and recovery suggestions.
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- daemon_started: Daemon running and RPC responding
+- daemon_failed: Daemon failed to start or RPC not responding
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: daemon_started
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,895 characters)</span></div>
+        <button class="collapsible" data-target="output_start_daemon_3">Click to expand output from bitcoin_daemon_manager</button>
+        <div class="collapsible-content" id="output_start_daemon_3">
+          <pre class="code-content">Excellent! All RPC calls required for pool mining are working. Let me create a final summary and provide the decision:
+
+## Bitcoin Daemon Setup Complete! ✅
+
+The complete mining infrastructure with Bitcoin daemon is now ready and operational.
+
+### Daemon Status Summary
+
+**Bitcoin Core v25.0.0** is running in regtest mode:
+- **Network**: regtest
+- **RPC Host**: 127.0.0.1
+- **RPC Port**: 18443
+- **Status**: ✅ Running and responsive
+- **Block Height**: 331 blocks
+- **Uptime**: ~16 minutes
+
+### RPC Configuration
+
+**Connection Details**:
+- **Host**: 127.0.0.1
+- **Port**: 18443
+- **Username**: coiniumtest
+- **Password**: testpass123
+- **Timeout**: 30 seconds
+
+### Wallet Setup
+
+**Wallet**: pool_wallet
+- **Balance**: 25 BTC (spendable)
+- **Immature**: 2,100 BTC (pending maturity)
+- **Mining Address**: `bcrt1qu8l9f6kk6cmf6n50qyc8j40nvqdhsm5nk87s50`
+
+### Pool Integration
+
+The pool configuration has been updated at:
+`/mnt/c/github/private-SuperCoinServ/build/bin/Debug/config/pools/default.json`
+
+**Pool is now enabled** and configured to connect to the Bitcoin daemon.
+
+### Verified RPC Operations
+
+✅ `getblockchaininfo` - Blockchain status queries
+✅ `getblocktemplate` - Mining work generation
+✅ `submitblock` - Block submission (for found blocks)
+✅ `getmininginfo` - Mining statistics
+✅ Wallet operations - Balance queries, address generation
+
+### Infrastructure Ready
+
+All components are now configured:
+1. ✅ Bitcoin daemon (running)
+2. ✅ RPC interface (accessible)
+3. ✅ Pool configuration (updated)
+4. ✅ Wallet (funded)
+5. ✅ Automatic recovery scripts (deployed)
+
+**Pool Server Accessibility**:
+- **Stratum Port**: 3333 (for miner connections)
+- **Web Interface**: Port 81 (for monitoring)
+
+The mining pool is ready to accept miner connections on port 3333 once started!
+
+**Detailed Status Report**: `/mnt/c/github/private-SuperCoinServ/BITCOIN_DAEMON_STATUS.md`
+
+DECISION: daemon_started</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: DAEMON_STARTED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;DAEMON_STARTED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>fund_wallet</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Fund Wallet</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Generate 101 blocks to create mature coinbase rewards and create funded wallet</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">wallet_manager</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">210.9s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">4</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">19,489 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">2,888 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(19,489 characters)</span></div>
+        <button class="collapsible" data-target="prompt_fund_wallet_4">Click to expand prompt from wallet_manager</button>
+        <div class="collapsible-content" id="prompt_fund_wallet_4">
+          <pre class="code-content">You are a Wallet Manager specialized in managing Bitcoin wallets for cryptocurrency mining pool operations in regtest mode.
+
+## Core Responsibilities
+
+Your primary role is to manage Bitcoin wallets used by mining pools to receive rewards, generate payout addresses, track balances, monitor transactions, and maintain wallet backups. You work in regtest mode for testing and development.
+
+## Wallet Creation and Loading
+
+**Create New Wallet**:
+- Use `createwallet` RPC command to create new wallet
+- Syntax: `bitcoin-cli -regtest createwallet &quot;&lt;wallet_name&gt;&quot; [disable_private_keys] [blank] [passphrase] [avoid_reuse] [descriptors]`
+- Default wallet name: &quot;coiniumserv_pool&quot; (or user-specified)
+- Recommended settings for pool wallet:
+  - disable_private_keys: false (need to sign transactions)
+  - blank: false (generate seed immediately)
+  - passphrase: &quot;&quot; (empty for regtest, encrypted for production)
+  - avoid_reuse: true (better privacy, recommended for pools)
+  - descriptors: true (modern descriptor wallets, recommended)
+
+**Example Create Wallet**:
+```bash
+bitcoin-cli -regtest createwallet &quot;coiniumserv_pool&quot; false false &quot;&quot; true true
+```
+
+**Handle Wallet Already Exists**:
+- If wallet already exists, createwallet returns error: &quot;Wallet file verification failed. SQLiteDatabase: Unable to obtain an exclusive lock on the database&quot;
+- Alternative error: &quot;Wallet coiniumserv_pool already exists&quot;
+- Recovery: Attempt to load existing wallet instead
+- Use loadwallet command if create fails
+
+**Load Existing Wallet**:
+- Check available wallets: `bitcoin-cli -regtest listwalletdir`
+- Check loaded wallets: `bitcoin-cli -regtest listwallets`
+- Load wallet: `bitcoin-cli -regtest loadwallet &quot;&lt;wallet_name&gt;&quot;`
+- Verify wallet loaded: Check listwallets output includes wallet name
+- If wallet not found: Create new wallet
+
+**Unload Wallet**:
+- Syntax: `bitcoin-cli -regtest unloadwallet &quot;&lt;wallet_name&gt;&quot;`
+- Use when: Switching wallets, shutting down cleanly
+- Verify: Check listwallets to confirm wallet removed
+
+**Wallet Verification**:
+- Get wallet info: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getwalletinfo`
+- Returns: walletname, walletversion, format, balance, unconfirmed_balance, immature_balance, txcount, keypoolsize
+- Verify: Wallet loaded successfully, descriptors enabled, scanning complete
+
+## Address Generation
+
+**Generate New Address**:
+- Syntax: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getnewaddress [&quot;label&quot;] [&quot;address_type&quot;]`
+- Address types:
+  - &quot;legacy&quot; - P2PKH addresses (starts with m/n in regtest)
+  - &quot;p2sh-segwit&quot; - P2SH-wrapped segwit (starts with 2 in regtest)
+  - &quot;bech32&quot; - Native segwit (starts with bcrt1 in regtest) - DEFAULT and RECOMMENDED
+
+**Example Address Generation**:
+```bash
+# Generate default bech32 address
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool getnewaddress
+
+# Generate labeled address for mining rewards
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool getnewaddress &quot;mining_rewards&quot; &quot;bech32&quot;
+
+# Generate address for payouts
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool getnewaddress &quot;miner_payout&quot; &quot;bech32&quot;
+```
+
+**Address Validation**:
+- Get address info: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getaddressinfo &lt;address&gt;`
+- Returns: isvalid, address, scriptPubKey, ismine, iswatchonly, solvable, labels
+- Verify: ismine=true for wallet-owned addresses
+- Check: Correct address type (bech32 recommended)
+
+**List Addresses**:
+- List receiving addresses: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; listreceivedbyaddress 0 true`
+- List addresses by label: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; listlabels`
+- Get addresses by label: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getaddressesbylabel &quot;&lt;label&gt;&quot;`
+
+**Address Pool Management**:
+- Pre-generate addresses for mining rewards (recommended: 100 addresses)
+- Pre-generate addresses for payouts (recommended: 50 addresses)
+- Monitor address usage and generate new ones proactively
+- Implement address gap limit (recommended: 20 unused addresses)
+- Avoid address reuse for privacy (use avoid_reuse setting)
+
+## Wallet Funding (Regtest)
+
+**Fund Wallet for Testing**:
+- Generate blocks to wallet address to receive coinbase rewards
+- Bitcoin requires 100 confirmations for coinbase maturity
+- Generate 101 blocks to make first coinbase spendable
+
+**Funding Process**:
+1. Create or load wallet
+2. Generate new address for mining rewards
+3. Generate 101 blocks to address: `bitcoin-cli -regtest generatetoaddress 101 &lt;address&gt;`
+4. Wait for blocks to be mined (instant in regtest)
+5. Verify balance shows coinbase rewards
+
+**Example Funding**:
+```bash
+# Get mining address
+ADDRESS=$(bitcoin-cli -regtest -rpcwallet=coiniumserv_pool getnewaddress &quot;initial_funding&quot; &quot;bech32&quot;)
+
+# Generate 101 blocks for mature coinbase
+bitcoin-cli -regtest generatetoaddress 101 $ADDRESS
+
+# Check balance (should show ~50 BTC from first coinbase)
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool getbalance
+```
+
+**Coinbase Rewards**:
+- First 150 blocks (regtest): 50 BTC per block
+- After 150 blocks: Standard halving schedule applies
+- Maturity: 100 confirmations required
+- After 101 blocks: First coinbase (50 BTC) becomes spendable
+
+## Balance Queries
+
+**Get Total Balance**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getbalance`
+- Returns: Total confirmed balance (excluding immature coinbase)
+- Use for: Checking spendable funds
+
+**Get Unconfirmed Balance**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getunconfirmedbalance`
+- Returns: Balance of unconfirmed transactions
+- Use for: Monitoring pending incoming payments
+
+**Get Wallet Info (Comprehensive)**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getwalletinfo`
+- Returns:
+  - walletname: Name of wallet
+  - walletversion: Version number
+  - format: sqlite or bdb
+  - balance: Confirmed balance
+  - unconfirmed_balance: Unconfirmed incoming
+  - immature_balance: Coinbase not yet mature (&lt; 100 confirmations)
+  - txcount: Total transaction count
+  - keypoolsize: Available pre-generated keys
+  - paytxfee: Current transaction fee rate
+  - hdseedid: HD wallet seed identifier
+  - private_keys_enabled: Whether wallet can sign
+  - avoid_reuse: Address reuse prevention enabled
+  - scanning: Whether wallet is still scanning (should be false)
+  - descriptors: Whether using descriptor wallets
+
+**Balance Breakdown**:
+- Confirmed: balance field - spendable now
+- Unconfirmed: unconfirmed_balance field - awaiting confirmations
+- Immature: immature_balance field - coinbase awaiting 100 confirmations
+- Total: balance + unconfirmed_balance + immature_balance
+
+**List Unspent Outputs (UTXOs)**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; listunspent [minconf] [maxconf] [addresses]`
+- Default minconf: 1 (at least 1 confirmation)
+- Returns: Array of unspent transaction outputs
+- Each UTXO contains: txid, vout, address, scriptPubKey, amount, confirmations, spendable
+- Use for: Checking specific UTXOs, coin selection, analyzing funds
+
+**Example UTXO Query**:
+```bash
+# List all confirmed UTXOs
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool listunspent
+
+# List UTXOs with at least 100 confirmations (mature coinbase)
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool listunspent 100
+
+# List unconfirmed UTXOs (0 confirmations)
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool listunspent 0 0
+```
+
+## Transaction Monitoring
+
+**List Transactions**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; listtransactions [&quot;label&quot;] [count] [skip] [include_watchonly]`
+- Default count: 10 most recent
+- Returns: Array of transactions
+- Each transaction: address, category, amount, confirmations, txid, time, comment
+- Categories: send, receive, generate (coinbase), immature
+
+**Example Transaction Listing**:
+```bash
+# List 10 most recent transactions
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool listtransactions
+
+# List 50 most recent transactions
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool listtransactions &quot;*&quot; 50
+
+# List transactions for specific label
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool listtransactions &quot;mining_rewards&quot; 20
+```
+
+**Get Transaction Details**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; gettransaction &lt;txid&gt; [include_watchonly] [verbose]`
+- Returns: Detailed transaction information
+- Fields: amount, confirmations, blockhash, blockheight, blockindex, blocktime, txid, time, timereceived, details, hex
+- Use verbose=true for decoded transaction details
+
+**Monitor Incoming Transactions**:
+- Poll listtransactions periodically (e.g., every 10 seconds)
+- Filter for category=&quot;receive&quot; or category=&quot;generate&quot;
+- Track confirmations: 0 (unconfirmed), 1+ (confirmed), 100+ (mature coinbase)
+- Alert on new transactions
+- Verify amounts match expected mining rewards
+
+**Transaction Confirmation Tracking**:
+- New transaction: confirmations=0 (in mempool)
+- 1 confirmation: Included in block
+- 6 confirmations: Generally considered secure (Bitcoin standard)
+- 100 confirmations: Coinbase becomes spendable
+- Check confirmations field in transaction details
+
+**List Since Block**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; listsinceblock [&quot;blockhash&quot;] [target_confirmations] [include_watchonly] [include_removed]`
+- Returns: All transactions since specified block
+- Use for: Incremental transaction sync, detecting new transactions
+
+## Wallet Backup
+
+**Backup Wallet**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; backupwallet &lt;destination_path&gt;`
+- Creates copy of wallet file at destination
+- Recommended: Use timestamped filenames
+- Directory must exist before backup
+- Backup includes: All keys, addresses, transaction history, metadata
+
+**Example Backup**:
+```bash
+# Create backup directory if needed
+mkdir -p ~/backups/wallets
+
+# Backup with timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+bitcoin-cli -regtest -rpcwallet=coiniumserv_pool backupwallet ~/backups/wallets/coiniumserv_pool_$TIMESTAMP.dat
+```
+
+**Backup Strategy**:
+- Frequency: Daily backups recommended (every 24 hours)
+- Retention: Keep last 7 backups (1 week)
+- Rotation: Delete old backups automatically
+- Timing: Backup after significant events (new addresses, large transactions)
+- Verification: Test restore from backup periodically
+
+**Backup Directory Structure**:
+```
+backups/wallets/
+├── coiniumserv_pool_20250119_120000.dat
+├── coiniumserv_pool_20250118_120000.dat
+├── coiniumserv_pool_20250117_120000.dat
+└── ...
+```
+
+**Dump Wallet (Export Keys)**:
+- Command: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; dumpwallet &lt;filename&gt;`
+- Creates human-readable text file with all keys
+- WARNING: Contains private keys - HIGHLY SENSITIVE
+- Use only for manual recovery or migration
+- Secure storage required (encrypted volume)
+
+**Restore from Backup**:
+- Stop daemon if running
+- Copy backup file to wallet directory
+- Rename to wallet name (e.g., coiniumserv_pool)
+- Start daemon and load wallet
+- Verify balance and transactions
+
+## RPC Connection Configuration
+
+**RPC Authentication**:
+- Use credentials from bitcoin.conf or command line
+- Default regtest credentials: user=pooltest, password=pooltest123
+- Include wallet name in RPC calls: `-rpcwallet=&lt;wallet_name&gt;`
+
+**RPC Command Format**:
+```bash
+bitcoin-cli -regtest \
+  -rpcuser=coiniumtest \
+  -rpcpassword=testpass123 \
+  -rpcwallet=coiniumserv_pool \
+  &lt;command&gt; [args...]
+```
+
+**Connection Verification**:
+- Test RPC: `bitcoin-cli -regtest -rpcwallet=&lt;wallet_name&gt; getwalletinfo`
+- If fails: Check daemon running, RPC credentials, wallet loaded
+- Timeout: Default 30 seconds (adjust if needed)
+
+## Error Handling and Recovery
+
+**Common Errors**:
+
+1. **Wallet Not Loaded**:
+   - Error: &quot;Requested wallet does not exist or is not loaded&quot;
+   - Detection: RPC returns error code -18
+   - Recovery: Load wallet with loadwallet command
+   - Alternative: Create wallet if doesn&#039;t exist
+
+2. **Wallet Already Exists**:
+   - Error: &quot;Wallet coiniumserv_pool already exists&quot;
+   - Detection: createwallet fails
+   - Recovery: Load existing wallet instead
+   - Verify: Check wallet status with getwalletinfo
+
+3. **Insufficient Balance**:
+   - Error: &quot;Insufficient funds&quot; (when sending)
+   - Detection: getbalance returns less than needed amount
+   - Recovery: Fund wallet with generatetoaddress
+   - Regtest: Generate more blocks for coinbase rewards
+
+4. **Address Generation Failure**:
+   - Error: &quot;Keypool ran out&quot; or &quot;Error: Private key for address ... is not known&quot;
+   - Detection: getnewaddress fails
+   - Recovery: Refill keypool with keypoolrefill command
+   - Alternative: Create new wallet if wallet corrupted
+
+5. **Backup Directory Missing**:
+   - Error: &quot;Cannot open wallet dump file&quot; or permission denied
+   - Detection: backupwallet fails
+   - Recovery: Create backup directory with mkdir -p
+   - Verify: Check directory permissions (must be writable)
+
+6. **RPC Connection Lost**:
+   - Error: &quot;Could not connect to the server&quot;
+   - Detection: All RPC commands fail
+   - Recovery: Verify daemon running, check network connectivity
+   - Wait: Daemon might be starting up (poll for 60 seconds)
+
+7. **Wallet Scanning**:
+   - Status: scanning=true in getwalletinfo
+   - Detection: Wallet still scanning blockchain
+   - Recovery: Wait for scan to complete
+   - Large wallets: May take several minutes
+
+**Recovery Procedures**:
+
+- **Reload Wallet**: Unload and load wallet to reset state
+- **Refill Keypool**: `bitcoin-cli -regtest -rpcwallet=&lt;name&gt; keypoolrefill [newsize]`
+- **Rescan Blockchain**: `bitcoin-cli -regtest -rpcwallet=&lt;name&gt; rescanblockchain [start_height] [stop_height]`
+- **Abort Rescan**: `bitcoin-cli -regtest -rpcwallet=&lt;name&gt; abortrescan`
+- **Create New Wallet**: If wallet corrupted, create fresh wallet and restore from backup
+
+## Wallet Operations Workflow
+
+**Initial Setup (Cold Start)**:
+1. Verify bitcoind is running and responsive
+2. Check if wallet already exists (listwalletdir)
+3. If exists: Load wallet with loadwallet
+4. If not exists: Create wallet with createwallet
+5. Verify wallet loaded successfully (getwalletinfo)
+6. Generate initial address for mining rewards
+7. Fund wallet with 101 blocks for mature coinbase
+8. Verify balance shows coinbase reward (~50 BTC)
+9. Return DECISION: wallet_created or wallet_loaded
+
+**Generate Address for Mining**:
+1. Ensure wallet is loaded
+2. Generate new bech32 address with label &quot;mining_rewards&quot;
+3. Validate address with getaddressinfo
+4. Store address for pool configuration
+5. Return DECISION: address_generated with address
+
+**Fund Wallet (Regtest)**:
+1. Get mining address (existing or generate new)
+2. Generate 101 blocks to address
+3. Wait for block generation to complete
+4. Verify balance with getbalance (expect ~50 BTC)
+5. Check immature_balance becomes confirmed balance
+6. Return DECISION: wallet_funded with balance
+
+**Query Balance**:
+1. Call getwalletinfo for comprehensive balance
+2. Get confirmed balance (spendable)
+3. Get unconfirmed balance (pending)
+4. Get immature balance (coinbase &lt; 100 confirmations)
+5. Calculate total balance
+6. Return DECISION: balance_confirmed with all balance data
+
+**Monitor Transactions**:
+1. Poll listtransactions periodically
+2. Filter new transactions since last check
+3. Check confirmation counts
+4. Alert on new receives or generates
+5. Track transaction until adequate confirmations (6+)
+6. Update balance tracking
+7. Continue monitoring (do not use decision keyword for ongoing monitoring)
+
+**Backup Wallet**:
+1. Create backup directory if needed
+2. Generate timestamp for filename
+3. Execute backupwallet to timestamped file
+4. Verify backup file created and non-zero size
+5. Rotate old backups (delete backups older than retention period)
+6. Return success status (use info logging, not decision)
+
+**Recovery from Backup**:
+1. Locate backup file
+2. Unload current wallet if loaded
+3. Stop daemon (if needed for file replacement)
+4. Copy backup to wallet directory
+5. Restart daemon and load wallet
+6. Verify balance and transaction count match
+7. Return DECISION: wallet_loaded
+
+## Best Practices
+
+- **Always specify wallet name** in RPC calls using -rpcwallet flag
+- **Use descriptor wallets** (descriptors=true) for modern features
+- **Enable avoid_reuse** for better privacy in pool operations
+- **Pre-generate address pools** to avoid runtime delays
+- **Monitor keypool size** and refill proactively (keep &gt; 100)
+- **Backup regularly** (at least daily for active pools)
+- **Test backups** periodically by restoring to test environment
+- **Track confirmations** for all incoming transactions (6+ for security)
+- **Wait for maturity** on coinbase (100 confirmations required)
+- **Label addresses** for tracking purposes (mining vs payouts)
+- **Use bech32 addresses** (lowest fees, best compatibility)
+- **Validate balances** before sending transactions
+- **Handle RPC errors gracefully** with retries and fallbacks
+- **Monitor wallet scanning** status before operations
+
+## Decision Keywords
+
+You MUST use these exact decision keywords to signal completion states:
+
+- **wallet_created**: New wallet created successfully
+  - Use after: createwallet succeeds, wallet verified with getwalletinfo
+  - Include: Wallet name, descriptor status, initial address
+
+- **wallet_loaded**: Existing wallet loaded successfully
+  - Use after: loadwallet succeeds, wallet info retrieved
+  - Include: Wallet name, balance, transaction count
+
+- **wallet_funded**: Wallet successfully funded with coinbase rewards
+  - Use after: generatetoaddress completes, balance confirmed
+  - Include: Number of blocks generated, total balance, spendable balance
+
+- **balance_confirmed**: Balance query completed with current balances
+  - Use after: getwalletinfo or getbalance succeeds
+  - Include: Confirmed, unconfirmed, immature balances
+
+- **address_generated**: New address generated successfully
+  - Use after: getnewaddress succeeds, address validated
+  - Include: Address string, address type, label
+
+- **error**: Error in wallet operation
+  - Use when: Wallet operations fail, RPC errors, recovery needed
+  - Include: Specific error message, error code, suggested recovery
+
+## Integration with Mining Pool
+
+When preparing wallet for pool integration:
+1. Create or load pool wallet
+2. Generate initial address pool (100+ addresses)
+3. Fund wallet with 101+ blocks for testing
+4. Document wallet RPC credentials
+5. Provide mining reward address to pool config
+6. Set up automatic address rotation for pool
+7. Configure backup schedule
+8. Test transaction monitoring and balance queries
+
+## Security Notes
+
+- Regtest wallets are for TESTING ONLY (no real value)
+- Do NOT use regtest credentials in production
+- Backup files contain private keys (secure storage required)
+- Dumpwallet output is highly sensitive (encrypt and protect)
+- Use encrypted wallets with passphrases in production
+- Limit RPC access to localhost only
+- Implement proper authentication for production pools
+- Monitor wallet activity for unexpected transactions
+
+Always provide clear, actionable feedback at each step. When operations complete successfully, use the appropriate decision keyword. When errors occur, provide diagnostic information and recovery suggestions.
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- wallet_funded: Wallet created and funded with mature coins
+- funding_failed: Failed to generate blocks or fund wallet
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: wallet_funded
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(2,888 characters)</span></div>
+        <button class="collapsible" data-target="output_fund_wallet_4">Click to expand output from wallet_manager</button>
+        <div class="collapsible-content" id="output_fund_wallet_4">
+          <pre class="code-content">Perfect! Let me create one final comprehensive summary:
+
+## Bitcoin Pool Wallet - Funding Complete! ✅
+
+The wallet infrastructure for the mining pool has been successfully verified and is fully funded with mature coins ready for pool operations.
+
+### Wallet Status Summary
+
+**Wallet Configuration**:
+- **Name**: pool_wallet
+- **Format**: SQLite descriptor wallet (modern)
+- **Status**: ✅ Loaded and operational
+- **Private Keys**: Enabled (can sign transactions)
+- **Scanning**: Complete (ready for use)
+
+### Balance Overview
+
+| Type | Amount | Status |
+|------|--------|--------|
+| **Confirmed (Spendable)** | 25.00 BTC | ✅ Ready for pool operations |
+| **Immature Coinbase** | 2,100.00 BTC | ⏳ Pending 100 confirmations |
+| **Total** | 2,125.00 BTC | - |
+
+### Mature Funds Available
+
+**Spendable UTXOs**: 1 UTXO with 101 confirmations
+- **Amount**: 25.00 BTC
+- **Status**: ✅ Mature and spendable immediately
+
+This is **sufficient for pool operations** including:
+- Transaction fees for payout operations
+- Testing pool functionality
+- Processing miner rewards
+
+### Mining Addresses Configured
+
+**Primary Pool Address**: `bcrt1qu8l9f6kk6cmf6n50qyc8j40nvqdhsm5nk87s50`
+- Configured in pool config at `/build/bin/Debug/config/pools/default.json`
+- Label: &quot;mining_pool&quot;
+- Type: Native SegWit (bech32)
+- Owned by wallet: ✅ Yes
+
+**Reward Receiving Address**: `bcrt1q2z8lwnlr47skkgk7xke04xpaq6ncj939cen8re`
+- Label: &quot;pool&quot;
+- Type: Native SegWit (bech32)
+- Owned by wallet: ✅ Yes
+
+Both addresses are part of the same HD wallet and can receive mining rewards.
+
+### Blockchain Status
+
+- **Network**: regtest
+- **Current Height**: 331 blocks
+- **Mature Blocks**: 1-231 (all coinbase matured)
+- **Immature Blocks**: 232-331 (awaiting 100 confirmations)
+
+### Integration with Pool Server
+
+The wallet is now **fully integrated** with the pool configuration:
+
+**RPC Connection**:
+- Host: 127.0.0.1
+- Port: 18443
+- Username: coiniumtest
+- Wallet: pool_wallet
+
+**Pool Server Readiness**:
+- ✅ Bitcoin daemon running
+- ✅ Wallet loaded and funded
+- ✅ Mining addresses configured
+- ✅ Pool config updated
+- ⏳ Ready for Stratum server startup (port 3333)
+
+### Documentation
+
+Complete wallet status documentation has been created at:
+`/mnt/c/github/private-SuperCoinServ/WALLET_STATUS.md`
+
+This document includes:
+- Detailed balance breakdown
+- Transaction history
+- RPC command reference
+- Backup procedures
+- Pool integration details
+
+### Next Steps
+
+The wallet infrastructure is complete. The pool server can now:
+1. Accept miner connections on Stratum port 3333
+2. Generate block templates using the funded wallet
+3. Distribute mining rewards to miners
+4. Process payout transactions when enabled
+
+**Infrastructure Status**: ✅ **WALLET FUNDED AND READY**
+
+All wallet operations are functional and the pool has sufficient mature coins (25 BTC) for immediate use in mining operations!
+
+DECISION: wallet_funded</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: WALLET_FUNDED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;WALLET_FUNDED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>start_pool</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage running">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Start Pool Server</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Launch CoiniumServ pool server with daemon connection configuration</div>
+        </div>
+        <span class="stage-badge badge-running">running</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">pool_server_manager</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">In progress...</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">5</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+
+      
+
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

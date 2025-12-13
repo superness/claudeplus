@@ -1,0 +1,179 @@
+Now I have a comprehensive view of the implementation. Let me provide my technical validation.
+
+---
+
+# Technical Validation Report - Warhammer 40K MMO Backend
+
+## 1. CODE QUALITY
+
+### Design Patterns ✅ Generally Good
+- **Repository Pattern**: Properly implemented with `accountRepository`, `characterRepository`, and `refreshTokenRepository`
+- **Service Layer**: Clean separation between API handlers, services, and data access
+- **Singleton Pattern**: Used appropriately for auth service and combat service
+- **Transaction Support**: `withTransaction` wrapper for atomic operations
+
+### Readability ✅ Good
+- Consistent naming conventions (camelCase for variables, PascalCase for types)
+- Well-organized file structure with clear module separation
+- Type definitions are comprehensive
+
+### Issues Found:
+1. **Inconsistent Model Interfaces** (`account.repository.ts:29-47`): The `Account` interface has both `id` and `accountId` as an "alias for compatibility" - this creates confusion. Models should use a single consistent identifier.
+
+2. **Type Assertions**: Multiple uses of `as any` (e.g., `auth.api.ts:87,98,141`) which bypass type safety.
+
+3. **Incomplete implementations**: Several API handlers have `TODO` comments and placeholder responses (`character.api.ts:35-49, 119-127`).
+
+---
+
+## 2. SECURITY ISSUES
+
+### ✅ Good Security Practices
+- **Password Hashing**: bcrypt with configurable rounds (`auth.service.ts:81-84`)
+- **Refresh Token Hashing**: SHA-256 hashing before storage (`account.repository.ts:251-253`)
+- **SQL Injection Prevention**: Table/column whitelisting and parameterized queries (`database.ts:195-376`)
+- **JWT Verification**: Proper issuer/audience validation (`auth.service.ts:139-142`)
+- **Rate Limiting**: IP-based with database persistence (`auth.service.ts:200-228`)
+- **WebSocket Authentication**: First-message auth pattern, not URL param (`combat.service.ts:94-144`)
+
+### ⚠️ Security Concerns
+
+1. **Hardcoded Default JWT Secret** (`default.config.ts:96`):
+   ```typescript
+   jwtSecret: 'CHANGE_THIS_IN_PRODUCTION'
+   ```
+   Should fail startup if not overridden in production.
+
+2. **SQL Injection in Cleanup** (`account.repository.ts:411`):
+   ```typescript
+   WHERE last_attempt_at < NOW() - INTERVAL '${olderThanHours} hours'
+   ```
+   This uses string interpolation. While `olderThanHours` defaults to 24 and is typed as `number`, if ever called with user input, this could be exploited. Should use parameterized query.
+
+3. **Missing CSRF Protection**: No CSRF token validation in auth endpoints.
+
+4. **No Input Sanitization for Display Names**: Character names and display names could contain XSS payloads if rendered without escaping.
+
+5. **Account Status Check Uses String Comparison** (`auth.service.ts:288-293`):
+   ```typescript
+   if (account.accountStatus === 'SUSPENDED')
+   ```
+   Should use enum values for consistency.
+
+---
+
+## 3. PERFORMANCE CONCERNS
+
+### ⚠️ N+1 Query Problem (`character.repository.ts:196-211`):
+```typescript
+async findByAccountId(accountId: string): Promise<Character[]> {
+  const charResults = await queryAll<CharacterRow>(...);
+  for (const row of charResults) {
+    const attrResult = await queryOne<AttributeRow>(...);  // N+1 query!
+  }
+}
+```
+Should use JOIN or batch queries.
+
+### ⚠️ Missing Database Indexes
+The migration creates indexes for common queries, but:
+- No composite index on `(character_id, skill_id)` for skill lookups
+- No index on `refresh_tokens.revoked_at` for cleanup queries
+
+### ✅ Good Practices
+- Connection pooling configured (`database.ts:65-76`)
+- Slow query logging (`database.ts:132-134`)
+- Pagination with enforced limits (`database.ts:369`)
+
+---
+
+## 4. BUGS AND ISSUES
+
+### 🔴 Critical Bug - SQL Syntax Error (`account.repository.ts:189-193`):
+```typescript
+async updateStatus(accountId: string, status: Account['accountStatus']): Promise<void> {
+  await query(
+    'UPDATE accounts SET status = $1 WHERE id = $1',  // BUG: Both placeholders are $1
+    [status, accountId]
+  );
+}
+```
+Should be `SET status = $1 WHERE id = $2`.
+
+### 🔴 Position Update Query Bug (`character.repository.ts:256-265`):
+```typescript
+let query = `UPDATE characters SET
+  position_x = $1, position_y = $2, position_z = $3, position_facing = $4`;
+if (zoneId) {
+  query += ', current_zone_id = $6';  // BUG: Should be $5 when zoneId exists
+  params.push(zoneId);
+}
+query += ' WHERE id = $5';
+```
+Parameter ordering is incorrect when `zoneId` is provided.
+
+### 🟡 Missing Model Exports
+The `models/index.ts` exports from both `account.ts` and `account.model.ts`, potentially causing duplicate/conflicting exports.
+
+### 🟡 Auth Service Register Return Type (`auth.service.ts:257`):
+```typescript
+const tokens = this.generateTokenPair(account);  // Missing await!
+```
+`generateTokenPair` is async but not awaited.
+
+### 🟡 Incomplete Test Coverage
+- `character.test.ts:409-424` has multiple `it.todo()` placeholders
+- No integration tests for API endpoints
+- No tests for combat service WebSocket logic
+
+---
+
+## 5. RECOMMENDATIONS
+
+### Required Fixes (Must address before approval):
+
+1. **Fix SQL parameter bug** in `updateStatus()` - Critical data corruption risk
+
+2. **Fix position update parameter ordering** - Will cause runtime errors
+
+3. **Add `await` to `generateTokenPair` call** in register flow
+
+4. **Remove SQL interpolation** in cleanup query - use parameterized query
+
+5. **Add production JWT secret validation** - Application should refuse to start with default secret
+
+### Recommended Improvements:
+
+1. **Fix N+1 query** in `findByAccountId` - Use JOIN:
+   ```sql
+   SELECT c.*, ca.* FROM characters c
+   LEFT JOIN character_attributes ca ON c.id = ca.character_id
+   WHERE c.account_id = $1
+   ```
+
+2. **Consolidate Account interfaces** - Remove duplicate `id`/`accountId` aliasing
+
+3. **Complete placeholder implementations** in character API handlers
+
+4. **Add CSRF protection** for mutation endpoints
+
+5. **Add composite index** for `(character_id, skill_id)` in migration
+
+6. **Implement remaining test cases** marked as `todo`
+
+---
+
+## 6. VERDICT
+
+**NEEDS_REVISION**
+
+The implementation demonstrates solid architecture and security practices overall. However, there are several critical bugs that would cause runtime errors or data corruption:
+- SQL parameter ordering bugs in two locations
+- Missing await on async function
+- SQL interpolation vulnerability in cleanup function
+
+These issues must be fixed before the code can be considered production-ready.
+
+---
+
+DECISION: needs_revision

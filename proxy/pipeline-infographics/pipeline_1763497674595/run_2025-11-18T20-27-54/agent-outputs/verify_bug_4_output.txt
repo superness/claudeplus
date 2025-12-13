@@ -1,0 +1,85 @@
+Perfect! I now have all the evidence I need to make a verification decision. Let me analyze the complete runtime evidence:
+
+## Bug Existence Verification Report
+
+```json
+{
+  "verification": "BUG_CONFIRMED",
+  "reasoning": "Runtime evidence proves a CRITICAL physics bug exists. Ship velocity is completely frozen at 50 m/s (from undocking animation) and NEVER responds to throttle changes. With throttle at 100% for 1.5 seconds, velocity remains unchanged. With throttle reduced to 0%, velocity STILL remains unchanged. This is NOT the originally reported 'instant acceleration' bug - it's a more severe 'zero acceleration' bug where physics integration is completely broken.",
+  "evidenceAnalysis": {
+    "runtimeEvidencePresent": true,
+    "consoleLogsPresent": true,
+    "consoleLogFile": "C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log",
+    "consoleErrorCount": 5,
+    "consoleExceptionCount": 0,
+    "websocketResponses": "23 commands executed successfully, ship state captured at multiple intervals",
+    "consoleErrors": [
+      "Registration response error message: DEPRECATED_ENDPOINT",
+      "Error code: 401  Error message: Authentication Failed: wrong_secret",
+      "Failed to log in to GCM, resetting connection."
+    ],
+    "errorCorrelation": "Console errors are Chrome GCM (Google Cloud Messaging) authentication failures, NOT related to game physics",
+    "stateInconsistency": "CRITICAL: Velocity frozen at (21.90, 2.70, 44.87) m/s - magnitude ~50 m/s - never changes despite throttle changes from 0% to 100% to 0%",
+    "matchesBugReport": false
+  },
+  "consoleLogInsights": [
+    "No JavaScript errors or exceptions in console logs",
+    "All console errors are Chrome GCM authentication failures (unrelated to game)",
+    "Physics bug is NOT visible in console logs (silent failure)",
+    "Bug ONLY visible through WebSocket state snapshots showing frozen velocity"
+  ],
+  "confidence": 0.98,
+  "actualBugDiscovered": {
+    "originalReport": "Afterburner causes INSTANT direction/speed changes",
+    "actualBug": "Physics integration completely broken - ship velocity FROZEN, no acceleration/deceleration at all",
+    "severity": "CRITICAL",
+    "affectedState": "Ship velocity locked at undocking value (50 m/s)",
+    "evidenceTimeline": [
+      "T+0s: Undock → velocity becomes (21.90, 2.70, 44.87) m/s [magnitude: 50 m/s]",
+      "T+2s: After undock → velocity UNCHANGED: (21.90, 2.70, 44.87) m/s",
+      "T+2s: Set throttle to 100%",
+      "T+2.5s: After 0.5s at 100% throttle → velocity UNCHANGED: (21.90, 2.70, 44.87) m/s",
+      "T+3.5s: After 1.5s at 100% throttle → velocity UNCHANGED: (21.90, 2.70, 44.87) m/s",
+      "T+3.5s: Set throttle to 0%",
+      "T+4.0s: After 0.5s at 0% throttle → velocity STILL UNCHANGED: (21.90, 2.70, 44.87) m/s"
+    ]
+  },
+  "criticalFindings": {
+    "baselinePhysicsBroken": {
+      "finding": "BEFORE fitting afterburner, ship already showed zero acceleration",
+      "evidence": "Throttle set to 100%, waited 3 seconds, velocity remained (0, 0, 0)",
+      "implication": "Physics bug exists BEFORE afterburner is fitted"
+    },
+    "afterburnerPhysicsBroken": {
+      "finding": "AFTER fitting afterburner, ship velocity frozen at undocking value",
+      "evidence": "Throttle changes from 100% → 0% have ZERO effect on velocity",
+      "implication": "Physics integration not running OR velocity being overridden every frame"
+    },
+    "positionNotUpdating": {
+      "finding": "Ship position also frozen at (0, 0, 0)",
+      "evidence": "Despite having velocity vector, position never changes",
+      "implication": "Physics update loop likely not running OR position reset every frame"
+    }
+  },
+  "nextSteps": "Proceed to root cause analysis. Primary suspects: (1) Physics update loop not running, (2) Velocity/position being overridden every frame, (3) Ship state not properly initialized after undocking, (4) AfterburnerModule or stat sync corrupting physics state"
+}
+```
+
+## DECISION: BUG_CONFIRMED
+
+**Critical Evidence Summary:**
+
+✅ **Runtime Evidence Present**: 23 WebSocket commands executed, ship state captured at 6 different time points  
+✅ **Console Logs Present**: 5 console errors logged (all Chrome GCM authentication, unrelated to physics)  
+✅ **Bug Reproduced**: Ship velocity completely frozen - does NOT respond to throttle input  
+✅ **State Snapshots**: Velocity values identical across multiple measurements despite throttle changes  
+
+**Bug Confirmed**: Physics integration is completely broken. Ship velocity is frozen at the undocking animation value (~50 m/s) and NEVER changes regardless of throttle input (0% or 100%). This is actually MORE severe than the reported "instant acceleration" bug - there is NO acceleration at all.
+
+**Root Cause Investigation Required**: The bug exists BEFORE and AFTER fitting the afterburner, suggesting either:
+1. Physics update loop not running
+2. Ship velocity/position being reset/overridden every frame
+3. Ship initialization after undocking corrupting physics state
+4. Stat synchronization from ship fitting interfering with physics
+
+Proceed to root cause analysis to identify why physics integration has stopped working.

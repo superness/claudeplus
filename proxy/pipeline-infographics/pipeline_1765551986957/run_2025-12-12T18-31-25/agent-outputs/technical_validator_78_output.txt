@@ -1,0 +1,211 @@
+Now I have a comprehensive view of the codebase. Let me compile my technical validation report:
+
+---
+
+# Technical Validation Report: Warhammer 40k MMO Backend
+
+## 1. CODE QUALITY: Design Patterns, Readability, Maintainability
+
+### Strengths:
+- **Well-structured layered architecture**: Clear separation between API, Services, Data, and Models layers
+- **TypeScript usage**: Strong typing throughout with comprehensive interfaces
+- **Repository pattern**: Clean data access abstraction
+- **Middleware pipeline**: Proper Express middleware composition
+- **Consistent naming conventions**: PascalCase for types, camelCase for variables
+- **Centralized configuration**: Environment-specific configs with validation
+
+### Issues:
+1. **Type casting issues** (`src/api/auth.api.ts:70`, `src/api/character.api.ts:33`):
+   - Frequent use of `(account as any).displayName` indicates model inconsistency
+   - `(req as any).accountId` should use the extended Express Request type
+
+2. **Incomplete implementations**: Most API handlers return stub data with TODO comments. While acceptable for an MVP, these need tracking.
+
+3. **Singleton pattern inconsistency**: `getAuthService()` creates singleton on demand, but `accountRepository` is exported directly as module singleton.
+
+4. **Missing interface consistency**: `AccountWithDisplayName` extends `Account` in repository but `Account` model doesn't include `displayName`
+
+---
+
+## 2. SECURITY ISSUES: Vulnerabilities Found
+
+### Critical Issues:
+
+1. **Default JWT Secret** (`config/default.config.ts:96`):
+   ```typescript
+   jwtSecret: 'CHANGE_THIS_IN_PRODUCTION'
+   ```
+   - PROBLEM: If production validation is skipped, this insecure default could be deployed
+   - RISK: Complete authentication bypass
+   - MITIGATION: Fail startup if JWT secret matches default pattern
+
+2. **In-memory token storage** (`src/services/auth.service.ts:72-74`):
+   ```typescript
+   private refreshTokens: Map<string, { accountId: string; expiresAt: Date }> = new Map();
+   private loginAttempts: Map<string, { count: number; lockedUntil?: Date }> = new Map();
+   ```
+   - PROBLEM: Refresh tokens and lockout data stored in memory
+   - RISK: Lost on restart, doesn't scale horizontally, susceptible to memory exhaustion attacks
+   - MITIGATION: Use Redis or database persistence
+
+3. **WebSocket token in URL** (`src/api/combat.api.ts:237`):
+   ```typescript
+   const token = url.searchParams.get('token');
+   ```
+   - PROBLEM: JWT tokens in query strings get logged in server logs, browser history, referrer headers
+   - RISK: Token leakage
+   - MITIGATION: Use WebSocket subprotocol or first-message authentication
+
+### Medium Issues:
+
+4. **Missing character ownership verification** (`src/api/index.ts:103-145`):
+   - `characterOwnershipMiddleware` validates UUID format but never checks database ownership
+   - Attacker could access any character by guessing UUID
+
+5. **No password strength enforcement on backend** (`src/services/auth.service.ts`):
+   - Validation only happens in API middleware (`auth.api.ts:230`)
+   - Service layer should enforce as well for defense in depth
+
+6. **Missing CSRF protection**: No CSRF tokens for state-changing operations
+
+7. **No IP rate limiting separate from account**: Rate limiter uses account ID when authenticated, but attackers can target multiple accounts from same IP
+
+---
+
+## 3. PERFORMANCE CONCERNS: Bottlenecks or Inefficiencies
+
+### Critical Issues:
+
+1. **Rate limiter memory leak potential** (`src/api/index.ts:155-177`):
+   - Each rate limit middleware instance creates its own cleanup interval
+   - Multiple route registrations = multiple intervals
+   - Intervals not properly cleaned up on server shutdown
+
+2. **No connection pooling for refresh token cleanup**:
+   - `cleanupExpiredTokens()` iterates all tokens synchronously
+   - At scale, this blocks the event loop
+
+### Medium Issues:
+
+3. **Missing database indexes**: No index definitions in repository layer - queries like `findByEmail`, `findByDisplayName` will be slow without indexes
+
+4. **N+1 query potential**: Character listing doesn't prefetch related data (skills, inventory)
+
+5. **WebSocket broadcast inefficiency** (`src/api/combat.api.ts:446-457`):
+   ```typescript
+   for (const charId of instanceChars) {
+     const client = this.clients.get(charId);
+     // ...
+   }
+   ```
+   - JSON.stringify called once per broadcast is good
+   - But iteration over Set then Map lookup could be optimized with direct client Set per instance
+
+---
+
+## 4. BUGS AND ISSUES: Correctness Problems
+
+### Critical Bugs:
+
+1. **Missing config file import path** (`src/services/auth.service.ts:8`):
+   ```typescript
+   import config from '../../config';
+   ```
+   - Config is in `/output/config/` but service is in `/output/src/services/`
+   - Path should be `../../config` which resolves to `/output/config` - this IS correct
+
+2. **characterOwnershipMiddleware never verifies ownership** (`src/api/index.ts:143`):
+   ```typescript
+   req.characterId = characterId;
+   next();
+   ```
+   - Sets character ID without database verification
+   - Middleware name is misleading - it only validates format
+
+3. **Session cleanup race condition** (`src/services/auth.service.ts:326-328`):
+   ```typescript
+   this.revokeRefreshToken(refreshToken);
+   return this.generateTokenPair(account);
+   ```
+   - If `generateTokenPair` fails, old token is already revoked
+   - Should be atomic or use transaction pattern
+
+### Medium Bugs:
+
+4. **UUID generation depends on database** (`src/data/database.ts:385-388`):
+   ```typescript
+   export async function generateUUID(): Promise<string> {
+     const result = await queryOne<{ uuid: string }>('SELECT gen_random_uuid() as uuid');
+   ```
+   - Fails if database connection is lost
+   - Should use Node.js `crypto.randomUUID()` as fallback
+
+5. **Cleanup intervals never cleared** (`src/api/index.ts:174-176`):
+   - `process.on('exit', ...)` fires too late for cleanup
+   - Should use `beforeExit` or SIGTERM handlers
+
+6. **Account model mismatch**: `Account` interface doesn't have `displayName` but registration requires it
+
+---
+
+## 5. RECOMMENDATIONS: Required Fixes and Improvements
+
+### Must Fix (Blocking):
+
+1. **Store refresh tokens in database or Redis**
+   - Add `refresh_tokens` table with `(token_hash, account_id, expires_at, created_at)`
+   - Use bcrypt/sha256 hash of token for storage
+
+2. **Implement actual character ownership verification**
+   ```typescript
+   const character = await characterRepository.findById(characterId);
+   if (!character || character.accountId !== accountId) {
+     res.status(403).json({ error: { code: 'NOT_OWNER' } });
+     return;
+   }
+   ```
+
+3. **Fix JWT secret validation** - Fail startup if default secret detected in production
+
+4. **Fix Account model** - Add `displayName` to `Account` interface to eliminate type casting
+
+5. **WebSocket authentication** - Move token from query string to first-message protocol
+
+### Should Fix (High Priority):
+
+6. Add database migration system and index definitions
+7. Implement CSRF protection
+8. Add comprehensive error handling in WebSocket handlers
+9. Clean up rate limiter intervals on shutdown
+10. Move login attempts tracking to Redis/database
+
+### Nice to Have:
+
+11. Add request correlation IDs across WebSocket and HTTP
+12. Implement structured logging (Winston/Pino)
+13. Add OpenAPI/Swagger documentation
+14. Add health check endpoint for database connectivity
+
+---
+
+## 6. VERDICT
+
+**NEEDS_REVISION**
+
+### Rationale:
+
+While the codebase demonstrates solid architectural foundations and good TypeScript practices, several security and correctness issues must be addressed before production deployment:
+
+1. **Security-Critical**: In-memory token storage, WebSocket token in URL, and missing character ownership verification create exploitable vulnerabilities
+2. **Data Integrity**: Account/displayName model mismatch causes type casting throughout the codebase
+3. **Correctness**: The `characterOwnershipMiddleware` doesn't actually verify ownership despite its name
+
+The implementation shows good progress with proper patterns for:
+- SQL injection prevention (parameterized queries, whitelisting)
+- Password hashing (bcrypt with configurable rounds)
+- Rate limiting structure
+- JWT token rotation
+
+However, the security issues around token storage and authorization verification are blocking for any production deployment.
+
+DECISION: needs_revision

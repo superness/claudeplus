@@ -1,0 +1,68 @@
+Perfect! Now I have all the information needed to identify the root cause. Let me analyze the bug:
+
+## Root Cause Analysis
+
+```json
+{
+  "rootCause": "Ship fitted items are saved to localStorage correctly, but NOT restored during game initialization. The SaveGameManager's deserializeShipFitting() method (lines 721-781) attempts to restore fitted items BEFORE the player ship exists or is initialized, causing the restoration to silently fail.",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/SpaceshipSimulator.js",
+      "lineNumbers": [72, 99, 619],
+      "currentCode": "async initialize() { ... this.saveGameManager.loadGame(); ... } ... createPlayerShip(shipType) { ... if (this.shipFittingManager) { this.shipFittingManager.syncBaseStatsFromShip(this.playerShip); } }",
+      "problem": "saveGameManager.loadGame() is called at line 100 BEFORE the player ship is created (which happens later in initializeWorld() at line 579). When deserializeShipFitting() tries to restore fitted items, it calls fittingManager.fitItem() which needs the player ship to exist (line 224 in ShipFittingManager: window.simulator.saveGameManager.markDirty() requires playerShip). The restoration silently fails because the ship doesn't exist yet."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/SaveGameManager.js",
+      "lineNumbers": [260, 721, 765],
+      "currentCode": "deserializeGameState(saveData) { ... if (saveData.shipFitting) { this.deserializeShipFitting(saveData.shipFitting); } } ... deserializeShipFitting(data) { ... const result = fittingManager.fitItem(shipId, item.itemId, slotType, index); if (!result.success) { console.warn(...); } }",
+      "problem": "Ship fitting restoration happens at position #6 in the deserialization order, but player ship initialization hasn't happened yet at this point. The fitItem() calls at line 765 fail because they need simulator.playerShip to exist for stat syncing (Ship.js line 59-106)."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [224, 265],
+      "currentCode": "fitItem(...) { ... if (window.simulator?.saveGameManager) { window.simulator.saveGameManager.markDirty(); } } ... unfitItem(...) { ... if (window.simulator?.saveGameManager) { window.simulator.saveGameManager.markDirty(); } }",
+      "problem": "These markDirty() calls trigger during the restoration process, creating a recursive save situation. Additionally, fitItem() expects the player ship to exist for stat syncing, but during load it doesn't exist yet."
+    }
+  ],
+  "executionFlow": [
+    "1. SpaceshipSimulator.initialize() called",
+    "2. initializeCore() creates saveGameManager, shipFittingManager, etc.",
+    "3. saveGameManager.loadGame() called at line 100",
+    "4. SaveGameManager.deserializeGameState() begins restoration",
+    "5. SaveGameManager.deserializeShipFitting() tries to restore fitted items at line 260",
+    "6. Calls fittingManager.fitItem() for each saved fitted item at line 765",
+    "7. fitItem() FAILS SILENTLY because:",
+    "   - Player ship doesn't exist yet (created later at line 579)",
+    "   - Ship.syncStatsFromFitting() needs window.simulator.playerShip (Ship.js line 62)",
+    "   - No error is thrown, just console.warn at line 767",
+    "8. initializeWorld() called AFTER loadGame(), creates player ship at line 579",
+    "9. Player ship is created with empty slots (default state)",
+    "10. Fitted items are lost - they were never successfully restored"
+  ],
+  "whyItHappens": "The initialization order is incorrect: the game tries to restore fitted items BEFORE the player ship entity exists. The SaveGameManager loads at initialization (line 100) but the player ship isn't created until initializeWorld() runs (line 85), which happens AFTER the save load attempt. When fitItem() is called during restoration, it silently fails because there's no playerShip object to sync stats with.",
+  "proposedFix": "Move the saveGameManager.loadGame() call from SpaceshipSimulator.initialize():100 to AFTER initializeWorld() completes (after line 590). This ensures the player ship exists before attempting to restore fitted items. Alternative: Add a second-pass restoration method that runs after player ship creation specifically for ship-dependent data like fitted items."
+}
+```
+
+## Critical Findings
+
+1. **Bug is NOT in save logic**: The fitted items ARE being saved correctly (ShipFittingManager lines 222-227, SaveGameManager lines 655-716).
+
+2. **Bug is in load timing**: The load happens too early - before the player ship exists.
+
+3. **Silent failure**: When fitItem() fails during restoration, it only logs `console.warn()` (SaveGameManager.js:767), never throwing an error that would alert developers.
+
+4. **Initialization order bug**:
+   - Line 100: `saveGameManager.loadGame()` - tries to restore fitted items
+   - Line 85: `initializeWorld()` - creates player ship
+   - Result: Restoration fails because ship doesn't exist yet
+
+5. **Evidence from code**:
+   - SpaceshipSimulator.js:99-100 - Load called during initialization
+   - SpaceshipSimulator.js:579 - Player ship created later in initializeWorld()
+   - SaveGameManager.js:260 - deserializeShipFitting called during load
+   - SaveGameManager.js:765 - fitItem() called, but ship doesn't exist
+   - Ship.js:59-66 - syncStatsFromFitting() needs player ship to exist
+
+**DECISION: root_cause_found**

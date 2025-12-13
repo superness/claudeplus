@@ -1,0 +1,1243 @@
+# Combat System Design Document
+## Warhammer 40,000: Imperium Divided - Damocles Gulf Sector
+
+---
+
+# I. COMBAT PHILOSOPHY
+
+Drawing heavily from **Guild Wars 1's combat DNA**, this system emphasizes:
+
+- **Build Diversity over Gear Dependency**: Your 8-skill bar matters more than your stat sheet
+- **Pre-Combat Decisions**: Victory is often determined before the first shot fires
+- **Skill Synergy**: Individual skills are balanced; combinations create power
+- **Meaningful Cooldowns**: Abilities have impact because they have cost
+- **Party Composition Matters**: Solo viable, but group play creates emergent strategies
+
+**Core Combat Identity:**
+- **Real-time with active mitigation** (not tab-target auto-attack)
+- **Instanced PvE missions** (like GW1 missions/dungeons)
+- **Structured PvP** (like GW1 GvG/HA)
+- **No holy trinity requirement** (but roles exist)
+
+---
+
+# II. CORE COMBAT MECHANICS
+
+## A. Combat Flow
+
+```
+COMBAT STATES
+
+Pre-Combat: Skill bar locked, consumables usable, positioning phase
+In-Combat: Skills active, regeneration paused, death possible
+Downed: Limited actions, can be revived, bleeds out over time
+Dead: Requires resurrection or respawn
+Out-of-Combat: Regeneration active, skill bar can be modified
+```
+
+### Action Economy
+- **Global Cooldown (GCD)**: 0.75 seconds (allows responsiveness without spam)
+- **Animation Locks**: Vary by skill (0.5s - 2.0s)
+- **Movement**: Full movement during most skills, some root caster
+- **Interrupts**: Skills can be interrupted during cast time, not during GCD
+
+### Targeting System
+```
+TARGET TYPES
+
+Direct Target: Single enemy/ally selected
+Ground Target: AoE placement with mouse
+Smart Target: Automatically selects nearest valid target
+Self Target: Affects caster only
+Cone/Line: Directional from caster
+Chain: Jumps between valid targets
+```
+
+## B. Damage Types
+
+```
+DAMAGE TAXONOMY
+
+PHYSICAL DAMAGE
+├── Kinetic: Bullets, blades, impact (most common)
+├── Explosive: Grenades, missiles, artillery
+└── Rending: Armor-piercing, bypasses percentage of armor
+
+ENERGY DAMAGE
+├── Thermal: Flamers, melta, plasma
+├── Electrical: Arc weapons, shock
+└── Radiation: Atomic, sustained damage over time
+
+WARP DAMAGE
+├── Psychic: Direct mind assault
+├── Corruption: Stacking debuff leading to death
+└── Soul Rend: Bypasses all defenses (rare, boss only)
+
+SPECIAL DAMAGE
+├── True Damage: Ignores all mitigation
+├── Percentage Damage: Based on target's max HP
+└── Execute Damage: Bonus damage below HP threshold
+```
+
+### Damage Formula
+
+```
+BASE FORMULA:
+Final Damage = (Base Damage × Weapon Modifier × Skill Coefficient) 
+             × (1 + Damage Bonuses) 
+             × (1 - Damage Reduction)
+             × Critical Multiplier
+             × Vulnerability/Resistance Modifier
+
+ARMOR CALCULATION:
+Damage Reduction = Armor / (Armor + 100 + (10 × Attacker Level))
+
+Example at Level 20:
+- 100 Armor = 25% reduction
+- 200 Armor = 40% reduction
+- 400 Armor = 57% reduction
+- 600 Armor = 67% reduction
+
+CRITICAL HITS:
+- Base Crit Chance: 5%
+- Base Crit Multiplier: 1.5x
+- Crit bonuses are additive to base
+- Max Crit Chance: 50% (hard cap)
+- Max Crit Multiplier: 2.5x (hard cap)
+
+DAMAGE BUFF STACKING:
+- All damage bonuses are ADDITIVE with each other
+- Hard cap: 50% total damage bonus from buffs
+- Example: 20% + 15% + 25% = 50% (capped, not 60%)
+```
+
+## C. Status Effects
+
+### Positive Effects (Buffs)
+```
+BUFF CATEGORIES
+
+OFFENSIVE BUFFS
+├── Might: +10-25% damage dealt
+├── Fury: +15-30% critical chance
+├── Precision: +20% accuracy, ignore evasion
+├── Fervor: +15-25% attack speed
+└── Vulnerability Applied: Target takes +20% damage
+
+DEFENSIVE BUFFS
+├── Protection: +20-40% armor
+├── Aegis: Blocks next incoming attack
+├── Regeneration: Heal 2-5% HP per second
+├── Resistance: +25-50% resistance to damage type
+└── Stability: Immune to knockdown/knockback
+
+UTILITY BUFFS
+├── Swiftness: +25-33% movement speed
+├── Vigor: -20-30% cooldown on next skill
+├── Clarity: Immune to blindness/confusion
+└── Stealth: Invisible until action or damage
+```
+
+### Negative Effects (Conditions)
+```
+CONDITION CATEGORIES
+
+DAMAGE CONDITIONS (Stack Intensity)
+├── Bleeding: X damage per second (stacks to 25)
+├── Burning: X damage per second (stacks to 10)
+├── Poison: X damage per second + -33% healing (stacks to 25)
+├── Corruption: X damage per second + at 10 stacks = instant death
+└── Torment: X damage per second, doubled while moving
+
+CONTROL CONDITIONS (Stack Duration)
+├── Crippled: -50% movement speed
+├── Immobilized: Cannot move (can still attack)
+├── Blind: Next attack misses
+├── Weakness: -50% damage dealt
+├── Vulnerability: +20% damage taken
+└── Fear: Flee from source for duration
+
+HARD CONTROL (Do Not Stack)
+├── Stunned: Cannot act (max 3 seconds)
+├── Knockdown: Cannot act, on ground (max 2 seconds)
+├── Dazed: Interrupted, skills disabled (max 2 seconds)
+├── Pulled: Forced movement toward source
+└── Launched: Airborne, cannot act (max 1.5 seconds)
+
+DIMINISHING RETURNS ON HARD CC:
+- First CC: Full duration
+- Second CC within 10s: 50% duration
+- Third CC within 10s: 25% duration
+- Fourth+ CC within 10s: Immune for 5s
+```
+
+---
+
+# III. PLAYER CLASSES & ABILITIES
+
+## A. Class Design Philosophy
+
+Following Guild Wars 1's primary/secondary class system:
+
+```
+CLASS STRUCTURE
+
+Primary Class: Determines base stats, armor type, unique mechanic
+Secondary Class: Access to secondary skill lines (no unique mechanic)
+Skill Bar: 8 skills maximum
+Elite Skill: 1 per bar, powerful but high-cost
+```
+
+## B. Imperial Classes
+
+### 1. SISTER OF BATTLE (Primary: Faith / Secondary: Variable)
+**Role Flexibility:** Frontline DPS, Support, Hybrid
+**Unique Mechanic:** Acts of Faith (build through righteous combat, spend for miracles)
+
+```
+BASE STATS (Level 20)
+├── Health: 480
+├── Armor: 85 (Power Armor equivalent)
+├── Energy: 40
+├── Energy Regen: 3/sec
+└── Acts of Faith: 0-100 (builds in combat)
+
+ACTS OF FAITH GENERATION:
+├── Hitting enemy: +2 Faith
+├── Killing enemy: +10 Faith
+├── Ally downed nearby: +15 Faith
+├── Taking damage: +1 Faith per 5% HP lost
+└── Decay: -5 Faith per second out of combat
+```
+
+**Skill Lines:**
+
+**PRAYERS (Support/Healing)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Shield of Faith | 10 | Instant | 8s | Target ally gains Aegis for 3s |
+| Hymn of Restoration | 15 | 1.5s | 12s | Heal target for 80 + allies nearby for 40 |
+| Litany of Hate | 5 | Instant | 15s | Party gains +15% damage for 10s |
+| Blessed Rounds | 10 | Instant | 20s | Party's next 3 attacks inflict Burning |
+| **ELITE: Divine Intervention** | 30 Faith | Instant | 90s | Resurrect 1 downed ally with 50% HP |
+
+**ZEAL (Melee DPS)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Righteous Strike | 5 | Instant | 0s | Melee attack, 110% weapon damage |
+| Purifying Flame | 10 | Instant | 6s | PBAoE, deals 45 Thermal + Burning (3s) |
+| Martyr's Charge | 15 | Instant | 12s | Rush to target, deal 80 damage, gain Stability |
+| Passion's Edge | 10 | Instant | 8s | If target below 50% HP, deal +50% damage |
+| **ELITE: Ardent Blade** | 50 Faith | Instant | 45s | Melee attacks become AoE, +30% damage for 8s |
+
+**PENITENCE (Tank/Self-Sustain)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Pain is Holy | 5 | Instant | 10s | Convert 10% max HP to +25% damage for 8s |
+| Blessed Suffering | 15 | Instant | 20s | Take 30% less damage, +50% threat for 10s |
+| Scouring Touch | 10 | Instant | 8s | Cleanse 2 conditions from self, heal 30 per condition |
+| Iron Faith | 25 | 0.5s | 25s | Gain Protection and Stability for 6s |
+| **ELITE: Passion of the Martyred** | 75 Faith | Instant | 60s | Cannot die for 5s, heal to full after |
+
+---
+
+### 2. TECH-PRIEST (Primary: Machines / Secondary: Variable)
+**Role Flexibility:** Support, Ranged DPS, Summoner
+**Unique Mechanic:** Binaric Cant (cycling bonus that changes every 10s)
+
+```
+BASE STATS (Level 20)
+├── Health: 400
+├── Armor: 60 (Robes + Augmetics)
+├── Energy: 50
+├── Energy Regen: 4/sec
+└── Binaric Phase: Cycles through 3 states
+
+BINARIC CANT PHASES (10s each, cycles automatically):
+├── Phase 0 (Red): +20% damage dealt
+├── Phase 1 (Blue): +30% healing/support effect
+└── Phase 2 (Green): -25% cooldowns, +25% energy regen
+```
+
+**Skill Lines:**
+
+**CANTICLES (Support)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Benediction of the Omnissiah | 15 | 1s | 8s | Heal target for 60, repair constructs for 90 |
+| Litany of the Machine | 10 | Instant | 15s | Remove 1 condition from all allies in range |
+| Cogitator Blessing | 15 | Instant | 20s | Target ally gains +20% crit chance for 10s |
+| Binary Override | 25 | 2s | 30s | Instantly advance Binaric Phase |
+| **ELITE: Rite of Reanimation** | 35 | 3s | 120s | Resurrect all dead allies with 25% HP |
+
+**RADIANCE (Ranged DPS)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Volkite Blast | 5 | Instant | 0s | Ranged attack, 100% weapon damage Thermal |
+| Arc Discharge | 15 | Instant | 6s | Chain lightning, hits 3 targets, 50 damage each |
+| Phosphor Burn | 10 | 1s | 10s | Target location, 60 damage + Burning (5s) AoE |
+| Galvanic Surge | 20 | Instant | 15s | +50% attack speed for 6s |
+| **ELITE: Wrath of Mars** | 40 | 2.5s | 45s | Massive beam, 200 damage, ignores 50% armor |
+
+**CONSTRUCTS (Summoner)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Servo-Skull | 10 | 1s | 20s | Summon scout, reveals enemies, lasts 60s |
+| Kataphron Servitor | 25 | 2s | 45s | Summon combat unit, 150 HP, deals 20 DPS |
+| Repair Protocols | 15 | Instant | 12s | Heal all constructs for 50% max HP |
+| Cybernetica Override | 20 | Instant | 30s | Constructs deal +50% damage for 10s |
+| **ELITE: Kastelan Maniple** | 50 | 3s | 90s | Summon Kastelan robot, 400 HP, 40 DPS, 45s |
+
+---
+
+### 3. GUARDSMAN (Primary: Military / Secondary: Variable)
+**Role Flexibility:** Ranged DPS, Support, Utility
+**Unique Mechanic:** Command Structure (bonuses when near other Guardsmen)
+
+```
+BASE STATS (Level 20)
+├── Health: 420
+├── Armor: 50 (Flak Armor)
+├── Energy: 35
+├── Energy Regen: 3/sec
+└── Command Radius: 600 units
+
+COMMAND STRUCTURE BONUSES (per nearby Guardsman player):
+├── 1 ally: +5% damage
+├── 2 allies: +10% damage, +10% armor
+├── 3 allies: +15% damage, +15% armor, +10% movement
+└── 4+ allies: +20% damage, +20% armor, +15% movement, -10% cooldowns
+(Max 4+ bonus even with more allies)
+```
+
+**Skill Lines:**
+
+**INFANTRY (Core Combat)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Lasgun Volley | 5 | Instant | 0s | Ranged attack, 100% weapon damage |
+| Frag Grenade | 10 | Instant | 10s | Ground target AoE, 70 Explosive damage |
+| Take Cover | 5 | Instant | 15s | Gain +50% ranged defense for 5s |
+| Fix Bayonets | 10 | Instant | 8s | Next melee attack deals 150% damage, causes Bleeding |
+| **ELITE: First Rank Fire, Second Rank Fire** | 30 | 1s | 30s | All allies in range fire simultaneously, each dealing 80 damage |
+
+**TACTICS (Support/Control)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Rally Point | 15 | Instant | 25s | Place banner, allies near it regen 2% HP/s |
+| Suppressing Fire | 10 | 1.5s | 12s | Target area, enemies take -30% damage for 5s |
+| Smoke Grenade | 10 | Instant | 20s | AoE, blocks line of sight for 8s |
+| Krak Grenade | 15 | Instant | 15s | Single target, 120 Explosive + -25% armor for 8s |
+| **ELITE: Artillery Strike** | 35 | 3s (delay) | 90s | Massive AoE after 3s, 250 Explosive damage |
+
+**COMMAND (Leadership)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Hold the Line! | 10 | Instant | 20s | Allies gain Stability and +20% armor for 6s |
+| Advance! | 10 | Instant | 20s | Allies gain Swiftness and +15% damage for 6s |
+| Medic! | 15 | 1s | 15s | Target ally healed for 100, cleanses 1 condition |
+| Vox Command | 5 | Instant | 30s | Reset cooldown of one ally's non-elite skill |
+| **ELITE: Commissar's Inspiration** | 25 | Instant | 60s | All allies gain +30% damage, Stability, and Fear immunity for 10s |
+
+---
+
+## C. Tau Classes
+
+### 4. FIRE WARRIOR (Primary: Ranged Combat / Secondary: Variable)
+**Role Flexibility:** Pure Ranged DPS, Skirmisher
+**Unique Mechanic:** Markerlights (apply to targets, stacking team bonus)
+
+```
+BASE STATS (Level 20)
+├── Health: 380
+├── Armor: 65 (Combat Armor)
+├── Energy: 40
+├── Energy Regen: 4/sec
+└── Markerlight Capacity: 3 active at once
+
+MARKERLIGHT STACKS (on target enemy):
+├── 1 Stack: Target visible through walls/smoke
+├── 2 Stacks: All attacks vs target gain +15% accuracy
+├── 3 Stacks: All attacks vs target gain +15% accuracy, +10% crit
+├── 4 Stacks: As above + seeker missiles auto-hit target
+└── 5 Stacks: As above + target takes +15% damage from all sources
+```
+
+**Skill Lines:**
+
+**PULSE (Direct Damage)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Pulse Shot | 5 | Instant | 0s | Ranged attack, 100% weapon damage Energy |
+| Overcharged Pulse | 15 | 1s | 8s | 180% weapon damage, self-damage 15 HP |
+| Photon Grenade | 10 | Instant | 12s | AoE Blind for 3s + 40 damage |
+| Rapid Fire Protocol | 15 | Instant | 20s | +40% attack speed for 6s |
+| **ELITE: Mont'ka Strike** | 35 | Instant | 45s | Dash forward, deal 200 damage, apply 2 Markerlight |
+
+**PATHFINDER (Markerlight/Support)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Markerlight | 5 | Instant | 3s | Apply 1 Markerlight stack to target |
+| Networked Targeting | 10 | Instant | 15s | All marked targets gain +1 Markerlight |
+| Recon Drone | 15 | 1s | 30s | Reveals area, auto-applies Markerlight to enemies |
+| Priority Target Elimination | 10 | Instant | 12s | Consume all Markerlight stacks, deal 30 damage per stack |
+| **ELITE: Orbital Strike** | 40 | 2s | 90s | Requires 5 Markerlight, 300 damage to target, ignores armor |
+
+**BREACHER (Close-Range)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Pulse Blaster | 5 | Instant | 0s | Short range, 130% weapon damage |
+| EMP Blast | 15 | Instant | 15s | Cone AoE, 60 damage to shields, Daze vehicles 3s |
+| Combat Stimms | 10 | Instant | 25s | +25% damage, -20% damage taken for 8s |
+| Field Improvisation | 5 | Instant | 20s | Deploy cover, blocks projectiles for 6s |
+| **ELITE: Kauyon Trap** | 30 | Instant | 60s | Place mine. When triggered: 150 damage AoE + 3s Immobilize |
+
+---
+
+### 5. CRISIS SUIT PILOT (Primary: Battlesuit / Secondary: Variable)
+**Role Flexibility:** Heavy DPS, Bruiser, Tactical
+**Unique Mechanic:** Hardpoint System (3 weapon slots, swap mid-combat) + **Overheat Mechanic**
+
+```
+BASE STATS (Level 20)
+├── Health: 550
+├── Armor: 100 (Battlesuit)
+├── Energy: 35
+├── Energy Regen: 2.5/sec
+└── Hardpoints: 3 (configure before combat)
+
+HARDPOINT OPTIONS:
+├── Burst Cannon: Rapid fire, 80% damage, fast attack
+├── Plasma Rifle: 120% damage, causes Burning
+├── Fusion Blaster: 150% damage, armor penetration
+├── Missile Pod: AoE, 90% damage, long range
+├── Flamer: Cone, 70% damage, guaranteed Burning
+└── Shield Generator: -30% damage taken, no weapon
+
+OVERHEAT MECHANIC:
+├── Heat Gauge: 0-100
+├── Per Attack: +8-15 Heat (varies by weapon)
+├── Heat Decay: -10 Heat/sec (out of combat: -25/sec)
+├── At 50 Heat: -10% damage (systems straining)
+├── At 75 Heat: -20% damage, -15% attack speed
+├── At 100 Heat: OVERHEAT - Cannot attack for 4s, take 50 damage
+└── Coolant Flush (skill): Instantly reduce Heat by 50
+```
+
+**Skill Lines:**
+
+**WEAPON SYSTEMS (DPS)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Weapons Free | 5 | Instant | 0s | Fire current hardpoint weapon |
+| Hardpoint Swap | 0 | 0.5s | 2s | Cycle to next hardpoint weapon |
+| Target Lock | 10 | Instant | 8s | Next 3 attacks cannot miss, +15% crit |
+| Overcharge Systems | 20 | Instant | 25s | +40% damage for 6s, +20 Heat |
+| **ELITE: Nova Charge** | 35 | 2s | 60s | All hardpoints fire simultaneously, 300 total damage |
+
+**MOBILITY (Movement/Positioning)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Jet Boost | 10 | Instant | 8s | Leap to target location, small AoE damage on landing |
+| Aerial Maneuver | 15 | Instant | 15s | Gain flight for 4s, +50% movement, evade melee |
+| Hit and Run | 10 | Instant | 12s | Attack target, immediately leap backward |
+| Coolant Flush | 10 | Instant | 15s | Reduce Heat by 50, remove 1 Burning stack |
+| **ELITE: Manta Strike** | 30 | Instant | 90s | Teleport to target ally or beacon, deal 100 AoE damage |
+
+**SUPPORT SYSTEMS (Utility)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Shield Drone | 15 | Instant | 30s | Deploy drone that absorbs 150 damage for any ally |
+| Multi-Tracker | 10 | Instant | 20s | Mark 3 targets, next attack hits all marked |
+| Countermeasures | 15 | Instant | 25s | Gain Aegis, reflect next projectile |
+| Vectored Thrust | 10 | Instant | 15s | Knockback all nearby enemies |
+| **ELITE: XV-88 Broadside Link** | 45 | 2s | 120s | Call artillery support, 5 shots over 5s, 80 damage each |
+
+---
+
+### 6. ETHEREAL (Primary: Leadership / Secondary: Variable)
+**Role Flexibility:** Pure Support, Buffer, Controller
+**Unique Mechanic:** Elemental Auras (one active at a time, affects all nearby allies)
+
+```
+BASE STATS (Level 20)
+├── Health: 350
+├── Armor: 45 (Robes)
+├── Energy: 55
+├── Energy Regen: 5/sec
+└── Aura Radius: 800 units
+
+ELEMENTAL AURAS (choose one active):
+├── Fire (Mont'ka): Allies deal +15% damage
+├── Water (Patient): Allies regenerate 1% HP/sec
+├── Earth (Unyielding): Allies gain +20% armor
+├── Air (Swift): Allies gain +20% movement speed
+└── Void (Ethereal Calm): Allies immune to Fear, -15% incoming condition damage
+```
+
+**Skill Lines:**
+
+**INVOCATIONS (Empowerment)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Inspired Assault | 15 | Instant | 15s | Allies in aura gain +25% crit chance for 6s |
+| Elemental Surge | 20 | Instant | 20s | Double current aura effect for 8s |
+| Unity of Purpose | 15 | 1s | 25s | Allies share 20% of damage taken for 10s |
+| Meditation | 10 | 2s | 30s | Cleanse all conditions from allies in aura |
+| **ELITE: For the Greater Good** | 40 | Instant | 90s | All allies in range gain all aura effects for 12s |
+
+**PRESENCE (Control/Debuff)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Commanding Voice | 10 | Instant | 10s | Target enemy Taunted to attack you for 4s |
+| Weight of Authority | 15 | 1s | 15s | AoE, enemies Crippled for 5s |
+| Psychic Null | 20 | Instant | 30s | Interrupt target, they cannot use abilities for 3s |
+| Inspirational Death | 0 | Passive | - | When ally downed, all others gain +20% damage for 10s |
+| **ELITE: Mass Pacification** | 45 | 2s | 120s | All enemies in large area Stunned for 3s |
+
+**HONOR GUARD (Defensive)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Bodyguard Protocol | 15 | Instant | 20s | Designate ally; you take 50% of damage dealt to them |
+| Deny the Enemy | 20 | Instant | 30s | Ally cannot die for 4s (drops to 1 HP instead) |
+| Tactical Withdrawal | 15 | 1s | 45s | Teleport all nearby allies to your position |
+| Shield of the Empire | 25 | Instant | 35s | All allies gain Protection for 8s |
+| **ELITE: Ethereal Sacrifice** | All HP | Instant | 180s | Die instantly; all allies fully healed and gain +50% damage for 15s |
+
+---
+
+## D. Ork Classes
+
+### 7. ORK BOY (Primary: WAAAGH! / Secondary: Variable)
+**Role Flexibility:** Melee DPS, Berserker, Brawler
+**Unique Mechanic:** WAAAGH! Energy (builds as Orks fight together, decays apart)
+
+```
+BASE STATS (Level 20)
+├── Health: 520
+├── Armor: 55 ('Eavy Armor or none)
+├── Energy: 30
+├── Energy Regen: 2/sec
+└── WAAAGH! Gauge: 0-100 (group resource)
+
+WAAAGH! GENERATION (shared among all Ork players in area):
+├── Ork deals damage: +1 WAAAGH! per hit
+├── Ork takes damage: +0.5 WAAAGH! per hit received
+├── Enemy killed: +5 WAAAGH!
+├── Ork downed: -10 WAAAGH!
+├── Combat ends: -20 WAAAGH!/sec until 0
+
+WAAAGH! BONUSES (apply to all Orks):
+├── 25 WAAAGH!: +10% damage, +10% attack speed
+├── 50 WAAAGH!: +20% damage, +20% attack speed, +15% movement
+├── 75 WAAAGH!: +30% damage, +30% attack speed, +25% movement, +25% HP regen
+└── 100 WAAAGH!: DA GREAT WAAAGH! - Above + abilities cost no energy for 10s
+```
+
+**Skill Lines:**
+
+**CHOPPA (Melee DPS)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Choppa Swing | 5 | Instant | 0s | Melee attack, 110% weapon damage |
+| WAAAGH! Charge | 10 | Instant | 10s | Rush to enemy, deal 80 damage, generate +10 WAAAGH! |
+| Frenzied Strikes | 15 | Instant | 12s | Attack 3 times rapidly, 70% damage each |
+| Get Stuck In | 10 | Instant | 15s | Taunt target, you and target locked in combat 5s |
+| **ELITE: DA BIGGEST CHOPPA** | 25 + 30 WAAAGH! | 1s | 45s | Massive swing, 300% weapon damage, cleave all enemies |
+
+**SLUGGA (Hybrid)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Dakka Dakka | 5 | Instant | 0s | Ranged attack, 90% weapon damage |
+| Stikkbomb | 10 | Instant | 8s | AoE grenade, 60 Explosive damage |
+| More Dakka | 15 | Instant | 15s | Empty clip, 5 shots at 50% damage each |
+| Cybork Parts | 10 | Instant | 25s | Gain +100 temporary HP for 10s |
+| **ELITE: WAAAGH! Shout** | 20 + 50 WAAAGH! | Instant | 60s | All Orks in range gain Fury and Might for 15s |
+
+**'ARD BOY (Tank)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Oi! Come 'Ere! | 5 | Instant | 8s | Taunt target, pull them to melee range |
+| 'Ead Butt | 10 | Instant | 10s | Stun target for 2s |
+| I'z 'Arder Dan You | 15 | Instant | 20s | Gain +40% armor for 8s |
+| Fight Through It | 10 | Instant | 15s | Heal 20% HP, cleanse 2 conditions |
+| **ELITE: NOBODY TOUCHES DA WARBOSS** | 25 | Instant | 90s | Ally cannot be targeted for 10s (enemies must attack you) |
+
+---
+
+### 8. MEK (Primary: Tek / Secondary: Variable)
+**Role Flexibility:** Turret/Construct, Support, Ranged DPS
+**Unique Mechanic:** Scrap (collect from kills, spend on constructs and repairs)
+
+```
+BASE STATS (Level 20)
+├── Health: 400
+├── Armor: 50 (Mek armor)
+├── Energy: 45
+├── Energy Regen: 3/sec
+└── Scrap Capacity: 100
+
+SCRAP GENERATION:
+├── Enemy killed: +5-15 Scrap (based on enemy type)
+├── Ally downed: Drop 10 Scrap on ground
+├── Salvage corpse (3s channel): +20 Scrap
+├── Out of combat: -2 Scrap/sec (Orks waste scrap)
+```
+
+**Skill Lines:**
+
+**BIG GUNZ (Ranged DPS)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Kustom Shoota | 5 | Instant | 0s | Ranged attack, 100% weapon damage |
+| Big Shoota | 10 | 1s | 8s | Heavy shot, 160% weapon damage |
+| Rokkit Launcha | 15 | Instant | 12s | AoE explosive, 90 damage |
+| Deffgun Burst | 20 | 2s | 20s | Channel, fire 10 shots over 2s, 40 damage each |
+| **ELITE: Shokk Attack** | 35 | 2s | 90s | Random effect: 50% chance 400 damage, 25% chance 200 damage + teleport enemy, 25% chance backfire 100 self-damage |
+
+**MEK SHOP (Constructs)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Deploy Big Shoota Turret | 15 + 30 Scrap | 2s | 30s | Turret, 200 HP, 25 DPS, lasts 45s |
+| Deploy Shokk Pylon | 20 + 40 Scrap | 2s | 45s | Pylon, chain lightning every 3s, 50 damage |
+| Kustom Force Field | 15 + 25 Scrap | 1s | 35s | Allies in area take -25% damage for 10s |
+| Repair | 10 + 10 Scrap | 1s | 5s | Heal construct or ally for 80 |
+| **ELITE: Mega Dread** | 40 + 80 Scrap | 3s | 120s | Summon Deff Dread, 600 HP, 50 DPS, 60s duration |
+
+**KUSTOM JOBS (Buff/Utility)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| More Dakka Mod | 10 + 15 Scrap | 1s | 25s | Ally gains +30% attack speed for 15s |
+| 'Eavy Plating | 10 + 20 Scrap | 1s | 25s | Ally gains +50 armor for 20s |
+| Go Fasta! | 5 + 10 Scrap | Instant | 15s | Ally gains +40% movement for 10s |
+| Big Red Button | 0 | Instant | 30s | Random: Heal 50, Deal 50 damage, or +20 Scrap |
+| **ELITE: WAAAGH! Generator** | 30 + 50 Scrap | 2s | 90s | Generate +50 WAAAGH! for all nearby Orks |
+
+---
+
+### 9. WEIRDBOY (Primary: WAAAGH! Psykana / Secondary: Variable)
+**Role Flexibility:** Burst DPS, High Risk/Reward, AoE
+**Unique Mechanic:** 'Eadache (Warp instability from WAAAGH! energy)
+
+```
+BASE STATS (Level 20)
+├── Health: 380
+├── Armor: 40 (Robes + bones)
+├── Energy: 50
+├── Energy Regen: 4/sec
+└── 'Eadache Gauge: 0-100
+
+'EADACHE MECHANICS:
+├── Using WAAAGH! powers: +10-25 'Eadache
+├── WAAAGH! energy high (75+): +'Eadache 2/sec passively
+├── 'Eadache decay (out of combat): -5/sec
+├── At 50 'Eadache: Powers deal +15% damage
+├── At 75 'Eadache: Powers deal +30% damage, 15% chance of misfire (half damage to self)
+├── At 100 'Eadache: 'EADSPLOSION - Deal 200 damage to self and all nearby (friend/foe), reset to 0
+
+'EADSPLOSION DETAILS:
+├── Triggers automatically at 100 'Eadache
+├── 200 damage to Weirdboy (can be lethal)
+├── 200 damage to all within 300 units (including allies)
+├── Applies 3s Stun to Weirdboy
+├── Resets 'Eadache to 0
+└── Can be mitigated by allies standing back
+```
+
+**Skill Lines:**
+
+**DA GREEN (Direct Damage)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Brain Bursta | 10 | Instant | 3s | Target takes 80 damage, +15 'Eadache |
+| Warpath | 5 | Instant | 6s | Melee range blast, 60 damage, +10 'Eadache |
+| Fists of Gork | 15 | 1s | 10s | Giant green fist, 120 damage, knockdown, +20 'Eadache |
+| Zzap! | 20 | Instant | 12s | Chain lightning, 4 targets, 50 damage each, +15 'Eadache |
+| **ELITE: Da Krunch** | 35 | 2s | 60s | Foot of Gork, 250 AoE damage, +30 'Eadache |
+
+**WAAAGH! POWAH (Buff/Utility)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| 'Ere We Go! | 15 | Instant | 20s | Teleport self and nearby allies short distance, +10 'Eadache |
+| Warpath Blessing | 15 | Instant | 25s | Ally gains +25% damage, attacks cause Fear, +15 'Eadache |
+| Da Jump | 25 | 1s | 45s | Teleport ally to target location, +20 'Eadache |
+| Gork's Protection | 20 | Instant | 30s | Ally immune to damage for 3s, +15 'Eadache |
+| **ELITE: WAAAGH! Vortex** | 40 | 2s | 90s | Create vortex, pulls all enemies in, 150 damage, +25 'Eadache |
+
+**MADBOY (Self/Chaos)**
+| Skill | Energy | Cast | Cooldown | Effect |
+|-------|--------|------|----------|--------|
+| Let It Out | 5 | Instant | 10s | Reduce 'Eadache by 20, deal that damage to nearest target |
+| Absorb WAAAGH! | 10 | 1s | 15s | Consume 20 group WAAAGH!, gain +40% damage for 8s, +10 'Eadache |
+| Squiggly Beast | 15 | 1s | 30s | Summon chaos squig, random target attacks, 100 HP, 30 DPS |
+| Madboy Cackle | 10 | Instant | 20s | Fear all nearby enemies for 4s, +10 'Eadache |
+| **ELITE: 'EAD GO BOOM!** | 0 | Instant | 120s | Voluntarily trigger 'Eadsplosion at double damage (400), +immune to your own explosion |
+
+---
+
+# IV. ENEMY BESTIARY
+
+## A. Enemy Classification
+
+```
+ENEMY TIERS
+
+TRASH: Low HP, appears in groups, minimal threat alone
+├── HP Multiplier: 0.3x player HP
+├── Damage: 5-15% player HP per attack
+├── Drops: Currency, T1 materials
+
+STANDARD: Core enemy, moderate threat
+├── HP Multiplier: 0.6x player HP
+├── Damage: 10-20% player HP per attack
+├── Drops: Currency, T1-T2 materials
+
+VETERAN: Dangerous, has abilities
+├── HP Multiplier: 1.0x player HP
+├── Damage: 15-25% player HP per attack
+├── Drops: Currency, T2 materials, chance T3
+
+ELITE: Mini-boss, unique mechanics
+├── HP Multiplier: 3.0x player HP
+├── Damage: 20-35% player HP per attack
+├── Drops: Currency, T2-T3 materials, consumables
+
+CHAMPION: Requires group, complex mechanics
+├── HP Multiplier: 10x player HP
+├── Damage: 25-40% player HP per attack
+├── Drops: T3-T4 materials, guaranteed equipment
+
+BOSS: Major encounter, raid-level
+├── HP Multiplier: 30-50x player HP
+├── Damage: Varies by mechanic
+├── Drops: T4-T5 materials, named items, titles
+```
+
+## B. Imperial Enemies (For Tau/Ork players)
+
+### Astra Militarum
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Conscript | Trash | 114 | 25 | None - dies easily |
+| Guardsman | Standard | 228 | 40 | Lasgun fire, takes cover |
+| Veteran Guardsman | Veteran | 380 | 55 | Grenades, aimed shot (+crit) |
+| Storm Trooper | Elite | 1140 | 75 | Hot-shot lasgun (armor pen), flashbangs (Blind) |
+| Commissar | Champion | 3800 | 85 | Executes allies (buffs survivors), rallying cry |
+| Leman Russ | Boss | 15200 | 150 | Battle cannon (massive AoE), sponson weapons, crushing charge |
+
+### Adepta Sororitas
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Novitiate | Trash | 126 | 30 | Basic attacks, dies praising Emperor |
+| Battle Sister | Standard | 252 | 65 | Bolter fire, Acts of Faith (random buff) |
+| Sister Superior | Veteran | 420 | 75 | Commands squad buffs, martyrdom explosion on death |
+| Seraphim | Elite | 1260 | 70 | Flight, dual pistols, hit-and-run |
+| Canoness | Champion | 4200 | 90 | Blessed Blade (high damage), army-wide buffs |
+| Penitent Engine | Boss | 16800 | 120 | Berserk charges, flame sweeps, cannot be CC'd |
+
+### Adeptus Mechanicus
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Servitor | Trash | 120 | 35 | Mindless melee |
+| Skitarii Ranger | Standard | 240 | 50 | Galvanic rifle (long range), marks targets |
+| Skitarii Vanguard | Veteran | 400 | 60 | Radium carbine (Radiation DOT), radiation aura |
+| Sicarian Infiltrator | Elite | 1200 | 55 | Stealth, taser goads (Stun), disrupts abilities |
+| Tech-Priest Dominus | Champion | 4000 | 80 | Repairs other enemies, summons servitors, volkite |
+| Kastelan Robot | Boss | 20000 | 140 | Mode switching (defense/offense), phosphor barrage |
+
+## C. Tau Enemies (For Imperial/Ork players)
+
+### Fire Caste
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Fire Warrior Shas'la | Standard | 228 | 55 | Pulse rifle, Supporting Fire (reaction shots) |
+| Pathfinder | Veteran | 342 | 45 | Markerlight (buffs allies), carbine |
+| Breacher | Elite | 1140 | 60 | Pulse blaster (close range burst), breaching charges |
+| Crisis Suit | Champion | 4180 | 100 | Weapons loadout varies, jet mobility, shield drones |
+| Riptide | Boss | 20900 | 130 | Nova reactor (supercharged attacks), ion accelerator |
+
+### Support Elements
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Gun Drone | Trash | 95 | 40 | Twin carbines, explodes on death |
+| Shield Drone | Standard | 190 | 30 | Absorbs damage for allies, no attacks |
+| Ethereal | Elite | 665 | 40 | Aura buffs (varies), Failure Cascade (allies demoralized if killed) |
+| Hammerhead | Champion | 5700 | 110 | Railgun (one-shot potential), smart missiles |
+| Commander Shadowsun | Boss | 19000 | 95 | Stealth suit, dual fusion, command abilities, deploys decoys |
+
+## D. Ork Enemies (For Imperial/Tau players)
+
+### Da Boyz
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Gretchin | Trash | 76 | 15 | Cowardly (runs at 50% HP), mob tactics |
+| Ork Boy | Standard | 312 | 45 | Choppa/slugga, WAAAGH! charge |
+| Nob | Veteran | 520 | 60 | Power klaw, 'Ead butt (Stun), leads boyz |
+| Meganob | Elite | 1560 | 100 | Mega armor (very tanky), slow but deadly |
+| Warboss | Champion | 5720 | 90 | Power klaw, WAAAGH! (buffs all Orks), boss pole |
+| Gorkanaut | Boss | 26000 | 140 | Deff kannon, klaw of Gork, rampage mode |
+
+### Specialists
+
+| Enemy | Tier | HP | Armor | Abilities |
+|-------|------|-----|-------|-----------|
+| Shoota Boy | Standard | 260 | 40 | Inaccurate but volume fire |
+| Burna Boy | Veteran | 390 | 50 | Flamer (cone DOT), power axe |
+| Tankbusta | Elite | 1040 | 55 | Rokkits (anti-armor), tankhammer charge |
+| Weirdboy (Enemy) | Champion | 3380 | 45 | Psychic powers, 'Eadsplosion risk, teleports |
+| Ghazghkull Thraka | Boss | 33800 | 160 | Prophet of da WAAAGH!, army buffs, immortal phases |
+
+---
+
+# V. LOOT TABLES & DROP RATES
+
+## A. Currency Drops
+
+```
+IMPERIAL THRONES DROP TABLE
+
+Enemy Tier   | Min  | Max  | Average
+-------------|------|------|--------
+Trash        | 2    | 5    | 3
+Standard     | 5    | 15   | 10
+Veteran      | 15   | 35   | 25
+Elite        | 30   | 60   | 45
+Champion     | 80   | 150  | 115
+Boss         | 200  | 500  | 350
+```
+
+## B. Material Drop Rates
+
+```
+MATERIAL DROP TABLE (Per Enemy Kill)
+
+Enemy Tier | T1    | T2    | T3    | T4    | T5
+-----------|-------|-------|-------|-------|------
+Trash      | 40%   | 5%    | 0%    | 0%    | 0%
+Standard   | 50%   | 15%   | 1%    | 0%    | 0%
+Veteran    | 40%   | 30%   | 5%    | 0%    | 0%
+Elite      | 30%   | 40%   | 15%   | 2%    | 0%
+Champion   | 20%   | 45%   | 30%   | 8%    | 0.5%
+Boss       | 10%   | 30%   | 45%   | 20%   | 3%
+
+Notes:
+- T1-T3 drop 1-3 units
+- T4 drops 1-2 units
+- T5 drops 1 unit
+- Boss T5 is guaranteed 1, additional 3% for second
+```
+
+## C. Equipment Drop Tables
+
+```
+EQUIPMENT DROP TABLE
+
+Source Type          | Equipment Chance | Tier Distribution
+---------------------|------------------|-------------------
+Standard Enemy       | 2%               | 80% T1, 20% T2
+Veteran Enemy        | 5%               | 60% T1, 35% T2, 5% T3
+Elite Enemy          | 15%              | 30% T2, 60% T3, 10% T4
+Champion Enemy       | 40%              | 50% T3, 40% T4, 10% T5
+Boss Enemy           | 100%             | 30% T4, 60% T5, 10% Named
+Mission Completion   | 100%             | Based on mission tier
+Chest/Cache          | 100%             | Zone tier dependent
+
+NAMED ITEM DROPS (Boss-specific):
+- Each boss has 3-6 unique named items
+- 10% base chance for named item on kill
+- Named items cannot drop from non-boss sources
+```
+
+## D. Consumable Drop Rates
+
+```
+CONSUMABLE DROP TABLE
+
+Enemy Tier | Drop Chance | T1    | T2    | T3    | T4
+-----------|-------------|-------|-------|-------|------
+Trash      | 5%          | 100%  | 0%    | 0%    | 0%
+Standard   | 10%         | 80%   | 20%   | 0%    | 0%
+Veteran    | 15%         | 60%   | 35%   | 5%    | 0%
+Elite      | 25%         | 40%   | 45%   | 14%   | 1%
+Champion   | 40%         | 20%   | 40%   | 35%   | 5%
+Boss       | 60%         | 10%   | 30%   | 45%   | 15%
+
+Quantity per drop: 1-3 (weighted toward 1)
+```
+
+---
+
+# VI. DIFFICULTY CURVE & ENCOUNTER DESIGN
+
+## A. Level Scaling
+
+```
+PLAYER POWER BY LEVEL
+
+Level | Base HP | Base Armor | Expected DPS | Content Tier
+------|---------|------------|--------------|-------------
+1-5   | 200-280 | 20-35      | 15-25        | Tutorial
+6-10  | 300-380 | 40-55      | 30-50        | Core
+11-15 | 400-460 | 60-75      | 55-80        | Advanced
+16-20 | 480-550 | 80-100     | 85-120       | Endgame
+
+ENEMY SCALING FORMULA:
+Enemy Level = Zone Level × (1 + Mission Difficulty Modifier)
+Enemy HP = Base HP × (1 + 0.08 × Level)
+Enemy Damage = Base Damage × (1 + 0.06 × Level)
+Enemy Armor = Base Armor × (1 + 0.05 × Level)
+```
+
+## B. Difficulty Tiers
+
+```
+MISSION DIFFICULTY LEVELS
+
+NORMAL (Baseline)
+├── Enemy count: Standard
+├── Enemy level: Zone level
+├── Mechanics: Basic
+├── Rewards: 1.0x multiplier
+└── Target: Solo or casual group
+
+HARD (+25% challenge)
+├── Enemy count: +25%
+├── Enemy level: Zone +2
+├── Mechanics: Standard + some advanced
+├── Rewards: 1.5x multiplier
+└── Target: Coordinated group
+
+VETERAN (+50% challenge)
+├── Enemy count: +50%
+├── Enemy level: Zone +4
+├── Mechanics: Full complexity
+├── Rewards: 2.0x multiplier
+└── Target: Experienced group with builds
+
+NIGHTMARE (+100% challenge)
+├── Enemy count: +75%
+├── Enemy level: Zone +6
+├── Mechanics: Enhanced + exclusive
+├── Rewards: 3.0x multiplier
+└── Target: Optimized group, meta builds
+```
+
+## C. Encounter Design Principles
+
+```
+ENCOUNTER COMPOSITION RULES
+
+TRASH PACKS:
+├── 4-8 Trash enemies per pack
+├── Purpose: Resource/cooldown expenditure
+├── Spacing: 10-15 seconds between packs
+└── Variety: Mix 2-3 enemy types
+
+STANDARD ENCOUNTERS:
+├── 2-4 Standard enemies + 4-6 Trash
+├── Purpose: Tactical engagement
+├── One enemy should have priority target potential
+└── Include 1-2 environmental hazards
+
+VETERAN ENCOUNTERS:
+├── 1 Veteran + 2-3 Standard + Trash support
+├── Purpose: Mini-boss practice
+├── Veteran has interrupt-worthy abilities
+└── Adds spawn based on Veteran HP thresholds
+
+ELITE ENCOUNTERS:
+├── 1 Elite OR 2-3 Veterans
+├── Purpose: Build check, execution test
+├── Multiple mechanics active simultaneously
+├── Positioning matters significantly
+
+CHAMPION ENCOUNTERS:
+├── 1 Champion + adds spawn pattern
+├── Purpose: Group coordination test
+├── Multiple phases with different mechanics
+├── Soft enrage (damage increase over time)
+
+BOSS ENCOUNTERS:
+├── 1 Boss + scripted encounter
+├── Purpose: Pinnacle challenge
+├── 3-5 distinct phases
+├── Unique mechanics not seen elsewhere
+├── Hard enrage at 10-15 minute mark
+```
+
+## D. Difficulty Spikes (Identified & Smoothed)
+
+```
+KNOWN DIFFICULTY TRANSITIONS
+
+LEVEL 10 TRANSITION (Tutorial → Core):
+├── Original issue: Enemy damage jump too sharp
+├── Solution: Introduce Hard enemies gradually from level 8
+├── Add intermediate mission at level 9-10 teaching mechanics
+└── Status: SMOOTHED
+
+LEVEL 16-18 TRANSITION (Core → Advanced):
+├── Original issue: Veterans appear suddenly in quantity
+├── Solution: Gradual Veteran introduction from level 14
+├── Ensure T3 gear is accessible by level 15
+└── Status: SMOOTHED
+
+LEVEL 20-25 TRANSITION (Advanced → Endgame):
+├── Original issue: Nightmare difficulty too punishing for new 20s
+├── Solution: Create "Veteran+" difficulty tier (1.75x rewards)
+├── Gate Nightmare behind achievement/attunement
+└── Status: SMOOTHED
+```
+
+---
+
+# VII. PVP BALANCE FRAMEWORK
+
+## A. PvP Stat Normalization
+
+```
+PVP STAT SPLIT
+
+In PvP zones/instances, the following adjustments apply:
+
+DAMAGE:
+├── All damage reduced by 40% (TTK extension)
+├── Condition damage ticks reduced by 50%
+└── Percentage-based damage capped at 5% per tick
+
+HEALING:
+├── All healing reduced by 30%
+├── Resurrection skills disabled (rally system instead)
+└── Health regeneration reduced by 50%
+
+CONTROL:
+├── Hard CC durations halved (max 1.5s)
+├── Soft CC durations reduced by 25%
+├── Diminishing returns more aggressive (3 stacks → immune)
+└── Stability uptime limited (max 50% of combat)
+```
+
+## B. PvP Modes
+
+```
+STRUCTURED PVP MODES
+
+WARZONE (8v8):
+├── Objective-based (capture points, payloads)
+├── Respawn enabled (15s timer)
+├── Gear normalized to T4 equivalent
+├── Faction-locked (Imperial vs Tau vs Ork)
+
+GUILD BATTLE (GvG, 8v8):
+├── Team elimination
+├── No respawn (rally only)
+├── Full gear with PvP split
+├── Cross-faction allowed
+
+HALLS OF VALOR (5v5):
+├── Rotating objectives
+├── Limited respawns (3 per player)
+├── Ranked with seasons
+├── Solo/duo queue available
+```
+
+---
+
+# VIII. INTEGRATION WITH OTHER SYSTEMS
+
+## A. Resource Integration
+
+```
+COMBAT → RESOURCE FLOW
+
+Combat Activity | Resource Generated
+----------------|--------------------
+Enemy kill      | Currency, Materials, Consumables
+Mission complete| Bonus currency, Guaranteed materials
+Boss kill       | Guaranteed T4+, Named items
+PvP victory     | Requisition Tokens, Faction currency
+```
+
+### Consumable Costs in Combat
+| Consumable Tier | Cost (Thrones) | Craft Cost | Expected Usage |
+|-----------------|----------------|------------|----------------|
+| T1 (Stimm Pack) | 10 | 15 materials | Every combat |
+| T2 (Blessed Unguent) | 50 | 40 materials | Hard+ content |
+| T3 (Frenzon) | 300 | 100 materials | Veteran+ content |
+| T4 (Emperor's Grace) | 1000 | 300 materials | Nightmare/Boss |
+
+## B. Progression Integration
+
+```
+COMBAT → PROGRESSION FLOW
+
+Combat Activity | Progression Reward
+----------------|-------------------
+Mission XP      | Level progression, skill point unlock
+Elite kills     | Specialization points
+Boss kills      | Title unlocks, achievement progress
+PvP rank        | Ranked rewards, exclusive gear access
+```
+
+## C. Economy Integration
+
+```
+COMBAT → ECONOMY FLOW
+
+Combat Output | Economic Impact
+--------------|----------------
+Material drops| Supply for crafting market
+Equipment drops| Equipment market supply
+Currency drops| Liquidity injection
+Repair costs  | Currency sink (scales with gear tier)
+Consumable use| Currency/material sink
+```
+
+### Repair Cost Formula
+```
+Repair Cost = Sum of (Item Tier Value × 0.03) for all equipped items
+
+Item Tier Values:
+├── T1: 50 Thrones
+├── T2: 150 Thrones
+├── T3: 500 Thrones
+├── T4: 1500 Thrones
+├── T5: 5000 Thrones
+└── Legendary: 10000 Thrones
+
+Example (Full T4 loadout, 10 slots):
+10 × 1500 × 0.03 = 450 Thrones per full repair
+```
+
+---
+
+# IX. BALANCE TUNING NOTES
+
+## A. Addressed Issues from Balance Analysis
+
+### Crisis Suit Overheat (IMPLEMENTED)
+```
+BEFORE: Crisis Suit was best-in-slot at everything
+AFTER: Overheat mechanic creates resource management
+├── Limits sustained damage output
+├── Requires Coolant Flush skill (opportunity cost)
+├── Creates windows of vulnerability
+└── Rewards thoughtful hardpoint cycling
+```
+
+### Damage Buff Cap (IMPLEMENTED)
+```
+BEFORE: Unlimited buff stacking enabled exploits
+AFTER: 50% hard cap on damage bonuses from buffs
+├── Individual buffs still valuable
+├── Stacking beyond cap provides no benefit
+├── Prevents multiplicative explosion
+└── Maintains build diversity
+```
+
+### Divine Intervention Nerf (IMPLEMENTED)
+```
+BEFORE: 45s cooldown, resurrect 3 allies
+AFTER: 90s cooldown, resurrect 1 ally with 50% HP
+├── Still powerful but not fight-resetting
+├── Encourages avoiding deaths rather than ignoring them
+├── Other resurrection options remain (Tech-Priest elite)
+└── Resource cost added (30 Faith)
+```
+
+### Weirdboy Variance (DEFINED)
+```
+'Eadache thresholds now explicit:
+├── 0-49: Normal operation
+├── 50-74: +15% damage bonus
+├── 75-99: +30% damage, 15% misfire chance
+├── 100: Automatic 'Eadsplosion
+├── 'Eadsplosion: 200 damage to self + 300 unit radius
+└── Voluntary explosion elite: Double damage, self-immune
+```
+
+### Condition/CC Build Viability (ADDRESSED)
+```
+Improvements:
+├── Condition damage scaling improved (+25% base)
+├── CC duration base increased (then reduced in PvP)
+├── Synergy skills added for condition builds
+├── Diminishing returns protect against CC lock
+└── Control builds now viable as support role
+```
+
+## B. Gretchin Farming Prevention
+```
+ANTI-FARMING MEASURES:
+├── Gretchin respawn: 3 minute minimum
+├── Same-enemy farming penalty: 50% drops after 10 kills
+├── Zone-wide spawn cap: Max 20 Gretchin per zone instance
+└── T1 Organic material daily cap from Gretchin: 50 units
+```
+
+## C. Boss Loot Timing
+```
+BOSS LOOT CLARIFICATION:
+├── Loot generates on boss death
+├── Loot distributed at mission completion
+├── Leaving before mission end: Loot mailed (minus 10%)
+├── Exploit prevention: Cannot re-enter completed boss instance
+└── Loot table determined at kill, not at distribution
+```
+
+---
+
+# X. SUMMARY
+
+## Combat System At-a-Glance
+
+| Aspect | Design Choice | GW1 Inspiration |
+|--------|---------------|-----------------|
+| Skill System | 8-skill bar, pre-selected | Direct from GW1 |
+| Class System | Primary/Secondary | Direct from GW1 |
+| Combat Speed | Real-time, 0.75s GCD | Faster than GW1 |
+| TTK (PvE) | 3-15 seconds (trash to elite) | Similar pacing |
+| TTK (PvP) | 8-20 seconds | Slightly longer |
+| Healing | Strong but not dominant | Similar philosophy |
+| Control | Impactful with DR | Similar philosophy |
+| Build Diversity | High (many viable builds) | Core goal |
+
+## Class Summary
+
+| Class | Faction | Primary Role | Unique Mechanic |
+|-------|---------|--------------|-----------------|
+| Sister of Battle | Imperial | DPS/Support | Acts of Faith |
+| Tech-Priest | Imperial | Support/Summon | Binaric Cant |
+| Guardsman | Imperial | DPS/Support | Command Structure |
+| Fire Warrior | Tau | Ranged DPS | Markerlights |
+| Crisis Suit Pilot | Tau | Heavy DPS | Hardpoints + Overheat |
+| Ethereal | Tau | Pure Support | Elemental Auras |
+| Ork Boy | Ork | Melee DPS | WAAAGH! Energy |
+| Mek | Ork | Turrets/Support | Scrap |
+| Weirdboy | Ork | Burst DPS | 'Eadache |
+
+## Key Balance Numbers
+
+| Metric | Value |
+|--------|-------|
+| Max Damage Buff | 50% (hard cap) |
+| Max Crit Chance | 50% (hard cap) |
+| Max Crit Multiplier | 2.5x (hard cap) |
+| Hard CC Max Duration | 3s PvE / 1.5s PvP |
+| Boss Enrage Timer | 10-15 minutes |
+| Heal Reduction (PvP) | 30% |
+| Damage Reduction (PvP) | 40% |
+
+---
+
+*"In the grim darkness of the far future, there is only war... and carefully balanced combat mechanics."*
+
+---
+
+DECISION: combat_complete

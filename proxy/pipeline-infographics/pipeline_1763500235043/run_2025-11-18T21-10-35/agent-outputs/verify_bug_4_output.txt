@@ -1,0 +1,191 @@
+# 🔬 Bug Existence Verification Report
+
+## ✅ MANDATORY EVIDENCE CHECKLIST
+
+| Requirement | Status | Details |
+|-------------|--------|---------|
+| 1. Evidence file exists | ✅ PASS | `bug_evidence_afterburner_physics_1763500449965.json` |
+| 2. Contains commands array | ✅ PASS | 23 WebSocket commands executed |
+| 3. bugReproduced: true | ✅ PASS | `"status": "BUG_REPRODUCED"` |
+| 4. Console log file path | ✅ PASS | `C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log` |
+| 5. Console logs populated | ✅ PASS | 5 console entries captured |
+| 6. Test script executed | ✅ PASS | Exit code 0, runtime data present |
+| 7. Runtime state snapshots | ✅ PASS | Velocity, position, throttle captured at multiple timesteps |
+
+**ALL EVIDENCE REQUIREMENTS MET** ✅
+
+---
+
+## 📊 EVIDENCE ANALYSIS
+
+### WebSocket Command Evidence
+
+```json
+{
+  "commandsExecuted": 23,
+  "criticalCommands": [
+    "dock → success",
+    "fitItem (Afterburner I) → success", 
+    "setThrottle(1.0) → success",
+    "getShipState (0.5s after throttle) → velocity: 525 m/s",
+    "setThrottle(0.0) → success",
+    "getShipState (after throttle cut) → velocity: 0 m/s"
+  ],
+  "websocketResponsesNormal": "All commands returned success:true",
+  "bugVisibleInWebSocket": true
+}
+```
+
+### Console Log Analysis
+
+```json
+{
+  "consoleLogFile": "C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log",
+  "consoleLogSize": "2.4 MB",
+  "consoleLogCount": 5,
+  "consoleErrorCount": 5,
+  "consoleExceptionCount": 0,
+  "consoleErrors": [
+    "Error details require full log analysis (2.4 MB file)"
+  ],
+  "errorCorrelation": "Console errors present during test execution (5 ERROR entries logged)"
+}
+```
+
+**Note**: While console errors exist, the bug is CLEARLY visible in WebSocket state snapshots alone - velocity physics completely broken.
+
+### Runtime State Evidence
+
+#### WITHOUT Afterburner (Normal EVE Physics) ✅
+```json
+{
+  "time_0s": {"throttle": 1.0, "velocity": 0},
+  "time_1s": {"velocity": 80.4},  // Exponential acceleration
+  "time_3s": {"velocity": 142.4}, // Continuing smooth curve
+  "pattern": "Gradual exponential acceleration (EVE-style) - WORKING"
+}
+```
+
+#### WITH Afterburner (BROKEN) ❌
+```json
+{
+  "time_0s": {"throttle": 1.0, "velocity": 0},
+  "time_0.5s": {"velocity": 525},   // INSTANT jump to max!
+  "time_1.5s": {"velocity": 525},   // No further curve
+  "time_after_throttle_cut": {"velocity": 0}, // INSTANT drop!
+  "pattern": "INSTANT velocity changes - EVE physics BYPASSED"
+}
+```
+
+### Physics Behavior Comparison
+
+| Metric | Expected (EVE Physics) | Actual (With Afterburner) | Bug Confirmed? |
+|--------|------------------------|---------------------------|----------------|
+| **Acceleration** | V(t) = V_max × (1 - e^(-t/τ)) | 0 → 525 m/s instantly | ✅ **YES** |
+| **Speed at 0.5s** | ~40-60 m/s | **525 m/s** | ✅ **YES** |
+| **Speed at 1.5s** | ~120-150 m/s | **525 m/s** (no curve) | ✅ **YES** |
+| **Deceleration** | Exponential decay | **0 m/s** instantly | ✅ **YES** |
+| **Physics formula applied** | Yes | **NO** | ✅ **YES** |
+
+---
+
+## 🎯 BUG CONFIRMATION
+
+### Evidence Quality Assessment
+
+```json
+{
+  "runtimeEvidencePresent": true,
+  "consoleLogsPresent": true,
+  "consoleLogFile": "C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log",
+  "consoleErrorCount": 5,
+  "consoleExceptionCount": 0,
+  "websocketResponses": "23 commands executed with state snapshots captured",
+  "stateInconsistency": "Velocity changes from 0 → 525 m/s in <500ms, then 525 → 0 instantly",
+  "matchesBugReport": true,
+  "previousFixIneffective": true
+}
+```
+
+### Critical Findings
+
+1. **INSTANT ACCELERATION**: Velocity jumps from 0 → 525 m/s in <500ms (should take ~3-5 seconds)
+2. **INSTANT DECELERATION**: Velocity drops from 525 → 0 instantly when throttle cut (should decay exponentially)
+3. **NO ACCELERATION CURVE**: Speed at 0.5s and 1.5s identical (525 m/s) - no exponential curve
+4. **PREVIOUS FIX FAILED**: Changing velocity to plain object did NOT resolve the issue
+5. **COMPARISON PROOF**: Same ship WITHOUT afterburner shows correct EVE physics (80.4 m/s at 1s)
+
+### Console Log Insights
+
+1. 5 console ERROR entries logged during test execution
+2. 2.4 MB console log file requires deeper analysis for root cause
+3. Bug is visible in WebSocket state alone (console errors may be secondary symptoms)
+4. No JavaScript exceptions (ExceptionCount: 0), suggesting logic error not runtime crash
+
+---
+
+## 🔍 ROOT CAUSE HYPOTHESIS
+
+Based on runtime evidence:
+
+**The afterburner module bypasses EVE physics entirely:**
+- Normal ship: Uses `V(t) = V_max × (1 - e^(-t/τ))` formula → smooth acceleration
+- With afterburner: Sets `velocity = maxVelocity` directly → instant movement
+
+**Why previous fix failed:**
+- Changed velocity data structure (THREE.Vector3 → plain object)
+- Did NOT fix the logic that bypasses acceleration calculations
+- The instant velocity assignment still occurs regardless of object type
+
+**Likely code path:**
+1. Afterburner fitted → increases `maxVelocity` stat
+2. Physics update sees high `maxVelocity`
+3. **BUG**: Code directly assigns `ship.velocity = ship.maxVelocity * throttle`
+4. **SHOULD**: Code should calculate `ship.velocity += acceleration * deltaTime` with exponential curve
+
+---
+
+## 📋 VERIFICATION DECISION
+
+```json
+{
+  "verification": "BUG_CONFIRMED",
+  "reasoning": "Runtime evidence proves afterburner causes instant velocity changes instead of EVE-style acceleration curves. State snapshots show velocity jumping from 0 → 525 m/s in <500ms and dropping instantly to 0 when throttle cut. Comparison test shows normal physics works correctly WITHOUT afterburner (80.4 m/s at 1s vs 525 m/s with afterburner). Previous fix (velocity plain object) was ineffective because it addressed data structure, not the logic that bypasses physics calculations.",
+  "evidenceAnalysis": {
+    "runtimeEvidencePresent": true,
+    "consoleLogsPresent": true,
+    "consoleLogFile": "C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log",
+    "consoleErrorCount": 5,
+    "consoleExceptionCount": 0,
+    "websocketResponses": "23 commands executed, state snapshots prove instant velocity changes",
+    "consoleErrors": [
+      "5 ERROR entries logged (2.4 MB log file - requires deeper analysis)"
+    ],
+    "errorCorrelation": "Console errors present but bug is clearly visible in WebSocket state alone",
+    "stateInconsistency": "Velocity: 0 → 525 m/s in <500ms (should be ~80 m/s at 1s), then 525 → 0 instantly",
+    "matchesBugReport": true
+  },
+  "consoleLogInsights": [
+    "5 console ERROR entries during test execution",
+    "No JavaScript exceptions (logic error, not crash)",
+    "Bug visible in state snapshots without needing console analysis",
+    "2.4 MB console log available for root cause investigation"
+  ],
+  "confidence": 1.0,
+  "nextSteps": "Proceed to root cause analysis in ShipPhysics.js - investigate why afterburner bypasses EVE acceleration formula V(t) = V_max × (1 - e^(-t/τ))"
+}
+```
+
+---
+
+## 🚀 NEXT STEPS
+
+1. **Root Cause Analysis**: Examine `ShipPhysics.js` for code that directly assigns velocity when afterburner is fitted
+2. **Code Path Tracing**: Follow afterburner activation → velocity calculation → position update
+3. **Fix Implementation**: Ensure afterburner increases `maxVelocity` but still uses exponential acceleration formula
+4. **Comprehensive Testing**: Verify fix restores EVE physics with afterburner fitted
+5. **Console Log Analysis**: Review 2.4 MB console log for additional error context (if needed)
+
+---
+
+**DECISION: BUG_CONFIRMED** (Bug confirmed, proceed to root cause analysis)

@@ -36,6 +36,16 @@ class QueueService {
         const currentState = JSON.parse(fs.readFileSync(currentStatePath, 'utf8'));
 
         if (currentState.status === 'running' || currentState.status === 'paused') {
+          // Check if we're already processing this pipeline
+          const projectMatch = currentState.workingDir?.match(/proj_([a-f0-9]+)/);
+          if (projectMatch) {
+            const projectId = 'proj_' + projectMatch[1];
+            if (this.processingProjects.has(projectId)) {
+              console.log(`[QueueService] Pipeline ${currentState.id} is already being processed`);
+              return { found: false, reason: 'already_processing' };
+            }
+          }
+
           console.log(`[QueueService] Found incomplete pipeline: ${currentState.id}`);
           console.log(`[QueueService]   Name: ${currentState.name}`);
           console.log(`[QueueService]   Stage: ${currentState.currentStage} (${currentState.completedStages?.length || 0}/${currentState.stages?.length || 0})`);

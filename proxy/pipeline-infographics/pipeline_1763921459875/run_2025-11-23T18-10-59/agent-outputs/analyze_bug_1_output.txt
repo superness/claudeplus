@@ -1,0 +1,51 @@
+UNDERSTANDING: User wants to fix an infinite orchestration loop in the intelligent mining infrastructure setup pipeline. The root cause is that component manager agents (pool_server_manager, bitcoin_daemon_manager, miner_manager) only validate that processes are running (PID exists, ports bound) but don't validate functional connectivity (can actually connect to ports, no RPC errors, endpoints responding). This causes the orchestrator to loop because connectivity issues aren't caught. The fix requires splitting each of the 3 component managers into 2 specialized agents: a 'starter' agent (process/port validation) and a 'functional_validator' agent (connectivity/RPC validation), then updating the pipeline template to sequence them correctly.
+
+APPROACH: I will:
+1. Read the existing component manager agent files to understand their current validation logic
+2. Create 6 new specialized agent files (3 starters + 3 functional validators)
+3. Read the current intelligent-mining-infrastructure-setup.json pipeline template
+4. Update the pipeline template to use the new agents with proper sequencing (starter → functional_validator → orchestrator)
+5. Verify the new agents reference the correct tools and validation criteria
+
+STEPS:
+1. Read existing component manager agents to understand their validation logic:
+   - `agents/pool_server_manager.json`
+   - `agents/bitcoin_daemon_manager.json`
+   - `agents/miner_manager.json`
+
+2. Create 6 new specialized agent files:
+   - `agents/pool_server_starter.json` - Validates pool server process running, ports bound
+   - `agents/pool_server_functional_validator.json` - Validates stratum port connectable, no RPC errors in logs
+   - `agents/bitcoin_daemon_starter.json` - Validates bitcoind process running, RPC port bound
+   - `agents/bitcoin_daemon_functional_validator.json` - Validates RPC endpoint responding, can execute getblockchaininfo
+   - `agents/miner_starter.json` - Validates miner process running, connected to pool
+   - `agents/miner_functional_validator.json` - Validates miner is submitting shares, no connection errors in logs
+
+3. Read the current pipeline template:
+   - `templates/intelligent-mining-infrastructure-setup.json`
+
+4. Update pipeline template stages to use new agent sequencing:
+   - Replace pool_server_manager with: pool_server_starter → pool_server_functional_validator → infrastructure_orchestrator
+   - Replace bitcoin_daemon_manager with: bitcoin_daemon_starter → bitcoin_daemon_functional_validator → infrastructure_orchestrator
+   - Replace miner_manager with: miner_starter → miner_functional_validator → infrastructure_orchestrator
+
+5. Verify stage connections follow pattern: starter → functional_validator (if success) → orchestrator (if validation passes)
+
+TEST_CONSIDERATIONS:
+- Test that starter agents correctly identify when processes aren't running (PID doesn't exist, ports not bound)
+- Test that functional validators correctly identify connectivity issues (ports unreachable, RPC returning errors, no log activity)
+- Test that orchestrator receives routing from functional validators, not starters
+- Test edge cases: process running but ports not responding, bitcoind running but RPC disabled, miner connected but not hashing
+- Test that the orchestrator doesn't loop when functional validation fails (should error or route to error recovery)
+
+EVIDENCE:
+- Diff showing the split between starter validation logic (process/port checks) and functional validation logic (connectivity/RPC checks)
+- Pipeline template showing new stage sequences with correct agent assignments
+- Stage connection configuration showing functional_validator → orchestrator routing
+- Agent JSON files showing distinct validation responsibilities and different nextStage routing
+
+CONFIDENCE: High - This is a clear architectural fix with well-defined separation of concerns. The loop occurs because process health checks pass while connectivity fails, and splitting these into separate stages with explicit validation will prevent the loop. The fix requires creating new agent files and updating pipeline template connections, both of which are straightforward JSON modifications.
+
+[DECISION: design_complete]
+
+DECISION: success

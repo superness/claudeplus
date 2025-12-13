@@ -1,0 +1,1216 @@
+# Combat Systems Design Document
+## Warhammer 40,000: Imperium Divided - Damocles Gulf Sector
+
+---
+
+# I. COMBAT PHILOSOPHY
+
+Drawing from Guild Wars 1's design principles: **build diversity over gear dependency, skill synergy over stat stacking, and tactical depth over twitch reflexes**.
+
+**Core Principles:**
+- Combat is semi-real-time with pause-to-issue-orders (like GW1's active pause)
+- Victory comes from build preparation and tactical adaptation, not reaction speed
+- Every class has multiple viable roles based on skill selection
+- Party composition matters but isn't rigidly enforced
+- Death has meaning but isn't punishing
+
+---
+
+# II. COMBAT MECHANICS OVERVIEW
+
+## A. Combat Model: Real-Time with Tactical Pause
+
+```
+COMBAT FLOW
+
+Initiative Phase (Pre-Combat)
+├── Detect enemies → Combat stance activated
+├── Issue initial orders
+└── Buffs/preparations can be cast
+
+Active Combat (Real-Time)
+├── Skills execute on cooldowns
+├── Movement is free but affects accuracy
+├── Pause available (solo/party leader only)
+├── AI companions follow behavior presets
+└── Energy regenerates continuously
+
+Resolution Phase
+├── Enemies defeated → Loot rolls
+├── Party defeated → Respawn at checkpoint
+└── Retreat available (costs morale)
+```
+
+## B. Core Combat Stats
+
+### Primary Attributes
+
+| Attribute | Effect | Base Value | Per Point |
+|-----------|--------|------------|-----------|
+| **Strength** | Melee damage, carry capacity | 10 | +2% melee dmg, +5 carry |
+| **Ballistics** | Ranged damage, accuracy | 10 | +2% ranged dmg, +1% acc |
+| **Toughness** | HP, physical resistance | 10 | +15 HP, +0.5% phys res |
+| **Willpower** | Psychic damage, resistance | 10 | +2% psy dmg, +1% psy res |
+| **Initiative** | Attack speed, dodge chance | 10 | +1% attack speed, +0.3% dodge |
+| **Fellowship** | Companion effectiveness, NPC prices | 10 | +2% companion dmg, -1% prices |
+
+### Derived Statistics
+
+```
+DERIVED STAT FORMULAS
+
+Health Points = 300 + (Toughness × 15) + (Level × 20)
+├── Level 1 base: 300 + 150 + 20 = 470 HP
+├── Level 20 base: 300 + 150 + 400 = 850 HP
+└── Level 30 elite: 300 + 300 + 600 = 1200 HP (maxed Toughness)
+
+Energy Pool = 80 + (Primary Class Modifier) + (Level × 2)
+├── Warrior types: +0
+├── Support types: +20
+├── Caster types: +40
+└── Hybrid types: +10
+
+Energy Regeneration = 4/second base + (gear bonuses)
+
+Armor Rating = Equipment Value × (1 + Toughness/100)
+├── Damage Reduction = Armor / (Armor + 200)
+├── Soft Cap: 150 armor = 42.9% DR
+└── Hard Cap: 60% DR maximum (implemented per balance analyst)
+
+Critical Chance = 5% base + (gear) + (skills)
+└── Hard Cap: 35%
+
+Critical Damage = 150% base + (gear) + (skills)
+└── Hard Cap: 250%
+```
+
+---
+
+# III. DAMAGE SYSTEM
+
+## A. Damage Types
+
+### Physical Damage Types
+
+| Type | Source | Strong Against | Weak Against |
+|------|--------|----------------|--------------|
+| **Kinetic** | Bolters, autoguns | Unarmored, Vehicles | Heavy armor |
+| **Energy** | Las-weapons, plasma | Armor, Shields | Vehicles |
+| **Explosive** | Grenades, missiles | Groups, Cover | Single target |
+| **Rending** | Chain weapons, claws | Armor, Organics | Machines |
+
+### Special Damage Types
+
+| Type | Source | Special Effect |
+|------|--------|----------------|
+| **Warp** | Psyker powers | Ignores armor, causes Corruption |
+| **Fire** | Flamers, incendiaries | DoT, spreads to nearby |
+| **Toxic** | Poisons, chemicals | DoT, reduces healing |
+| **Holy** | Faith powers | Bonus vs Chaos/Undead |
+| **WAAAGH!** | Ork abilities | Scales with nearby Orks |
+
+## B. Damage Calculation Formula
+
+```
+DAMAGE FORMULA
+
+Base Damage = Weapon Damage × Skill Modifier
+
+Modified Damage = Base Damage 
+    × (1 + Attribute Bonus)
+    × (1 + Buff Modifiers)          [ADDITIVE within category]
+    × Critical Modifier (if crit)
+    × Target Vulnerability
+
+Final Damage = Modified Damage × (1 - Target DR) × (1 - Target Resistance)
+
+BUFF STACKING RULES (per Balance Analyst):
+├── Same buff type: Only highest value applies
+├── Different buff types: Additive (capped at +100% total)
+├── Multiplicative buffs: Maximum 2 can apply
+└── Diminishing returns: 4th+ stack of any buff type = 50% effectiveness
+```
+
+### Damage Example
+
+```
+EXAMPLE: Bolter Shot
+
+Weapon Damage: 45
+Skill Modifier: 1.0 (basic shot)
+Ballistics: 20 (+20% ranged damage)
+Buffs: Blessed Ammunition (+15%), Target Lock (+10%)
+Critical: No
+Target: Ork Boy (0% vulnerability to kinetic)
+Target Armor: 80 (28.6% DR)
+Target Resistance: 0%
+
+Calculation:
+Base: 45 × 1.0 = 45
+Modified: 45 × 1.20 × 1.25 = 67.5
+Final: 67.5 × 0.714 = 48.2 damage
+```
+
+## C. Time-to-Kill Targets (Adjusted per Balance Analyst)
+
+```
+TTK TARGETS BY LEVEL BRACKET
+
+Level 1-10 (Struggle Phase):
+├── Standard Enemy: 6-8 seconds
+├── Elite Enemy: 15-20 seconds
+├── Boss: 90-150 seconds (party)
+└── Player vs Player: 8-12 seconds
+
+Level 11-20 (Competence Phase):
+├── Standard Enemy: 4-6 seconds
+├── Elite Enemy: 12-18 seconds
+├── Boss: 60-120 seconds (party)
+└── Player vs Player: 6-10 seconds
+
+Level 21-30 (Mastery Phase):
+├── Standard Enemy: 3-5 seconds
+├── Elite Enemy: 10-15 seconds
+├── Boss: 45-90 seconds (party)
+└── Player vs Player: 5-8 seconds
+
+Level 30+ (Power Fantasy):
+├── Standard Enemy: 2-4 seconds
+├── Elite Enemy: 8-12 seconds
+├── Boss: 30-60 seconds (party)
+└── Player vs Player: 4-7 seconds
+```
+
+---
+
+# IV. STATUS EFFECTS
+
+## A. Control Effects
+
+| Effect | Duration | Impact | Diminishing Returns |
+|--------|----------|--------|---------------------|
+| **Stun** | 1-3s | Cannot act | 50% duration after 2nd |
+| **Knockdown** | 2s | Prone, -50% defense | Immune 5s after |
+| **Root** | 2-5s | Cannot move | 50% duration after 2nd |
+| **Slow** | 3-8s | -30-50% move speed | Stacks to -70% max |
+| **Blind** | 2-4s | -75% accuracy | 50% duration after 2nd |
+| **Silence** | 3-6s | Cannot use abilities | Cannot reapply for 10s |
+
+## B. Damage-over-Time Effects
+
+| Effect | Duration | Damage | Stacking |
+|--------|----------|--------|----------|
+| **Burning** | 5s | 15/tick | Refreshes, +5 damage per stack (max 3) |
+| **Bleeding** | 8s | 10/tick | Stacks to 5 |
+| **Poisoned** | 10s | 8/tick, -25% healing | Refreshes duration |
+| **Corroding** | 6s | 12/tick, -10 armor | Stacks to 3 |
+| **Warp Taint** | 4s | 20/tick, triggers Perils | Cannot stack |
+
+## C. Buff/Debuff Effects
+
+| Effect | Duration | Impact |
+|--------|----------|--------|
+| **Inspired** | 15s | +15% damage, +10% crit |
+| **Blessed** | 20s | +20% holy damage, +10 HP/s |
+| **Overcharged** | 10s | +25% damage, -15% accuracy |
+| **Suppressed** | 8s | -25% damage, -20% accuracy |
+| **Terrified** | 6s | -30% damage, may flee |
+| **Marked** | 12s | +15% damage taken |
+
+---
+
+# V. PERILS OF THE WARP SYSTEM
+
+*(Implemented per Balance Analyst recommendation)*
+
+```
+PERILS MECHANIC
+
+Trigger: Every psychic ability cast has Peril chance
+├── Base chance: 5%
+├── Warp-touched gear: +1-3%
+├── Consecutive casts (within 10s): +2% per cast
+└── High-level powers: +5-10%
+
+PERIL SEVERITY ROLL (d100):
+01-50: Minor Peril
+├── -50 HP
+├── 3s Silence
+└── Visual distortion effect
+
+51-80: Major Peril
+├── -50% current HP
+├── 5s Stun
+├── Spawns 1-2 lesser daemons
+└── All nearby allies take 25 Warp damage
+
+81-95: Severe Peril
+├── Reduced to 1 HP
+├── 8s Stun + Silence
+├── Spawns 3-4 daemons
+└── -25% all stats for 60s
+
+96-100: Catastrophic Peril
+├── Instant death
+├── 100 Warp damage in 10m radius
+├── Spawns elite daemon
+└── Party-wide -10% stats for 120s
+
+PERIL MITIGATION:
+├── Willpower: -0.5% chance per point above 20
+├── Sanctioning: -5% chance (Imperial Psyker only)
+├── Focus Items: -3-10% chance
+└── Ritual Preparation skill: Reset consecutive cast counter
+```
+
+---
+
+# VI. CLASS SYSTEM (Guild Wars 1 Primary/Secondary)
+
+## A. Overview
+
+Players choose a **Primary Class** (determines base stats, armor type, unique mechanic) and a **Secondary Class** (access to skills only, no unique mechanic or attribute bonuses).
+
+### Faction Class Restrictions
+
+| Faction | Primary Classes | Secondary Restrictions |
+|---------|-----------------|------------------------|
+| **Imperial** | Warrior Priest, Tempestus Operative, Tech-Adept, Sanctioned Psyker | Cannot secondary Ork classes |
+| **Tau** | Fire Warrior, Pathfinder, Earth Caste Engineer, Water Caste Diplomat | Can secondary any |
+| **Ork** | Nob, Mekboy, Weirdboy, Kommando | Cannot secondary Imperial Psyker |
+
+## B. Imperial Classes
+
+### Warrior Priest / Sister of Battle
+
+**Role:** Melee hybrid (damage/support)
+**Armor:** Heavy (base 100)
+**Unique Mechanic:** Faith
+
+```
+FAITH MECHANIC
+
+Faith Pool: 0-100 (starts at 0)
+├── Generated: +5 per melee hit, +10 per kill, +3/second in combat
+├── Decays: -5/second out of combat
+└── Powers: Faith abilities consume Faith instead of Energy
+
+FAITH ABILITIES:
+├── Shield of Faith (30 Faith): 3s damage immunity, CANNOT attack during
+├── Emperor's Light (50 Faith): Heal party for 150 + 5/Faith spent
+├── Holy Wrath (40 Faith): Next 3 attacks deal +50 Holy damage
+└── Martyrdom (100 Faith): On death, full heal to party, 10min CD
+```
+
+**Base Stats (Level 20):**
+- HP: 950
+- Energy: 90
+- Armor: 120 (37.5% DR)
+- Primary Attribute: Strength 20, Willpower 15
+
+### Tempestus Operative / Imperial Guard
+
+**Role:** Ranged DPS
+**Armor:** Medium (base 70)
+**Unique Mechanic:** Tactical Orders
+
+```
+TACTICAL ORDERS MECHANIC
+
+Orders: Issue commands affecting nearby allies (15m radius)
+├── Passive: One Order active at a time
+├── Switching: 3s cast time
+└── Bonus: Order effectiveness +2% per ally in range
+
+ORDERS:
+├── Fire at Will: +15% attack speed
+├── Hold Position: +20% damage, -50% move speed
+├── Advance: +30% move speed, -10% damage
+├── Suppressing Fire: Enemies -20% damage, allies -10% damage
+└── Focus Fire (marked target): All allies +25% damage vs target
+```
+
+**Base Stats (Level 20):**
+- HP: 750
+- Energy: 100
+- Armor: 85 (29.8% DR)
+- Primary Attribute: Ballistics 20, Initiative 15
+
+### Tech-Adept / Tech-Priest
+
+**Role:** Support/Summoner
+**Armor:** Medium (base 65)
+**Unique Mechanic:** Servitors
+
+```
+SERVITOR MECHANIC
+
+Servitor Slots: 2 base (+1 at level 15, +1 at level 25)
+├── Summoning: 5s channel, costs 40 energy
+├── Death: Servitor destroyed, slot on 60s cooldown
+└── Control: Follow, Guard, Aggressive behaviors
+
+SERVITOR TYPES:
+├── Combat Servitor: 400 HP, 40 DPS, melee
+├── Gun Servitor: 250 HP, 50 DPS, ranged
+├── Medical Servitor: 200 HP, heals 20 HP/s to nearby allies
+├── Shield Servitor: 300 HP, grants 15% DR to protected target
+└── Heavy Servitor (elite): 600 HP, 70 DPS, 2 slots
+
+THREAT SHARING (per Balance Analyst):
+├── Servitors share 50% of owner's threat
+└── Boss abilities can target servitors
+```
+
+**Base Stats (Level 20):**
+- HP: 700
+- Energy: 120
+- Armor: 80 (28.6% DR)
+- Primary Attribute: Fellowship 20, Toughness 12
+
+### Sanctioned Psyker
+
+**Role:** Caster DPS
+**Armor:** Light (base 45)
+**Unique Mechanic:** Warp Charges + Perils
+
+```
+WARP CHARGE MECHANIC
+
+Warp Charges: 0-5 (resource for empowered abilities)
+├── Generation: +1 per psychic ability cast
+├── Decay: -1 every 15s out of combat
+└── Empowerment: Spend charges for enhanced effects
+
+EMPOWERED ABILITIES:
+├── 1 Charge: +25% damage/healing
+├── 2 Charges: +50% damage/healing, +1s duration
+├── 3 Charges: +75% damage/healing, +2s duration, reduced CD
+├── 4 Charges: +100% damage/healing, +3s duration, -50% CD
+└── 5 Charges: Double effect, instant cast, triggers Peril check +20%
+
+ENERGY RETURN (nerfed per Balance Analyst):
+├── Killing with psychic ability: +5 energy (was +10)
+├── Internal cooldown: 4 seconds (new)
+└── Maximum return: 15 energy per 10 seconds
+```
+
+**Base Stats (Level 20):**
+- HP: 650
+- Energy: 140
+- Armor: 55 (21.6% DR)
+- Primary Attribute: Willpower 25, Initiative 12
+
+## C. Tau Classes
+
+### Fire Warrior
+
+**Role:** Ranged DPS
+**Armor:** Medium (base 75)
+**Unique Mechanic:** Mont'ka/Kauyon Stance
+
+```
+STANCE MECHANIC
+
+Mont'ka (Killing Blow):
+├── +20% damage
+├── +15% move speed
+├── -10% accuracy
+└── Abilities: Aggressive, close-range focused
+
+Kauyon (Patient Hunter):
+├── +25% accuracy
+├── +15% critical chance
+├── -20% move speed
+└── Abilities: Defensive, long-range focused
+
+STANCE SWITCHING:
+├── Cast time: 2s
+├── Cooldown: 10s
+└── Skills locked to stance cannot be used in wrong stance
+
+PULSE OVERCHARGE (new per Balance Analyst):
+├── Mont'ka only, 45 energy, 30s CD
+├── Next shot: +100% damage
+├── If used 3x in 30s: Weapon destroyed (requires repair, 500 Thrones)
+└── Provides burst capability Fire Warriors lacked
+```
+
+**Base Stats (Level 20):**
+- HP: 720
+- Energy: 100
+- Armor: 90 (31% DR)
+- Primary Attribute: Ballistics 22, Initiative 14
+
+### Pathfinder
+
+**Role:** Scout/Sniper
+**Armor:** Light (base 50)
+**Unique Mechanic:** Markerlight
+
+```
+MARKERLIGHT MECHANIC
+
+Markerlights: Applied to enemies, stack to 5
+├── Application: Markerlight ability (1s channel, 20 energy)
+├── Duration: 15s per application
+└── Party-wide benefit
+
+MARKERLIGHT BENEFITS:
+├── 1 Light: +10% accuracy vs target
+├── 2 Lights: +15% accuracy, +10% damage
+├── 3 Lights: +20% accuracy, +15% damage, ignore cover
+├── 4 Lights: +25% accuracy, +20% damage, ignore cover, seeker missiles home
+└── 5 Lights: All above + target takes +25% damage from all sources
+```
+
+**Base Stats (Level 20):**
+- HP: 650
+- Energy: 110
+- Armor: 60 (23.1% DR)
+- Primary Attribute: Ballistics 20, Initiative 18
+
+### Earth Caste Engineer
+
+**Role:** Support/Builder
+**Armor:** Light (base 55)
+**Unique Mechanic:** Drones + Deployables
+
+```
+DRONE MECHANIC (buffed per Balance Analyst)
+
+Drone Slots: 3 base
+├── Deployment: Instant, 25 energy per drone
+├── Recall: Instant, returns 10 energy
+└── Control: Autonomous, follows owner
+
+DRONE TYPES:
+├── Gun Drone: 150 HP, 40 DPS (buffed from 25), ranged
+├── Shield Drone: 100 HP, absorbs 300 damage for owner
+├── Marker Drone: 100 HP, applies 1 Markerlight/5s
+├── Repair Drone: 100 HP, heals owner 15 HP/s
+└── Stealth Drone: 80 HP, grants stealth to owner when stationary
+
+DEPLOYABLES:
+├── Turret: 300 HP, 50 DPS, stationary, 60s duration
+├── Shield Generator: 200 HP, 20% DR to allies in 10m, 45s duration
+├── Gravity Well: Slows enemies 40% in 8m radius, 30s duration
+└── Maximum deployables: 2
+
+THREAT (per Balance Analyst):
+├── Drones share 50% of owner's threat
+├── Maximum summoned units per party: 4 (drones + servitors combined)
+└── Deployables do not count toward limit
+```
+
+**Base Stats (Level 20):**
+- HP: 680
+- Energy: 115
+- Armor: 65 (24.5% DR)
+- Primary Attribute: Fellowship 18, Ballistics 16
+
+### Water Caste Diplomat
+
+**Role:** Support/Controller
+**Armor:** Light (base 40)
+**Unique Mechanic:** Influence
+
+```
+INFLUENCE MECHANIC
+
+Influence Points: Generated through dialogue skills in combat
+├── Generation: "Diplomatic" abilities generate 1-3 points
+├── Maximum: 10 points
+└── Decay: -1 every 30s out of combat
+
+INFLUENCE ABILITIES:
+├── Sow Doubt (3 IP): Target enemy -25% damage for 10s
+├── Rally Allies (4 IP): Party +15% all stats for 8s
+├── Cause Defection (8 IP): Humanoid enemy switches sides for 20s
+├── Negotiate Ceasefire (10 IP): All enemies passive for 10s, breaks on damage
+└── Greater Good Speech (6 IP): Converts non-elite humanoid permanently (1/mission)
+```
+
+**Base Stats (Level 20):**
+- HP: 600
+- Energy: 130
+- Armor: 50 (20% DR)
+- Primary Attribute: Fellowship 25, Willpower 15
+
+## D. Ork Classes
+
+### Nob
+
+**Role:** Melee tank/DPS
+**Armor:** Heavy (base 95)
+**Unique Mechanic:** WAAAGH! Energy
+
+```
+WAAAGH! MECHANIC (capped per Balance Analyst)
+
+WAAAGH! Energy: Party-wide resource (0-100)
+├── Generation: +2 per Ork in party in combat, +1 per kill by any Ork
+├── Decay: -5/second when no Orks fighting
+├── CAP: Maximum +10 WAAAGH!/party/30 seconds from abilities
+└── Effect: At 50+, all Orks get +10% damage; at 100, +25% damage
+
+WAAAGH! ABILITIES:
+├── WAAAGH! Shout: +15 WAAAGH!, taunt nearby enemies (limited by cap)
+├── 'Ead Bash: Consumes 20 WAAAGH!, stun + 150% damage
+├── Get Stuck In: Consumes 30 WAAAGH!, party-wide +20% melee damage 10s
+└── Green Tide: At 100 WAAAGH!, summon 3 Ork Boys for 30s
+```
+
+**Base Stats (Level 20):**
+- HP: 1000
+- Energy: 80
+- Armor: 115 (36.5% DR)
+- Primary Attribute: Strength 22, Toughness 18
+
+### Mekboy (buffed per Balance Analyst)
+
+**Role:** Support/DPS hybrid
+**Armor:** Medium (base 70)
+**Unique Mechanic:** Kustom Jobs
+
+```
+KUSTOM JOBS MECHANIC
+
+Kustom Points: Generated by crafting/repairing
+├── In combat: +1 per 10s, +2 when repairing ally
+├── Out of combat: +5 per crafting action
+└── Maximum: 20 points
+
+KUSTOM ABILITIES:
+├── Kustom Shoota (5 KP): Enhance weapon, random effect (fire, shock, etc.)
+├── Repair (0 KP): Heal mechanical ally 100 HP, 3s channel
+├── Tellyporta (8 KP): Teleport party member to target location
+├── Shokk Attack (15 KP): Massive damage, random targeting
+└── Mek's Best Work (20 KP): Buff all ally weapons +25% damage 30s
+```
+
+**Base Stats (Level 20, buffed):**
+- HP: 750
+- Energy: 100 (buffed from 70)
+- Energy Regen: 5/s (buffed from 3.5/s)
+- Armor: 85 (29.8% DR)
+- Primary Attribute: Fellowship 18, Ballistics 16
+
+### Weirdboy
+
+**Role:** Caster DPS
+**Armor:** Light (base 45)
+**Unique Mechanic:** WAAAGH! Channeling + Perils
+
+```
+WEIRDBOY WAAAGH! MECHANIC
+
+WAAAGH! Channeling: Uses party WAAAGH! for abilities
+├── Zzap!: 15 WAAAGH!, 80 Warp damage, chains to 2 targets
+├── 'Ere We Go!: 25 WAAAGH!, teleport party forward 30m
+├── Foot of Gork: 40 WAAAGH!, massive AoE damage
+└── Da Jump: 50 WAAAGH!, teleport party to any visited location
+
+SECONDARY RESTRICTION (per Balance Analyst):
+├── Weirdboy can ONLY take Ork secondary classes
+├── Prevents Psyker/Weirdboy "Warp Storm" exploit
+└── Lore justification: Ork psychic field incompatible with human warp-craft
+
+PERILS MODIFICATION:
+├── Weirdboy Perils are "Orky" - different effects
+├── Minor: Head explodes, respawn at 50% HP
+├── Major: Turns into Squig for 10s
+├── Catastrophic: Summons Daemon that attacks everyone
+└── Chance reduced by -1% per nearby Ork
+```
+
+**Base Stats (Level 20):**
+- HP: 680
+- Energy: 90 (plus WAAAGH! access)
+- Armor: 55 (21.6% DR)
+- Primary Attribute: Willpower 20, Strength 14
+
+### Kommando
+
+**Role:** Stealth DPS
+**Armor:** Light (base 55)
+**Unique Mechanic:** Kunnin'
+
+```
+KUNNIN' MECHANIC
+
+Kunnin' Points: Stealth resource (0-100)
+├── Generation: +10/second while undetected, +20 per stealth kill
+├── Decay: -20/second while detected
+└── Threshold: At 80+, can use elite abilities
+
+KUNNIN' ABILITIES:
+├── Sneak: Become invisible while stationary, 20 Kunnin'/second to maintain
+├── Backstab: +200% damage from behind, +300% if undetected
+├── Distraction: Create noise, enemies investigate
+├── Ambush (80 Kunnin'): First attack from stealth stuns for 3s
+└── Assassinate (100 Kunnin'): Instant kill non-elite, massive damage to elite
+```
+
+**Base Stats (Level 20):**
+- HP: 700
+- Energy: 95
+- Armor: 65 (24.5% DR)
+- Primary Attribute: Initiative 22, Strength 16
+
+---
+
+# VII. SKILL SYSTEM (Guild Wars 1 Style)
+
+## A. Skill Bar Structure
+
+```
+SKILL BAR LAYOUT
+
+[1] [2] [3] [4] [5] [6] [7] [8]   [Elite]   [Resurrection]
+
+Slots 1-8: Any unlocked skills from Primary or Secondary class
+Elite Slot: One elite skill (powerful, limited)
+Resurrection: Faction-specific resurrection skill
+
+SKILL UNLOCKING:
+├── Story rewards: ~40% of skills
+├── Trainer purchase: ~30% of skills (costs skill points + gold)
+├── Elite capture: ~15% of skills (from bosses)
+├── Hidden/Quest: ~15% of skills
+└── Total skills per class: 75-100
+```
+
+## B. Skill Categories
+
+### Attack Skills
+
+```
+ATTACK SKILL TEMPLATE
+
+Name: [Skill Name]
+Type: Attack
+Energy: [Cost]
+Activation: [Cast Time]
+Recharge: [Cooldown]
+Range: [Melee/Ranged/Spell]
+Effect: [Description]
+```
+
+**Example Imperial Skills:**
+
+| Skill | Energy | Cast | CD | Effect |
+|-------|--------|------|-----|--------|
+| Bolter Burst | 10 | Instant | 4s | Fire 3 shots dealing 45 damage each |
+| Las Volley | 15 | 1s | 6s | 5 shots at 30 damage, armor piercing |
+| Chain Sweep | 20 | 0.5s | 8s | 180° arc, 80 damage, causes Bleeding |
+| Plasma Shot | 25 | 1.5s | 10s | 120 damage, ignore 50% armor |
+| Holy Smite | 30 | 1s | 12s | 100 Holy damage, +50% vs Chaos |
+
+### Support Skills
+
+**Example Tau Skills:**
+
+| Skill | Energy | Cast | CD | Effect |
+|-------|--------|------|-----|--------|
+| Marker Pulse | 15 | 0.5s | 6s | Apply 2 Markerlights to target |
+| Drone Repair | 20 | 2s | 15s | Heal all drones for 100 HP |
+| Shield Harmony | 25 | Instant | 20s | All allies gain Shield Drone effect 5s |
+| Fire Caste Coordination | 30 | 1s | 25s | Party +20% ranged damage 8s |
+| For the Greater Good | 40 | 2s | 45s | Party heals 200 HP, cleanses 1 debuff |
+
+### Elite Skills
+
+```
+ELITE SKILL ACQUISITION
+
+Method 1: Boss Capture
+├── Defeat elite enemy using skill
+├── Use "Skill Capture" signet within 30s
+├── Signet consumed, skill learned permanently
+
+Method 2: Trainer (limited selection)
+├── Reach maximum reputation with faction
+├── Pay 1,000 gold + 50 faction tokens
+└── Only 3 elites available per trainer
+
+ELITE SKILL EXAMPLES:
+
+IMPERIAL:
+├── Exterminatus Protocol: 50 energy, 120s CD
+│   └── Call orbital strike, 500 damage in huge AoE, 10s delay
+├── Avatar of the Emperor: 60 energy, 180s CD
+│   └── Transform for 30s, +50% all stats, immune to control
+└── Machine Spirit Awakening: 40 energy, 90s CD
+    └── All servitors become elite versions for 45s
+
+TAU:
+├── Coordinated Firestorm: 50 energy, 120s CD
+│   └── All party members fire at marked target simultaneously
+├── Riptide Protocol: 55 energy, 150s CD
+│   └── Summon Riptide battlesuit for 30s (500 HP, 100 DPS)
+└── Greater Good Proclamation: 45 energy, 180s CD
+    └── Convert all non-elite enemies in range to allies for 60s
+
+ORK:
+├── WAAAGH!: 100 WAAAGH!, 300s CD
+│   └── All Orks in party become giant for 30s, +100% damage, +50% HP
+├── Da Big Mek's Surprise: 70 energy, 120s CD
+│   └── Random massive effect (teleport, explosion, buff, etc.)
+└── Green Tide Unleashed: 80 WAAAGH!, 180s CD
+    └── Summon 10 Ork Boys for 60s
+```
+
+---
+
+# VIII. ENEMY DESIGN
+
+## A. Enemy Taxonomy
+
+### Tier Classification
+
+```
+ENEMY TIER SYSTEM
+
+TIER 1: FODDER
+├── HP: 100-200
+├── Damage: 10-20 DPS
+├── Behavior: Simple aggro
+├── Drop: T1 materials, minimal gold
+└── Example: Cultist, Grot, Kroot Hunter
+
+TIER 2: STANDARD
+├── HP: 300-500
+├── Damage: 25-40 DPS
+├── Behavior: Basic tactics (cover, flanking)
+├── Drop: T1-T2 materials, moderate gold
+└── Example: Guardsman, Fire Warrior, Ork Boy
+
+TIER 3: VETERAN
+├── HP: 600-900
+├── Damage: 40-60 DPS
+├── Behavior: Advanced tactics, abilities
+├── Drop: T2-T3 materials, good gold
+└── Example: Stormtrooper, Shas'ui, Nob
+
+TIER 4: ELITE
+├── HP: 1200-2000
+├── Damage: 60-100 DPS
+├── Behavior: Complex AI, multiple abilities
+├── Drop: T3-T4 materials, faction tokens
+└── Example: Space Marine, Crisis Suit, Warboss
+
+TIER 5: BOSS
+├── HP: 5000-20000
+├── Damage: 80-150 DPS
+├── Behavior: Phase mechanics, unique abilities
+├── Drop: T4-T5 materials, elite skills, uniques
+└── Example: Daemon Prince, Commander, WAAAGH! Boss
+```
+
+## B. Enemy Bestiary (Sample)
+
+### Imperial/Chaos Enemies
+
+| Enemy | Tier | HP | DPS | Abilities |
+|-------|------|-----|-----|-----------|
+| Cultist | T1 | 150 | 12 | Frenzied Charge |
+| Traitor Guardsman | T2 | 350 | 28 | Suppressing Fire, Grenade |
+| Chaos Marine | T4 | 1500 | 85 | Bolter Discipline, Mark of Chaos |
+| Daemon Prince | T5 | 12000 | 120 | Phase shifts, Warp Storm, Corruption Aura |
+
+### Tau Enemies
+
+| Enemy | Tier | HP | DPS | Abilities |
+|-------|------|-----|-----|-----------|
+| Kroot Hunter | T1 | 120 | 15 | Leap Attack |
+| Fire Warrior | T2 | 380 | 32 | Pulse Fire, For the Greater Good |
+| Crisis Suit | T4 | 1800 | 95 | Jetpack, Multi-weapon, Shield |
+| Commander | T5 | 15000 | 110 | Iridium Armor, Coordinated Strike, Mont'ka |
+
+### Ork Enemies
+
+| Enemy | Tier | HP | DPS | Abilities |
+|-------|------|-----|-----|-----------|
+| Grot | T1 | 80 | 8 | Mob Rule (stronger in groups) |
+| Ork Boy | T2 | 400 | 35 | WAAAGH! Rush, Choppa Frenzy |
+| Nob | T3 | 800 | 55 | 'Ead Bash, Rally Boyz |
+| Warboss | T5 | 18000 | 130 | WAAAGH! Aura, Power Klaw, Call Boyz |
+
+## C. Boss Mechanics
+
+```
+BOSS DESIGN PRINCIPLES
+
+Phase Structure:
+├── Phase 1 (100-70% HP): Basic rotation, teach mechanics
+├── Phase 2 (70-40% HP): Add complexity, soft enrage
+├── Phase 3 (40-0% HP): Full difficulty, hard enrage timer
+└── Boss immunity: Cannot be reduced below 10% HP in single hit
+
+EXAMPLE BOSS: Daemon Prince of Khorne
+
+Phase 1 (100-70%):
+├── Blood Strike: Cleave attack, 200 damage, 180° arc
+├── Skull Collector: Marks player, 10s later deals 500 damage if not cleansed
+└── Mechanic: Players must cleanse marks using objective interacts
+
+Phase 2 (70-40%):
+├── Previous abilities continue
+├── Blood Rain: AoE damage zones, must avoid
+├── Rage of Khorne: +25% damage, +25% attack speed
+└── Mechanic: Kill spawned Bloodletters to remove Rage stacks
+
+Phase 3 (40-0%):
+├── All previous abilities
+├── Khorne's Favor: Heals 5% HP every 30s unless interrupted
+├── Skull Throne: Pulls all players to center, massive AoE
+└── Enrage: At 10 minutes, deals +200% damage
+```
+
+---
+
+# IX. LOOT SYSTEM
+
+## A. Drop Tables
+
+### Standard Enemy Drops
+
+```
+DROP TABLE: TIER 2 ENEMY (Guardsman/Fire Warrior/Ork Boy)
+
+Always Drop:
+├── Gold: 10-25 Thrones
+
+Random Drop (one roll):
+├── 50%: Nothing additional
+├── 25%: T1 Material (1-2)
+├── 15%: T2 Material (1)
+├── 5%: T1 Consumable (1)
+├── 3%: T2 Consumable (1)
+├── 1.5%: Uncommon Equipment (appropriate level)
+└── 0.5%: Rare Equipment (appropriate level)
+
+Faction Drop (if enemy is faction-aligned):
+├── 5%: Faction token (1)
+└── 1%: Faction-specific material
+```
+
+### Boss Drops
+
+```
+DROP TABLE: TIER 5 BOSS
+
+Guaranteed Drops:
+├── Gold: 200-500 Thrones
+├── T3 Materials: 3-5
+├── T4 Material: 1-2
+├── Faction Tokens: 5-10
+└── Boss Trophy: 1 (for legendary crafting)
+
+Rare Drops (party roll):
+├── 25%: T5 Material (1)
+├── 15%: Elite Equipment (1)
+├── 10%: Unique Named Item
+├── 5%: Skill Tome (random elite skill)
+└── 1%: Legendary Material
+
+First Kill Bonus (per character):
+├── Guaranteed unique cosmetic
+├── +100% gold
+└── Title unlock
+```
+
+## B. Equipment Tiers
+
+```
+EQUIPMENT QUALITY TIERS
+
+COMMON (White): Base stats only
+├── Source: Vendors, common drops
+└── Value: Low
+
+UNCOMMON (Green): Base stats + 1 minor bonus
+├── Source: Quest rewards, enemy drops
+└── Value: Moderate
+
+RARE (Blue): Base stats + 1 major bonus OR 2 minor
+├── Source: Elite enemies, crafting
+└── Value: High
+
+EXOTIC (Purple): Base stats + 2 major bonuses
+├── Source: Bosses, rare crafting
+└── Value: Very High
+
+LEGENDARY (Gold): Unique effect + exceptional stats
+├── Source: Boss first kills, legendary crafting, rare drops
+└── Value: Extreme
+
+UNIQUE (Orange): Named items with lore and special abilities
+├── Source: Specific bosses, quest chains
+└── Value: Priceless (account bound)
+```
+
+## C. Stat Ranges by Tier
+
+```
+WEAPON STAT RANGES (LEVEL 20)
+
+Tier      | Base DPS | Bonus Range | Special
+----------|----------|-------------|----------
+Common    | 50-55    | None        | None
+Uncommon  | 55-62    | +3-5%       | None
+Rare      | 62-70    | +5-10%      | Minor effect
+Exotic    | 70-80    | +10-15%     | Major effect
+Legendary | 80-95    | +15-25%     | Unique effect
+Unique    | 75-100   | Variable    | Story-tied ability
+
+ARMOR STAT RANGES (LEVEL 20)
+
+Tier      | Base Armor | Bonus Range | Special
+----------|------------|-------------|----------
+Common    | 60-70      | None        | None
+Uncommon  | 70-85      | +3-5%       | None
+Rare      | 85-100     | +5-10%      | Minor effect
+Exotic    | 100-120    | +10-15%     | Major effect
+Legendary | 120-140    | +15-25%     | Unique effect
+Unique    | 110-150    | Variable    | Story-tied ability
+
+NOTE: Armor capped at 150 (60% DR) per Balance Analyst
+```
+
+---
+
+# X. DIFFICULTY CURVE
+
+## A. Level-Based Scaling
+
+```
+ENEMY SCALING BY ZONE LEVEL
+
+Zone Level vs Player Level:
+
+-3 or more: "Trivial" - Enemies deal 50% damage, give 25% XP/loot
+-2: "Easy" - Enemies deal 75% damage, give 75% XP/loot
+-1 to +1: "Normal" - Standard values
++2: "Hard" - Enemies deal 125% damage, give 125% XP/loot
++3: "Very Hard" - Enemies deal 150% damage, give 150% XP/loot
++4 or more: "Deadly" - Enemies deal 200% damage, give 200% XP/loot
+```
+
+## B. Encounter Design
+
+```
+ENCOUNTER COMPOSITION
+
+Standard Encounter:
+├── 4-6 Tier 1 enemies, OR
+├── 2-3 Tier 2 enemies, OR
+├── 1 Tier 3 + 2-3 Tier 1
+
+Challenging Encounter:
+├── 6-8 Tier 1 + 1 Tier 2, OR
+├── 3-4 Tier 2 enemies, OR
+├── 1 Tier 3 + 3-4 Tier 2
+
+Elite Encounter:
+├── 1 Tier 4 solo, OR
+├── 1 Tier 4 + 4-6 Tier 1, OR
+├── 2 Tier 3 + 2-3 Tier 2
+
+Boss Encounter:
+├── 1 Tier 5 + adds
+├── Phase-based mechanics
+├── Respawn protection (adds stop at 30%)
+└── Enrage timer: 8-12 minutes
+```
+
+## C. Content Difficulty Modes
+
+```
+MISSION DIFFICULTY SETTINGS
+
+Normal Mode:
+├── Standard enemy stats
+├── Full rewards
+├── Death: Respawn at checkpoint
+└── Recommended for story progression
+
+Hard Mode:
+├── Enemies +25% HP, +15% damage
+├── +50% rewards
+├── Death: Mission restart (checkpoint save)
+└── Unlocked after Normal completion
+
+Nightmare Mode:
+├── Enemies +50% HP, +30% damage
+├── +100% rewards, unique cosmetics
+├── Death: Full mission restart
+└── Unlocked after Hard completion
+
+Ironman Mode:
+├── Nightmare stats
+├── +150% rewards, exclusive titles
+├── Death: Character permadeath
+└── Separate character slot required
+```
+
+---
+
+# XI. INTEGRATION POINTS
+
+## A. Combat → Resources Integration
+
+```
+RESOURCE FLOW FROM COMBAT
+
+Combat Victory:
+├── Gold: Direct currency drop
+├── Materials: Tier based on enemy tier
+├── Consumables: Random drops
+├── Faction Tokens: From faction enemies
+└── Trophies: From elite/boss kills
+
+Combat Costs:
+├── Repair: 3% of equipped gear value per death
+├── Consumables: Optional buffs
+├── Ammunition: Free (no ammo resource)
+└── Waypoints: Gold cost to return
+
+COMBAT CONSUMABLE BALANCE:
+├── T1 Consumables: +10-15% effect, affordable
+├── T2 Consumables: +15-25% effect, moderate cost
+├── T3 Consumables: +25-35% effect, significant investment
+├── T4 Consumables: +40-50% effect, endgame only
+└── Design Rule: Content beatable without consumables
+    └── Consumables provide 15-25% easier experience, not requirement
+```
+
+## B. Combat → Progression Integration
+
+```
+EXPERIENCE FROM COMBAT
+
+XP Rewards:
+├── Tier 1 kill: 10-15 XP
+├── Tier 2 kill: 25-40 XP
+├── Tier 3 kill: 50-80 XP
+├── Tier 4 kill: 100-150 XP
+├── Tier 5 kill: 500-1000 XP
+└── Mission completion bonus: 200-2000 XP
+
+Level Requirements:
+├── Level 1-10: 1000 XP per level
+├── Level 11-20: 2500 XP per level
+├── Level 21-30: 5000 XP per level
+└── Level 30 total: ~90,000 XP
+
+SKILL POINT ACQUISITION:
+├── Level up: +1 skill point
+├── Story mission: +1 skill point (select missions)
+├── Exploration: +1 skill point (hidden locations)
+├── Elite content: +1 skill point (first completion)
+└── Total available: ~60-80 skill points
+```
+
+## C. Faction Integration
+
+```
+FACTION COMBAT MODIFIERS
+
+Imperial vs Chaos:
+├── +10% damage dealt
+├── -10% damage received
+└── Unlocks: Holy damage type
+
+Tau vs Imperial:
+├── +15% ranged accuracy
+├── -5% melee damage
+└── Unlocks: Markerlight bonuses apply
+
+Ork vs Everyone:
+├── +5% damage per nearby Ork (max +25%)
+├── +10% HP
+├── -15% accuracy
+└── Unlocks: WAAAGH! mechanics
+```
+
+---
+
+# XII. PVP CONSIDERATIONS
+
+## A. PvP Stat Adjustments
+
+```
+PVP BALANCE MODIFICATIONS
+
+Damage Reduction: All player damage to players reduced by 25%
+Healing Reduction: All player healing in PvP reduced by 35%
+Control Duration: All CC reduced by 40% vs players
+Armor Cap: 150 (60% DR) strictly enforced
+
+PVP-SPECIFIC NERFS:
+├── Shield of Faith: 2s duration (was 3s), 15s CD (was 10s)
+├── Assassinate: 50% damage vs players (was instant kill)
+├── Avatar of Emperor: +25% stats (was +50%)
+├── WAAAGH!: +50% damage (was +100%)
+└── All elites: +50% cooldown in PvP
+```
+
+## B. PvP Modes
+
+```
+PVP GAME MODES
+
+Arena (4v4):
+├── Team deathmatch
+├── Standardized gear (stats normalized)
+├── Reward: Requisition Tokens
+
+War Zone (Open World):
+├── Faction territory control
+├── Full gear (no normalization)
+├── Reward: Territory bonuses, unique drops
+
+Guild vs Guild (8v8):
+├── Objective-based
+├── Full gear
+├── Reward: Guild hall upgrades, titles
+
+Duel (1v1):
+├── Honor-based matchmaking
+├── Standardized or agreed format
+└── Reward: Ranking, titles
+```
+
+---
+
+# XIII. BALANCE SUMMARY
+
+## Current Status After Adjustments
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| Damage Formulas | ✅ Balanced | Multiplicative caps implemented |
+| Class Balance | ✅ Balanced | Mekboy/Fire Warrior buffed |
+| Elite Skills | ✅ Balanced | Power levels appropriate |
+| TTK Targets | ✅ Balanced | Progressive curve implemented |
+| Exploits | ✅ Mitigated | All 5 critical exploits addressed |
+| Perils System | ✅ Implemented | Psyker risk/reward balanced |
+| Summon Cap | ✅ Implemented | 4 per party maximum |
+| Armor Cap | ✅ Implemented | 150 (60% DR) hard cap |
+
+## Known Design Tensions (Intended)
+
+1. **Psyker Power vs Risk**: High damage balanced by Perils
+2. **Ork Numbers vs Individual Power**: Party composition matters
+3. **Tau Range vs Mobility**: Stance system creates tradeoffs
+4. **Imperial Versatility vs Specialization**: Jack-of-all-trades design
+
+---
+
+*"In the grim darkness of the far future, there is only war—and carefully balanced damage formulas."*
+
+---
+
+DECISION: combat_complete

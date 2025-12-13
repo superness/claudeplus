@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: meta-pipeline-builder-v1</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+    <div class="completion-banner">
+      <h2>✅ Pipeline Completed Successfully</h2>
+      <p>Total execution time: 26.4s</p>
+    </div>
+    
+
+    
+    <div class="ai-summary">
+      <h2>📊 AI-Generated Executive Summary</h2>
+      <div class="summary-narrative">
+        This meta-pipeline-builder-v1 pipeline execution processed 1 stages over 26.4 seconds. The pipeline began with Analyze Development Plan using the task_planner agent. ✅ All stages completed successfully with no errors. Agents produced 3,563 characters of output in response to 1,364 characters of prompts.
+      </div>
+    </div>
+    
+
+    <div class="header">
+      <h1>meta-pipeline-builder-v1</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1763580877490</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">26.4s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">1/1</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">✅ Complete</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Analyze Development Plan</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;"></div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">task_planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">25.5s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">1,364 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">3,563 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(1,364 characters)</span></div>
+        <button class="collapsible" data-target="prompt_analyze_plan_1">Click to expand prompt from task_planner</button>
+        <div class="collapsible-content" id="prompt_analyze_plan_1">
+          <pre class="code-content">You are a TASK PLANNER Claude instance. Your job is to create a PLAN, not execute the task.
+
+CRITICAL: You must respond EXACTLY in this format. Do not provide final answers or results.
+
+UNDERSTANDING: [What you understand the user wants]
+APPROACH: [How you will find information/perform the task]  
+STEPS: [Numbered list of specific steps with tools/commands you&#039;ll use]
+TEST_CONSIDERATIONS: [How you will address the test scenarios provided]
+EVIDENCE: [What specific proof you will collect to validate your work]
+CONFIDENCE: [High/Medium/Low and why]
+
+EXAMPLE of what you should do:
+UNDERSTANDING: User wants to know file/folder counts in directory
+APPROACH: Use bash commands to list and count directory contents
+STEPS: 1) Execute &#039;ls -la&#039; to get directory listing, 2) Parse output to distinguish files from directories, 3) Count each type separately
+TEST_CONSIDERATIONS: Will test with directories containing various file types, hidden files, and edge cases like empty directories
+EVIDENCE: Will provide the raw &#039;ls -la&#039; output and show counting methodology
+CONFIDENCE: High - straightforward directory listing task
+
+IMPORTANT: Consider the TEST SCENARIOS provided in your input when creating your plan. Address how your approach will handle the test cases and edge scenarios.
+
+DO NOT give final answers. CREATE A PLAN with specific commands/tools you will use.</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(3,563 characters)</span></div>
+        <button class="collapsible" data-target="output_analyze_plan_1">Click to expand output from task_planner</button>
+        <div class="collapsible-content" id="output_analyze_plan_1">
+          <pre class="code-content">UNDERSTANDING: User wants me to execute a meta-pipeline that will build 18 specialized agents and 8 pipeline templates for a mining cycle automation system. This involves reading a development plan document and generating agent JSON files, pipeline templates, and documentation in specific directories.
+
+APPROACH: I will read the development plan document to understand the specifications, then systematically create each agent JSON file and pipeline template according to the meta-pipeline stages (infrastructure → integration → validation → support → templates → validation → documentation). I&#039;ll follow the architectural patterns already established in the existing agents/ and templates/ directories.
+
+STEPS:
+1) Read `/mnt/c/github/private-SuperCoinServ/MINING_CYCLE_AUTOMATION_PLAN.md` to understand full requirements and agent specifications
+2) Examine existing agent JSON files in `/mnt/c/github/claudeplus/agents/` to understand the JSON schema and prompt structure
+3) Examine existing pipeline templates in `/mnt/c/github/claudeplus/templates/` to understand the template schema and stage structure
+4) Create infrastructure agents (Stage 1): mining_cycle_coordinator, resource_tracker, performance_optimizer, mining_operation_executor
+5) Create integration agents (Stage 2): blockchain_bridge, logistics_coordinator, market_intelligence, fleet_orchestrator
+6) Create validation agents (Stage 3): mining_validator, economy_validator, performance_validator, safety_validator
+7) Create support agents (Stage 4): mining_analyst, mining_debugger, mining_documentation, mining_test_generator, operations_monitor, mining_rollback_handler
+8) Create 8 pipeline templates (Stage 5): mining-cycle-setup-v1.json, mining-operation-v1.json, mining-optimization-v1.json, mining-debug-v1.json, mining-integration-v1.json, mining-validation-v1.json, mining-rollback-v1.json, mining-monitoring-v1.json
+9) Validate integration (Stage 6): Verify all JSON files are valid, check agent references in pipelines, ensure stage connections are correct
+10) Generate documentation (Stage 7): Create comprehensive documentation in `/mnt/c/github/private-SuperCoinServ/docs/` covering agent catalog, pipeline workflows, integration patterns, and usage examples
+
+TEST_CONSIDERATIONS: Will validate that all JSON files are syntactically correct, agent names are consistent across references, pipeline stage connections are properly linked, file paths are correctly specified for all three target directories, and the generated artifacts match the specifications in the development plan. Will verify that the new agents follow the same schema patterns as existing agents (name, systemPrompt, allowedTools, model fields).
+
+EVIDENCE: Will provide:
+- List of all 18 agent JSON files created with file paths
+- List of all 8 pipeline template JSON files created with file paths
+- Sample content from key agents showing proper JSON structure
+- Validation results confirming JSON validity and reference integrity
+- Documentation file paths and structure overview
+- Confirmation that files exist in correct directories using ls/file checks
+
+CONFIDENCE: Medium-High - The task is well-structured with clear stages and deliverables. The existing codebase provides excellent templates to follow. Main uncertainty is whether the development plan document contains complete specifications for all 18 agents and 8 templates, or if some details will need to be inferred from the mining cycle context. Will need to carefully map agent responsibilities to avoid overlaps and ensure proper pipeline flows.</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

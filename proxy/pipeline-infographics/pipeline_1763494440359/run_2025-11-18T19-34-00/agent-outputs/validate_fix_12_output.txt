@@ -1,0 +1,169 @@
+## Fix Validation Analysis
+
+### Bug #1: WebSocket Disconnect (Code 1006) After Teleport
+
+**Evidence from `bug_evidence_websocket_disconnect_1763495914062.json`:**
+
+**Before Fix (Expected):**
+- WebSocket should disconnect with code 1006 after teleporting to (50000, 0, 30000)
+- Connection should fail immediately after setPosition command
+
+**After Fix (Observed):**
+```json
+{
+  "status": "BUG_REPRODUCED",
+  "commands": [
+    {
+      "command": "getShipState",
+      "response": {"success": true, "position": {"x": 0, "y": 0, "z": 0}}
+    },
+    {
+      "command": "setPosition",
+      "params": {"x": 50000, "y": 0, "z": 30000},
+      "response": {
+        "success": true,
+        "data": {"position": {"x": 50000, "y": 0, "z": 30000}},
+        "executionTime": 28
+      }
+    }
+  ],
+  "disconnectCode": 1006
+}
+```
+
+**Comparison:**
+- ❌ **Before:** WebSocket disconnects after teleport
+- ❌ **After:** WebSocket STILL disconnects after teleport (code 1006)
+- ❌ **Match:** Bug behavior is UNCHANGED
+
+The implemented fixes (requestAnimationFrame synchronization + increased far clipping plane from 100km to 500km) **DID NOT RESOLVE** the issue. The WebSocket still disconnects immediately after the setPosition command completes.
+
+---
+
+### Bug #2: Ship Fitting UI Double-Click Error
+
+**Evidence from `bug_evidence_1763495958429.json`:**
+
+**Test Status:**
+```json
+{
+  "status": "FRAMEWORK_ERROR_GAME_DISCONNECTED",
+  "commandsExecuted": 5,
+  "stationCreatedByTest": true,
+  "nearestStation": {
+    "id": "station_7",
+    "distance": 5000
+  }
+}
+```
+
+**Comparison:**
+- ⚠️ **Cannot Validate:** The test could not reach the ship fitting UI operations
+- ⚠️ **Blocking Issue:** WebSocket disconnected during teleport (Bug #1) before fitting tests could execute
+- ⚠️ **Incomplete:** Test completed only 5/9 planned commands before disconnect
+
+The test successfully created a station and teleported near it, but encountered the **same WebSocket disconnect (code 1006)** that Bug #1 exhibits. This prevented validation of the ship fitting fix.
+
+---
+
+## Regression Analysis
+
+**New Errors Introduced:** None
+- Console logs show only expected GCM deprecation warnings (unrelated to game)
+- No new JavaScript exceptions detected
+- No new error patterns in WebSocket communication
+
+**Commands Broken:** None broken, but Bug #1 persists
+- `getShipState`: ✅ Working correctly
+- `setPosition`: ⚠️ Executes successfully but triggers disconnect
+- `createTestStation`: ✅ Working correctly (in Bug #2 test)
+- `debugEnvironment`: ✅ Working correctly (in Bug #2 test)
+
+**Status:** No regressions, but fixes were ineffective
+
+---
+
+## Critical Findings
+
+### 1. Bug #1 Fix Failed Completely
+The implemented changes to `GameTestingInterface.js` (requestAnimationFrame loop) and `SceneManager.js` (500km far plane) did not resolve the WebSocket disconnect issue. The bug reproduces with identical behavior:
+- Teleport command succeeds (28ms execution time)
+- WebSocket disconnects immediately after with code 1006
+- Game state updates correctly before disconnect
+
+### 2. Bug #2 Cannot Be Validated
+The ship fitting fix cannot be tested because:
+- Test requires teleporting near a station
+- Teleport operation triggers Bug #1 disconnect
+- Test cannot proceed to docking/fitting operations
+
+### 3. Root Cause Misidentified
+The original hypothesis targeted:
+- GPU rendering synchronization → Fix implemented but ineffective
+- Camera far plane overflow → Increased to 500km but bug persists
+
+**Actual root cause is likely:**
+- WebSocket message handling timing issue
+- Chrome renderer crash unrelated to game code synchronization
+- Memory pressure or WebGL context loss during position updates
+- Browser-level issue with rapid scene changes
+
+---
+
+## Validation Summary
+
+```json
+{
+  "validation": "FIX_INCOMPLETE",
+  "bugResolved": false,
+  "beforeAfterComparison": {
+    "bug1": {
+      "before": "WebSocket disconnects with code 1006 after teleport to (50000, 0, 30000)",
+      "after": "WebSocket STILL disconnects with code 1006 after teleport to (50000, 0, 30000)",
+      "match": "BEHAVIOR UNCHANGED - Fix did not resolve the issue"
+    },
+    "bug2": {
+      "before": "TypeError when double-clicking to auto-fit item",
+      "after": "CANNOT VALIDATE - Test blocked by Bug #1 WebSocket disconnect",
+      "match": "INCOMPLETE - Unable to reach ship fitting UI operations"
+    }
+  },
+  "regressionCheck": {
+    "newErrors": [],
+    "brokenCommands": [],
+    "status": "No regressions detected"
+  },
+  "fixEffectiveness": {
+    "bug1": {
+      "targetedRootCause": "GPU rendering synchronization + far plane overflow",
+      "implementedFix": "requestAnimationFrame loop + 500km far plane",
+      "result": "INEFFECTIVE - Bug reproduces identically",
+      "executionTime": "28ms (slightly slower, but disconnect still occurs)"
+    },
+    "bug2": {
+      "targetedRootCause": "Ship ID mismatch (player_ship_1 vs player)",
+      "implementedFix": "Already fixed in codebase",
+      "result": "CANNOT VALIDATE - Test incomplete due to Bug #1"
+    }
+  },
+  "recommendedNextSteps": [
+    "Investigate WebSocket message queue and event handling",
+    "Test with shorter teleport distances (< 10km) to isolate distance threshold",
+    "Add WebSocket connection health monitoring before/after teleport",
+    "Check for Chrome-specific WebGL context loss events",
+    "Consider alternative teleport implementation without scene updates"
+  ],
+  "confidence": 0.99
+}
+```
+
+---
+
+**DECISION: FIX_INCOMPLETE**
+
+**Summary:**
+- **Bug #1:** Fix implemented but COMPLETELY INEFFECTIVE - WebSocket still disconnects with code 1006 after teleport
+- **Bug #2:** Cannot validate due to Bug #1 blocking the test flow
+- **Regressions:** None detected
+- **Root Cause:** Misidentified - the actual cause is not GPU synchronization or far plane overflow
+- **Next Action Required:** Re-investigate Bug #1 with focus on WebSocket event handling and browser-level issues

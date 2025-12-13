@@ -1,0 +1,89 @@
+## Test Results
+
+### Syntax Check
+**Pass** - TypeScript compilation completes with no errors.
+
+### Integration Path Verification
+
+#### Combat Path: Player.useSkill() → CombatManager → Enemy.takeDamage()
+
+| Step | Entry Point | Calls | Status |
+|------|-------------|-------|--------|
+| 1 | `InputManager.handleKeyDown()` (line 109) | Calls `this.executeSkill(slotIndex)` when keys 1-8 or 0 pressed | ✅ CONNECTED |
+| 2 | `InputManager.executeSkill()` (line 310) | Calls `this.combatManager.executeSkill(slotIndex)` | ✅ CONNECTED |
+| 3 | `CombatManager.executeSkill()` (line 127) | Validates skill → calls `performSkillExecution()` | ✅ CONNECTED |
+| 4 | `CombatManager.performSkillExecution()` (line 211) | For damage skills, calls `applyDamageToTarget()` | ✅ CONNECTED |
+| 5 | `CombatManager.applyDamageToTarget()` (line 302) | Calls `target.takeDamage(damageResult.finalDamage, ...)` | ✅ CONNECTED |
+| 6 | `Enemy.takeDamage()` (line 1186) | Reduces `this.health`, triggers `onDeath()` if <= 0 | ✅ CONNECTED |
+
+**Entry point**: `InputManager.handleKeyDown()` → key press 1-8/0
+**Calls**: `InputManager.executeSkill()` → `CombatManager.executeSkill()` → `CombatManager.performSkillExecution()` → `CombatManager.applyDamageToTarget()` → `Enemy.takeDamage()`
+**Reaches target**: **YES** - Enemy health decreases
+**CONNECTED: YES**
+
+#### Initialization Path: Game.ts wires up systems
+
+| Connection | Location | Status |
+|------------|----------|--------|
+| `CombatManager` created | `Game.ts:105` with `new CombatManager(this.player, this.entityManager)` | ✅ CONNECTED |
+| `CombatManager.init(scene)` | `Game.ts:176` | ✅ CONNECTED |
+| `InputManager.setCombatManager()` | `Game.ts:179` | ✅ CONNECTED |
+| `InputManager.setEntityManager()` | `Game.ts:173` | ✅ CONNECTED |
+| `CombatManager` updated each frame | `Game.ts:392` `this.combatManager.update(deltaTime)` | ✅ CONNECTED |
+
+#### Targeting Path: Click/Tab → EntityManager.selectEnemy() → Player receives target
+
+| Step | Entry Point | Calls | Status |
+|------|-------------|-------|--------|
+| 1 | `InputManager.handleKeyDown()` Tab key (line 132) | Calls `this.entityManager.cycleTarget(forward)` | ✅ CONNECTED |
+| 2 | `InputManager.handleLeftClick()` (line 219) | Calls `this.entityManager.handleClick(x, y)` | ✅ CONNECTED |
+| 3 | `EntityManager.selectEnemy()` (line 205) | Updates `selectedEnemy`, triggers callback | ✅ CONNECTED |
+| 4 | `CombatManager.executeSkill()` (line 163) | Gets target via `this.entityManager.getSelectedEnemy()` | ✅ CONNECTED |
+
+**Entry point**: Tab key or left click
+**Calls**: `EntityManager.cycleTarget()` or `handleClick()` → `selectEnemy()`
+**Reaches target**: **YES** - `CombatManager` reads selected enemy for targeting
+**CONNECTED: YES**
+
+#### Loot/Death Path: Enemy.onDeath() → Loot generation
+
+| Step | Entry Point | Calls | Status |
+|------|-------------|-------|--------|
+| 1 | `Enemy.takeDamage()` (line 1201) | If health <= 0, calls `this.onDeath()` | ✅ CONNECTED |
+| 2 | `Enemy.onDeath()` (line 1068) | Calls `this.onDeathCallback(this)` | ✅ CONNECTED |
+| 3 | `Game.setupLootSystem()` (line 274) | Registers callback via `entityManager.setOnEnemyDeath()` | ✅ CONNECTED |
+| 4 | `EntityManager.setOnEnemyDeath()` (line 360) | Wires callback to each enemy | ✅ CONNECTED |
+
+**CONNECTED: YES**
+
+### Disconnected Systems Found
+**None** - All major systems are properly wired up.
+
+### Placeholder Code Found
+The following TODOs exist but are **non-blocking** for combat functionality:
+1. `CombatManager.ts:144,171` - Track player/enemy conditions (status effects work, just logging not complete)
+2. `CombatManager.ts:263,275` - Apply actual buff/debuff effects (buff/debuff skill execution works, actual stat changes are TODO)
+3. `CombatManager.ts:308-309` - Get damage bonus/crit from player attributes (hardcoded to 0 and 5 respectively)
+4. `CombatManager.ts:344` - Cone angle checking (uses range only currently)
+5. `PartyManager.ts:492,510,525,575` - Companion AI threat tracking
+6. `EntityManager.ts:95` - NPC and PLAYER entity types
+7. `InputManager.ts:322` - Show error message in UI
+
+These TODOs are enhancements, not integration failures. The core combat loop is fully functional.
+
+### Issues Found
+
+**No critical integration issues.** The combat system is fully connected:
+
+1. ✅ Input (1-8, 0 keys) → CombatManager.executeSkill() → Working
+2. ✅ CombatManager → CombatValidation → Validates range, energy, cooldown, target
+3. ✅ CombatManager → Enemy.takeDamage() → Health decreases
+4. ✅ Enemy death → Loot generation → Working
+5. ✅ Tab targeting → EntityManager.selectEnemy() → Working
+6. ✅ TypeScript compiles with no errors
+7. ✅ Test hooks properly expose combat system for E2E testing
+8. ✅ Tests use `isDamageSkill()` to avoid self-buff skills when testing damage
+
+The previous fix (adding `isDamageSkill()` helper and using it in tests) correctly resolved the test issue where self-buff skills were being used instead of damage skills.
+
+DECISION: working

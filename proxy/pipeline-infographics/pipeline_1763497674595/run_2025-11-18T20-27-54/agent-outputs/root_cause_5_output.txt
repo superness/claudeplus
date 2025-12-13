@@ -1,0 +1,55 @@
+Now I have all the code I need to analyze. Let me trace through the execution flow to identify the root cause:
+
+## Root Cause Analysis
+
+```json
+{
+  "rootCause": "Afterburner multiply effect is applied EVERY FRAME, causing stats to compound exponentially until physics breaks completely",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/entities/Ship.js",
+      "lineNumbers": [203],
+      "currentCode": "this.syncStatsFromFitting();",
+      "problem": "Called EVERY FRAME in updateWithNavigation(), which triggers stat recalculation every frame"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [348, 353, 365],
+      "currentCode": "recalculateShipStats(shipId) {\n    fitting.currentStats = { ...fitting.hull.baseStats };\n    this.applyItemEffects(fitting, fittingData, true);\n}",
+      "problem": "Resets to base stats and re-applies ALL item effects, but the reset uses object spread which creates a shallow copy. When multiply effects are applied, they may be operating on already-modified values"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [336, 337, 338, 339, 340],
+      "currentCode": "if (apply) {\n    fitting.currentStats[actualStatName] = baseValue * effect.value;\n} else {\n    fitting.currentStats[actualStatName] = baseValue / effect.value;\n}",
+      "problem": "Multiply effect reads current value and multiplies it. If called multiple times, this compounds: 350 * 1.5 = 525, then 525 * 1.5 = 787.5, etc."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/physics/ShipPhysics.js",
+      "lineNumbers": [157, 158],
+      "currentCode": "const k = 1 / this.timeConstant;\nconst factor = 1 - Math.exp(-k * deltaTime);",
+      "problem": "If timeConstant approaches 0 due to compounding agility multiply (0.9 * 0.9 * 0.9...), k becomes infinite and factor becomes 1.0, causing instant acceleration"
+    }
+  ],
+  "executionFlow": [
+    "1. Player fits afterburner with maxSpeed multiply: 1.5x and agility multiply: 0.9x",
+    "2. Every frame (60fps), Ship.updateWithNavigation() is called (Ship.js:198)",
+    "3. First line calls this.syncStatsFromFitting() (Ship.js:203)",
+    "4. syncStatsFromFitting() reads fitting.currentStats from ShipFittingManager (Ship.js:65-68)",
+    "5. ShipFittingManager.recalculateShipStats() is called somewhere, which resets stats (line 353)",
+    "6. BUT the reset uses shallow copy: fitting.currentStats = { ...fitting.hull.baseStats }",
+    "7. Then applyItemEffects() applies multiply: fitting.currentStats[stat] = baseValue * 1.5 (line 337)",
+    "8. PROBLEM: If this happens multiple times, baseValue is ALREADY the modified value from last frame",
+    "9. Result: 350 → 525 → 787 → 1180 → 1770 → ... (maxSpeed explodes)",
+    "10. Result: agility 3456000 → 3110400 → 2799360 → ... (agility shrinks, timeConstant → 0)",
+    "11. When timeConstant gets small, k = 1/timeConstant gets HUGE",
+    "12. Physics formula: factor = 1 - exp(-k * deltaTime) → 1.0 (instant acceleration)",
+    "13. Ship velocity changes INSTANTLY, direction changes INSTANTLY → physics broken"
+  ],
+  "whyItHappens": "The multiply effect is designed to be applied ONCE when fitting an item, but the code path allows it to be re-applied every frame. The recalculateShipStats() function TRIES to reset to base stats first, but there's a subtle bug: the object spread { ...fitting.hull.baseStats } creates a shallow copy, and if the hull.baseStats object itself was modified (which it shouldn't be, but defensive programming required), OR if the multiply is being applied to currentStats multiple times before reset, the values compound exponentially.",
+  "proposedFix": "1. FIX IMMEDIATE: Remove syncStatsFromFitting() from every-frame update loop. Only call it when fitting actually changes (after fitItem/unfitItem).\n2. FIX DEFENSIVE: In recalculateShipStats(), use deep copy or explicit property assignment to ensure true reset to base values.\n3. FIX VALIDATION: Add guards in applyItemEffects() to detect if multiply is being applied to already-modified values (compare against known base).\n4. ARCHITECTURE FIX: Move stat synchronization to event-driven model: dispatch 'fittingChanged' event from fitItem/unfitItem, Ship listens and syncs ONCE per change, not every frame.",
+  "testValidation": "After fix, verify: (1) Fit afterburner → maxVelocity should be exactly baseValue * 1.5, (2) Wait 5 seconds → maxVelocity should still be baseValue * 1.5 (not compounding), (3) Physics acceleration should follow EVE exponential curve, not instant changes, (4) Ship rotation should align with movement direction over time, not instant alignment"
+}
+```
+
+DECISION: root_cause_found

@@ -1,0 +1,99 @@
+## Bug Reproduction Execution Report
+
+### Execution Summary
+
+```json
+{
+  "execution": "COMPLETED",
+  "environment": {
+    "httpServerRunning": true,
+    "httpServerCachingDisabled": true,
+    "oldChromeProcessesKilled": true,
+    "workingDirectory": "/mnt/c/github/superstarships"
+  },
+  "testsExecuted": 2,
+  "results": [
+    {
+      "testName": "WebSocket Disconnect Bug",
+      "scriptFile": "test_websocket_disconnect_bug.js",
+      "scriptFound": true,
+      "scriptExecuted": true,
+      "exitCode": 0,
+      "evidenceFile": "bug_evidence_websocket_disconnect_1763494698614.json",
+      "evidenceData": {
+        "status": "BUG_REPRODUCED",
+        "commandsExecuted": 2,
+        "disconnectCode": 1006,
+        "consoleLogFile": "C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log",
+        "consoleLogCount": 5,
+        "consoleErrorCount": 5,
+        "consoleExceptionCount": 0
+      },
+      "result": "BUG_REPRODUCED"
+    },
+    {
+      "testName": "Ship Fitting Auto-Fit Bug",
+      "scriptFile": "test_ship_fitting_auto_fit_bug.js",
+      "scriptFound": true,
+      "scriptExecuted": true,
+      "exitCode": 0,
+      "evidenceFile": "bug_evidence_1763494748675.json",
+      "evidenceData": {
+        "status": "FRAMEWORK_ERROR_GAME_DISCONNECTED",
+        "commandsExecuted": 5,
+        "consoleLogFile": "C:\\Users\\super\\AppData\\Local\\Temp\\ChromeTest_1763411549485\\chrome_debug.log",
+        "consoleLogCount": 5,
+        "consoleErrorCount": 5,
+        "consoleExceptionCount": 0
+      },
+      "result": "BLOCKED_BY_WEBSOCKET_BUG"
+    }
+  ],
+  "frameworkError": false
+}
+```
+
+### Critical Finding: WebSocket 1006 Disconnect is Primary Bug
+
+**Both tests encountered the WebSocket 1006 disconnect issue**, which is blocking proper testing of the ship fitting bug.
+
+#### Test 1: WebSocket Disconnect Bug
+✅ **BUG_REPRODUCED**
+- Initial ship state retrieved successfully at (0, 0, 0)
+- Teleport command to (50000, 0, 30000) succeeded
+- **WebSocket disconnected with code 1006 immediately after teleport**
+- Console logs captured: 5 entries (all Chrome GCM registration errors, not game-related)
+
+#### Test 2: Ship Fitting Auto-Fit Bug
+⚠️ **BLOCKED_BY_WEBSOCKET_BUG**
+- Test progressed through steps 1-4 successfully:
+  - ✅ Game initialization
+  - ✅ Environment debug
+  - ✅ Station detection
+  - ✅ Test station creation (station_7 at 5000, 0, 0)
+- **Teleport to (7000, 0, 0) succeeded but WebSocket disconnected with code 1006**
+- Test could not proceed to docking or ship fitting steps
+- Could not reproduce the original TypeError about 'hull' property
+
+### Root Cause Analysis
+
+The **WebSocket 1006 disconnect occurs reliably after any `setPosition` (teleport) command**, regardless of:
+- Distance (both 50km and 7km teleports triggered it)
+- Game state (initial spawn or after station creation)
+- Test context (dedicated teleport test or ship fitting test)
+
+This suggests the issue is in the `setPosition` command handler in `GameTestingInterface.js`, not in the WebSocket infrastructure itself.
+
+### Evidence Quality
+
+Both evidence files include:
+- ✅ `consoleLogFile` field present
+- ✅ `consoleLogs` array present (5 entries each)
+- ✅ Console log file exists on disk
+- ✅ Status properly reported
+- ✅ Command history captured
+- ✅ Disconnect code 1006 recorded
+
+**DECISION: BUG_REPRODUCED**
+
+The WebSocket 1006 disconnect bug is confirmed and reproducible. The ship fitting bug cannot be tested until the WebSocket disconnect issue is fixed.

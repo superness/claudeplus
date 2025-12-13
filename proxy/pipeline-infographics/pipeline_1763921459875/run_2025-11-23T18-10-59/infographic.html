@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: pool-bug-fix</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+
+    
+
+    <div class="header">
+      <h1><span class="running-indicator"></span>pool-bug-fix</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1763921459875</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">31.1s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">1/2</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">⚡ Running</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Analyze Bug</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Analyze bug report, identify symptoms, review logs, document root cause hypothesis</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">task_planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">30.1s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">1,788 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">4,206 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(1,788 characters)</span></div>
+        <button class="collapsible" data-target="prompt_analyze_bug_1">Click to expand prompt from task_planner</button>
+        <div class="collapsible-content" id="prompt_analyze_bug_1">
+          <pre class="code-content">You are a TASK PLANNER Claude instance. Your job is to create a PLAN, not execute the task.
+
+CRITICAL: You must respond EXACTLY in this format. Do not provide final answers or results.
+
+UNDERSTANDING: [What you understand the user wants]
+APPROACH: [How you will find information/perform the task]  
+STEPS: [Numbered list of specific steps with tools/commands you&#039;ll use]
+TEST_CONSIDERATIONS: [How you will address the test scenarios provided]
+EVIDENCE: [What specific proof you will collect to validate your work]
+CONFIDENCE: [High/Medium/Low and why]
+
+EXAMPLE of what you should do:
+UNDERSTANDING: User wants to know file/folder counts in directory
+APPROACH: Use bash commands to list and count directory contents
+STEPS: 1) Execute &#039;ls -la&#039; to get directory listing, 2) Parse output to distinguish files from directories, 3) Count each type separately
+TEST_CONSIDERATIONS: Will test with directories containing various file types, hidden files, and edge cases like empty directories
+EVIDENCE: Will provide the raw &#039;ls -la&#039; output and show counting methodology
+CONFIDENCE: High - straightforward directory listing task
+
+IMPORTANT: Consider the TEST SCENARIOS provided in your input when creating your plan. Address how your approach will handle the test cases and edge scenarios.
+
+DO NOT give final answers. CREATE A PLAN with specific commands/tools you will use.
+
+When your plan is complete, end your response with:
+[DECISION: design_complete]
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- success: analyze_bug completed successfully
+- failed: analyze_bug failed
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: success
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(4,206 characters)</span></div>
+        <button class="collapsible" data-target="output_analyze_bug_1">Click to expand output from task_planner</button>
+        <div class="collapsible-content" id="output_analyze_bug_1">
+          <pre class="code-content">UNDERSTANDING: User wants to fix an infinite orchestration loop in the intelligent mining infrastructure setup pipeline. The root cause is that component manager agents (pool_server_manager, bitcoin_daemon_manager, miner_manager) only validate that processes are running (PID exists, ports bound) but don&#039;t validate functional connectivity (can actually connect to ports, no RPC errors, endpoints responding). This causes the orchestrator to loop because connectivity issues aren&#039;t caught. The fix requires splitting each of the 3 component managers into 2 specialized agents: a &#039;starter&#039; agent (process/port validation) and a &#039;functional_validator&#039; agent (connectivity/RPC validation), then updating the pipeline template to sequence them correctly.
+
+APPROACH: I will:
+1. Read the existing component manager agent files to understand their current validation logic
+2. Create 6 new specialized agent files (3 starters + 3 functional validators)
+3. Read the current intelligent-mining-infrastructure-setup.json pipeline template
+4. Update the pipeline template to use the new agents with proper sequencing (starter → functional_validator → orchestrator)
+5. Verify the new agents reference the correct tools and validation criteria
+
+STEPS:
+1. Read existing component manager agents to understand their validation logic:
+   - `agents/pool_server_manager.json`
+   - `agents/bitcoin_daemon_manager.json`
+   - `agents/miner_manager.json`
+
+2. Create 6 new specialized agent files:
+   - `agents/pool_server_starter.json` - Validates pool server process running, ports bound
+   - `agents/pool_server_functional_validator.json` - Validates stratum port connectable, no RPC errors in logs
+   - `agents/bitcoin_daemon_starter.json` - Validates bitcoind process running, RPC port bound
+   - `agents/bitcoin_daemon_functional_validator.json` - Validates RPC endpoint responding, can execute getblockchaininfo
+   - `agents/miner_starter.json` - Validates miner process running, connected to pool
+   - `agents/miner_functional_validator.json` - Validates miner is submitting shares, no connection errors in logs
+
+3. Read the current pipeline template:
+   - `templates/intelligent-mining-infrastructure-setup.json`
+
+4. Update pipeline template stages to use new agent sequencing:
+   - Replace pool_server_manager with: pool_server_starter → pool_server_functional_validator → infrastructure_orchestrator
+   - Replace bitcoin_daemon_manager with: bitcoin_daemon_starter → bitcoin_daemon_functional_validator → infrastructure_orchestrator
+   - Replace miner_manager with: miner_starter → miner_functional_validator → infrastructure_orchestrator
+
+5. Verify stage connections follow pattern: starter → functional_validator (if success) → orchestrator (if validation passes)
+
+TEST_CONSIDERATIONS:
+- Test that starter agents correctly identify when processes aren&#039;t running (PID doesn&#039;t exist, ports not bound)
+- Test that functional validators correctly identify connectivity issues (ports unreachable, RPC returning errors, no log activity)
+- Test that orchestrator receives routing from functional validators, not starters
+- Test edge cases: process running but ports not responding, bitcoind running but RPC disabled, miner connected but not hashing
+- Test that the orchestrator doesn&#039;t loop when functional validation fails (should error or route to error recovery)
+
+EVIDENCE:
+- Diff showing the split between starter validation logic (process/port checks) and functional validation logic (connectivity/RPC checks)
+- Pipeline template showing new stage sequences with correct agent assignments
+- Stage connection configuration showing functional_validator → orchestrator routing
+- Agent JSON files showing distinct validation responsibilities and different nextStage routing
+
+CONFIDENCE: High - This is a clear architectural fix with well-defined separation of concerns. The loop occurs because process health checks pass while connectivity fails, and splitting these into separate stages with explicit validation will prevent the loop. The fix requires creating new agent files and updating pipeline template connections, both of which are straightforward JSON modifications.
+
+[DECISION: design_complete]
+
+DECISION: success</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: SUCCESS</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;SUCCESS&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>investigate_codebase</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage running">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Investigate Codebase</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Search CoiniumServ codebase for affected components and potential causes</div>
+        </div>
+        <span class="stage-badge badge-running">running</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">task_planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">In progress...</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">2</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+
+      
+
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

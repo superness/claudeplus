@@ -1,0 +1,547 @@
+# MineBox Enterprise Architecture
+
+## Executive Summary
+
+MineBox is a multi-coin, snapshot-native infrastructure platform targeting the hobbyist cryptocurrency mining market. The architecture must support:
+- **Raspberry Pi 5 primary deployment** with cloud/VPS alternatives
+- **Multi-daemon orchestration** for SHA256 altcoins
+- **Cryptographically-verified snapshot delivery** as the paid service layer
+- **Open-source core** with commercial snapshot infrastructure
+- **Stratum server** for connecting Bitaxe-class ASIC miners
+
+---
+
+## 1. BUSINESS ARCHITECTURE
+
+### Business Capabilities Model
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        MINEBOX BUSINESS CAPABILITIES                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  CORE MINING SERVICES          │  PLATFORM SERVICES                     │
+│  ┌──────────────────────────┐  │  ┌─────────────────────────────────┐  │
+│  │ Multi-Coin Node Hosting  │  │  │ Snapshot Generation & Delivery  │  │
+│  │ Stratum Server (Solo)    │  │  │ Cryptographic Verification      │  │
+│  │ Block Template Assembly  │  │  │ User Authentication & Billing   │  │
+│  │ Share Validation         │  │  │ Subscription Management         │  │
+│  └──────────────────────────┘  │  └─────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────────────────┤
+│  DAEMON MANAGEMENT             │  CUSTOMER EXPERIENCE                   │
+│  ┌──────────────────────────┐  │  ┌─────────────────────────────────┐  │
+│  │ Daemon Lifecycle Mgmt    │  │  │ Web Dashboard                   │  │
+│  │ Configuration Generation │  │  │ Mining Statistics               │  │
+│  │ Health Monitoring        │  │  │ Block Discovery Notifications   │  │
+│  │ Resource Orchestration   │  │  │ Documentation & Onboarding      │  │
+│  └──────────────────────────┘  │  └─────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Revenue Streams Architecture
+
+| Stream | Model | Target Revenue |
+|--------|-------|----------------|
+| Snapshot Subscriptions | Monthly recurring ($5-15/mo) | $50K+ MRR |
+| Hardware Bundles | One-time (Pi 5 + SSD kits) | Margin revenue |
+| Enterprise Licenses | Annual licensing for commercial use | Future expansion |
+
+---
+
+## 2. TECHNOLOGY ARCHITECTURE
+
+### Target Deployment: Raspberry Pi 5
+
+**Hardware Specifications:**
+- Raspberry Pi 5 (8GB RAM recommended)
+- USB 3.0 SSD (500GB - 2TB depending on coins)
+- Gigabit Ethernet connection
+- Active cooling for sustained load
+
+### Technology Stack
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           PRESENTATION LAYER                             │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────────┐ │
+│  │ React/Next.js  │  │ Mobile PWA     │  │ CLI Tools                  │ │
+│  │ Dashboard      │  │ (Progressive)  │  │ (Node.js/Go)               │ │
+│  └────────────────┘  └────────────────┘  └────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────────────────┤
+│                             API LAYER                                    │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │ Node.js/Express API Gateway        │  GraphQL for Dashboard Queries │ │
+│  │ REST API for External Integration  │  WebSocket for Real-time Stats │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────────────────┤
+│                          CORE SERVICES LAYER                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
+│  │ Stratum      │  │ Daemon       │  │ Snapshot     │  │ Block       │ │
+│  │ Server       │  │ Orchestrator │  │ Manager      │  │ Notifier    │ │
+│  │ (C#/.NET)    │  │ (Node.js)    │  │ (Node.js/Go) │  │ (Node.js)   │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └─────────────┘ │
+├─────────────────────────────────────────────────────────────────────────┤
+│                         DATA LAYER                                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
+│  │ SQLite       │  │ Redis        │  │ Coin Daemons │  │ Blockchain  │ │
+│  │ (Local State)│  │ (Caching)    │  │ (BTC/LTC..)  │  │ Data (SSD)  │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └─────────────┘ │
+├─────────────────────────────────────────────────────────────────────────┤
+│                       INFRASTRUCTURE LAYER                               │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │ Docker Compose (Local)  │  Linux ARM64  │  systemd Services        │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cloud Snapshot Infrastructure (Paid Service)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    CLOUD SNAPSHOT INFRASTRUCTURE                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                     SNAPSHOT GENERATION CLUSTER                   │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │   │
+│  │  │ BTC Node    │  │ LTC Node    │  │ DOGE Node   │  ... (N coins)│   │
+│  │  │ Full Sync   │  │ Full Sync   │  │ Full Sync   │               │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                     SNAPSHOT PROCESSING PIPELINE                  │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │   │
+│  │  │ Snapshot    │  │ Merkle Tree │  │ Compression │               │   │
+│  │  │ Extraction  │──▶│ Generation  │──▶│ & Signing   │               │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                     CDN DISTRIBUTION LAYER                        │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │   │
+│  │  │ CloudFlare  │  │ AWS S3/CF   │  │ Regional    │               │   │
+│  │  │ R2 Storage  │  │ (Fallback)  │  │ Edge Nodes  │               │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. APPLICATION ARCHITECTURE
+
+### Microservices Design (Lightweight for Pi)
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                    MINEBOX APPLICATION SERVICES                    │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                    STRATUM SERVICE                           │  │
+│  │  • Protocol: Stratum V1 (Bitaxe compatible)                 │  │
+│  │  • Port: 3333 (configurable per coin)                       │  │
+│  │  • Language: C# (.NET 8) - leveraging CoiniumServ base      │  │
+│  │  • Function: Work distribution, share validation            │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│                              ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 DAEMON ORCHESTRATOR SERVICE                  │  │
+│  │  • Multi-coin daemon management                             │  │
+│  │  • RPC abstraction layer                                    │  │
+│  │  • Health monitoring & auto-restart                         │  │
+│  │  • Resource allocation (CPU/RAM limits per daemon)          │  │
+│  │  • Language: Node.js with TypeScript                        │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│                              ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                   SNAPSHOT SYNC SERVICE                      │  │
+│  │  • Download snapshots from CDN                              │  │
+│  │  • Cryptographic verification (Merkle root validation)      │  │
+│  │  • Differential updates support                             │  │
+│  │  • Language: Go (efficient binary, low memory)              │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│                              ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                    WEB DASHBOARD SERVICE                     │  │
+│  │  • Real-time mining statistics                              │  │
+│  │  • Block discovery history                                  │  │
+│  │  • Daemon status & configuration                            │  │
+│  │  • Language: Next.js (SSR for Pi efficiency)                │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Service Communication
+
+```
+┌──────────────┐     HTTP/REST      ┌──────────────┐
+│   Dashboard  │◀──────────────────▶│   API GW     │
+└──────────────┘                    └──────────────┘
+                                           │
+                    ┌──────────────────────┼──────────────────────┐
+                    ▼                      ▼                      ▼
+             ┌─────────────┐      ┌─────────────┐       ┌─────────────┐
+             │  Stratum    │      │  Daemon     │       │  Snapshot   │
+             │  Service    │◀────▶│  Orchestr.  │◀─────▶│  Service    │
+             └─────────────┘ IPC  └─────────────┘  IPC  └─────────────┘
+                    │                     │
+                    ▼                     ▼
+             ┌─────────────┐      ┌─────────────────────────────────┐
+             │   SQLite    │      │        Coin Daemons (RPC)       │
+             │   (Stats)   │      │   BTC  │  LTC  │  DOGE  │ ...   │
+             └─────────────┘      └─────────────────────────────────┘
+```
+
+---
+
+## 4. DATA ARCHITECTURE
+
+### Local Data Model (SQLite for Pi)
+
+```sql
+-- Mining Statistics
+CREATE TABLE mining_stats (
+    id INTEGER PRIMARY KEY,
+    coin_id TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    hashrate_thps REAL,
+    shares_accepted INTEGER,
+    shares_rejected INTEGER,
+    blocks_found INTEGER
+);
+
+-- Block Discoveries
+CREATE TABLE blocks_found (
+    id INTEGER PRIMARY KEY,
+    coin_id TEXT NOT NULL,
+    block_hash TEXT UNIQUE,
+    block_height INTEGER,
+    reward REAL,
+    found_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    confirmed BOOLEAN DEFAULT FALSE
+);
+
+-- Connected Miners
+CREATE TABLE miners (
+    id INTEGER PRIMARY KEY,
+    worker_name TEXT NOT NULL,
+    coin_id TEXT NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    connected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_share DATETIME,
+    hashrate REAL
+);
+
+-- Snapshot Metadata
+CREATE TABLE snapshots (
+    id INTEGER PRIMARY KEY,
+    coin_id TEXT NOT NULL,
+    version TEXT,
+    block_height INTEGER,
+    merkle_root TEXT,
+    download_url TEXT,
+    downloaded_at DATETIME,
+    verified BOOLEAN DEFAULT FALSE
+);
+
+-- Coin Configurations
+CREATE TABLE coins (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    algorithm TEXT DEFAULT 'sha256',
+    daemon_port INTEGER,
+    stratum_port INTEGER,
+    enabled BOOLEAN DEFAULT TRUE,
+    data_dir TEXT
+);
+```
+
+### Snapshot Manifest Format
+
+```json
+{
+  "version": "1.0",
+  "coin": "bitcoin",
+  "network": "mainnet",
+  "snapshot": {
+    "block_height": 825000,
+    "block_hash": "0000000000000000000...",
+    "utxo_set_hash": "abc123...",
+    "timestamp": "2024-01-15T00:00:00Z"
+  },
+  "verification": {
+    "merkle_root": "def456...",
+    "signature": "sig789...",
+    "signed_by": "minebox-key-2024"
+  },
+  "files": [
+    {
+      "name": "chainstate.tar.zst",
+      "size": 5368709120,
+      "sha256": "..."
+    },
+    {
+      "name": "blocks.tar.zst", 
+      "size": 524288000000,
+      "sha256": "..."
+    }
+  ],
+  "metadata": {
+    "compression": "zstd",
+    "created_at": "2024-01-15T06:00:00Z",
+    "expires_at": "2024-02-15T00:00:00Z"
+  }
+}
+```
+
+---
+
+## 5. SECURITY ARCHITECTURE
+
+### Zero-Trust Model for Hobbyist Deployment
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        SECURITY ARCHITECTURE                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  LOCAL DEVICE SECURITY                                                   │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ • Firewall: Only expose Stratum ports (configurable)           │    │
+│  │ • Dashboard: Local access only (127.0.0.1) by default          │    │
+│  │ • Daemon RPC: Bound to localhost, no external access           │    │
+│  │ • SSH: Key-based auth recommended, password disabled           │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+│  SNAPSHOT VERIFICATION                                                   │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ • Cryptographic signing: Ed25519 signatures on manifests       │    │
+│  │ • Hash verification: SHA256 of all downloaded files            │    │
+│  │ • Merkle proof: UTXO set verification against known roots      │    │
+│  │ • Certificate pinning: TLS certs for snapshot CDN              │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+│  WALLET SECURITY                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ • Coinbase rewards: User-provided addresses only                │    │
+│  │ • No key storage: MineBox never holds private keys              │    │
+│  │ • Address validation: Verify address format per coin            │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+│  SUBSCRIPTION/API SECURITY (Cloud Services)                              │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ • API Keys: Per-device tokens for snapshot access               │    │
+│  │ • Rate limiting: Prevent abuse of download bandwidth            │    │
+│  │ • HTTPS only: All cloud communication encrypted                 │    │
+│  │ • No tracking: Minimal data collection (device ID, coin usage)  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 6. INTEGRATION ARCHITECTURE
+
+### API Design
+
+```yaml
+# Core API Endpoints (Local)
+
+# Stratum Status
+GET /api/v1/stratum/status
+GET /api/v1/stratum/workers
+
+# Mining Statistics  
+GET /api/v1/mining/stats
+GET /api/v1/mining/blocks
+GET /api/v1/mining/hashrate
+
+# Daemon Management
+GET /api/v1/daemons
+POST /api/v1/daemons/{coin}/start
+POST /api/v1/daemons/{coin}/stop
+GET /api/v1/daemons/{coin}/status
+
+# Snapshot Management
+GET /api/v1/snapshots/available
+POST /api/v1/snapshots/{coin}/download
+GET /api/v1/snapshots/{coin}/verify
+GET /api/v1/snapshots/{coin}/progress
+
+# Configuration
+GET /api/v1/config
+PUT /api/v1/config
+GET /api/v1/config/coins
+PUT /api/v1/config/coins/{coin}
+```
+
+### Event-Driven Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         EVENT FLOW ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   EVENTS                           HANDLERS                              │
+│   ───────                          ────────                              │
+│                                                                          │
+│   block.found ─────────────────▶  • Update SQLite stats                 │
+│                                   • Send notification (email/push)       │
+│                                   • Update dashboard via WebSocket       │
+│                                                                          │
+│   share.submitted ─────────────▶  • Validate share                      │
+│                                   • Update miner stats                   │
+│                                   • Check difficulty adjustment          │
+│                                                                          │
+│   daemon.started ──────────────▶  • Update health status                │
+│                                   • Begin sync monitoring                │
+│                                   • Enable stratum for coin              │
+│                                                                          │
+│   daemon.synced ───────────────▶  • Mark coin as ready                  │
+│                                   • Start stratum listener               │
+│                                   • Notify user                          │
+│                                                                          │
+│   snapshot.downloaded ─────────▶  • Begin verification                  │
+│                                   • Extract to daemon data dir           │
+│                                   • Start daemon                         │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. CLOUD ARCHITECTURE (Snapshot Infrastructure)
+
+### Multi-Region Deployment
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    SNAPSHOT CLOUD INFRASTRUCTURE                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  PRIMARY REGION (US-WEST)                                               │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                                                                  │    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │    │
+│  │  │ Snapshot    │  │ Snapshot    │  │ API         │             │    │
+│  │  │ Generator   │  │ Verifier    │  │ Server      │             │    │
+│  │  │ (K8s Pods)  │  │ (K8s Pods)  │  │ (K8s Pods)  │             │    │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘             │    │
+│  │         │                │                │                     │    │
+│  │         ▼                ▼                ▼                     │    │
+│  │  ┌─────────────────────────────────────────────────────┐       │    │
+│  │  │              PostgreSQL (Managed)                    │       │    │
+│  │  │  • User accounts, subscriptions, API keys           │       │    │
+│  │  └─────────────────────────────────────────────────────┘       │    │
+│  │                                                                  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                           │
+│                              ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    CDN DISTRIBUTION LAYER                        │    │
+│  │                                                                  │    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │    │
+│  │  │ Cloudflare  │  │ Cloudflare  │  │ Cloudflare  │             │    │
+│  │  │ R2 (West)   │  │ R2 (East)   │  │ R2 (EU)     │             │    │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘             │    │
+│  │                                                                  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cost Optimization Strategy
+
+| Component | Service Choice | Monthly Estimate |
+|-----------|---------------|------------------|
+| Snapshot Storage | Cloudflare R2 | $15/TB (no egress) |
+| CDN | Cloudflare (included) | $0 |
+| API Server | Fly.io / Railway | $25-50 |
+| Database | Supabase (PostgreSQL) | $25 |
+| Monitoring | Grafana Cloud Free | $0 |
+| **Total (Bootstrap Phase)** | | **$65-90/month** |
+
+---
+
+## 8. GOVERNANCE FRAMEWORK
+
+### Open Source Structure
+
+```
+minebox/
+├── core/                    # MIT License - Open Source
+│   ├── stratum-server/      # C#/.NET Stratum implementation
+│   ├── daemon-orchestrator/ # Node.js daemon management
+│   ├── web-dashboard/       # Next.js UI
+│   └── snapshot-client/     # Go snapshot downloader
+│
+├── cloud/                   # Proprietary - MineBox Inc.
+│   ├── snapshot-generator/  # Cloud snapshot creation
+│   ├── api-server/          # Subscription management
+│   └── billing/             # Stripe integration
+│
+└── community/               # Community contributions
+    ├── coins/               # Coin configuration PRs
+    └── hardware/            # Hardware compatibility guides
+```
+
+### Architecture Decision Records (ADRs)
+
+| ADR | Decision | Rationale |
+|-----|----------|-----------|
+| ADR-001 | SQLite over PostgreSQL for local | Pi resource constraints; no multi-user needs |
+| ADR-002 | Go for snapshot client | Low memory footprint; cross-compile to ARM64 |
+| ADR-003 | C# for Stratum (fork CoiniumServ) | Proven implementation; avoid rewrite risk |
+| ADR-004 | Cloudflare R2 for CDN | Zero egress costs; critical for high-bandwidth snapshots |
+| ADR-005 | Ed25519 for signatures | Modern, fast, secure; widely supported |
+
+---
+
+## 9. IMPLEMENTATION ROADMAP
+
+### Phase 1: Foundation (MVP)
+- Single coin support (Bitcoin regtest for testing)
+- Basic Stratum server (CoiniumServ fork)
+- CLI-based configuration
+- Manual snapshot download & verify
+
+### Phase 2: Multi-Coin
+- Add 3-5 SHA256 altcoins
+- Daemon orchestrator service
+- Web dashboard (basic)
+- Automated snapshot sync
+
+### Phase 3: Commercial Launch
+- Subscription system
+- Cloud snapshot infrastructure
+- Multiple Pi image releases
+- Community coin submissions
+
+### Phase 4: Scale
+- Hardware bundle partnerships
+- Enterprise/MSP licensing
+- Advanced analytics
+- Mobile app notifications
+
+---
+
+## Architecture Decisions Summary
+
+| Concern | Decision |
+|---------|----------|
+| **Primary Platform** | Raspberry Pi 5 + USB SSD |
+| **Stratum Server** | C#/.NET 8 (CoiniumServ evolution) |
+| **Orchestration** | Node.js/TypeScript with Docker Compose |
+| **Local Database** | SQLite (resource-efficient) |
+| **Snapshot Format** | Zstd-compressed tarballs with Merkle proofs |
+| **Cloud Storage** | Cloudflare R2 (zero egress) |
+| **Authentication** | API keys for snapshot access |
+| **Monetization** | Open-source core + paid snapshot subscriptions |
+
+This architecture positions MineBox to serve the hobbyist mining market with a sustainable open-core business model while maintaining the self-sovereignty values important to the target community.
+
+DECISION: completed: Go to database_architect

@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wallet Manager Agent Blueprint | Agent Build Process V1</title>
+    <style>
+        :root {
+            --blueprint-bg: #0a1628;
+            --blueprint-paper: #1a2332;
+            --blueprint-line: #2d4263;
+            --blueprint-accent: #3498db;
+            --blueprint-highlight: #52d3f5;
+            --blueprint-text: #e8f4f8;
+            --blueprint-dim: #8fa3b0;
+            --blueprint-grid: rgba(52, 152, 219, 0.1);
+            --success-glow: #27ae60;
+            --warning-glow: #f39c12;
+            --error-glow: #e74c3c;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Courier New', monospace;
+            background: var(--blueprint-bg);
+            color: var(--blueprint-text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Animated blueprint grid background */
+        .blueprint-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(var(--blueprint-grid) 1px, transparent 1px),
+                linear-gradient(90deg, var(--blueprint-grid) 1px, transparent 1px);
+            background-size: 20px 20px;
+            animation: gridPulse 20s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes gridPulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Floating blueprint lines */
+        .blueprint-lines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            overflow: hidden;
+        }
+
+        .blueprint-line {
+            position: absolute;
+            background: linear-gradient(90deg, transparent, var(--blueprint-accent), transparent);
+            height: 1px;
+            width: 100%;
+            animation: lineSlide 15s linear infinite;
+            opacity: 0.2;
+        }
+
+        .blueprint-line:nth-child(1) { top: 10%; animation-delay: 0s; }
+        .blueprint-line:nth-child(2) { top: 30%; animation-delay: 3s; }
+        .blueprint-line:nth-child(3) { top: 50%; animation-delay: 6s; }
+        .blueprint-line:nth-child(4) { top: 70%; animation-delay: 9s; }
+        .blueprint-line:nth-child(5) { top: 90%; animation-delay: 12s; }
+
+        @keyframes lineSlide {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        /* Main container */
+        .container {
+            position: relative;
+            z-index: 2;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Blueprint header with technical drawing aesthetic */
+        .blueprint-header {
+            background: linear-gradient(135deg, var(--blueprint-paper) 0%, #0f1923 100%);
+            border: 2px solid var(--blueprint-line);
+            border-radius: 12px;
+            padding: 40px;
+            margin-bottom: 40px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        .blueprint-header::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--blueprint-accent), var(--blueprint-highlight));
+            opacity: 0;
+            transition: opacity 0.3s;
+            border-radius: 12px;
+            z-index: -1;
+        }
+
+        .blueprint-header:hover::before {
+            opacity: 0.1;
+        }
+
+        /* Corner markers for technical drawing aesthetic */
+        .corner-marker {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--blueprint-accent);
+        }
+
+        .corner-marker.tl { top: 10px; left: 10px; border-right: none; border-bottom: none; }
+        .corner-marker.tr { top: 10px; right: 10px; border-left: none; border-bottom: none; }
+        .corner-marker.bl { bottom: 10px; left: 10px; border-right: none; border-top: none; }
+        .corner-marker.br { bottom: 10px; right: 10px; border-left: none; border-top: none; }
+
+        .blueprint-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--blueprint-highlight), var(--blueprint-accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .blueprint-subtitle {
+            font-size: 1.1rem;
+            color: var(--blueprint-dim);
+            margin-bottom: 30px;
+            font-weight: 300;
+        }
+
+        /* Specification grid */
+        .spec-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .spec-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--blueprint-line);
+            border-left: 3px solid var(--blueprint-accent);
+            padding: 15px;
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+
+        .spec-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-left-color: var(--blueprint-highlight);
+            transform: translateX(5px);
+        }
+
+        .spec-label {
+            font-size: 0.75rem;
+            color: var(--blueprint-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+
+        .spec-value {
+            font-size: 1.2rem;
+            color: var(--blueprint-text);
+            font-weight: 600;
+        }
+
+        .spec-value.success {
+            color: var(--success-glow);
+        }
+
+        /* Stage timeline as blueprint schematic */
+        .stage-timeline {
+            margin-top: 40px;
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            color: var(--blueprint-highlight);
+            margin-bottom: 30px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-bottom: 2px solid var(--blueprint-line);
+            padding-bottom: 10px;
+            position: relative;
+        }
+
+        .section-title::before {
+            content: '█';
+            color: var(--blueprint-accent);
+            margin-right: 10px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .stage-schematic {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+            position: relative;
+            padding-left: 60px;
+        }
+
+        /* Vertical connection line */
+        .stage-schematic::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 40px;
+            bottom: 40px;
+            width: 2px;
+            background: linear-gradient(180deg, 
+                var(--blueprint-accent) 0%, 
+                var(--blueprint-highlight) 50%, 
+                var(--blueprint-accent) 100%);
+            box-shadow: 0 0 10px var(--blueprint-accent);
+        }
+
+        .stage-node {
+            background: var(--blueprint-paper);
+            border: 2px solid var(--blueprint-line);
+            border-radius: 8px;
+            padding: 25px;
+            position: relative;
+            transition: all 0.3s;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        .stage-node:hover {
+            border-color: var(--blueprint-accent);
+            box-shadow: 
+                0 4px 16px rgba(0, 0, 0, 0.3),
+                0 0 20px rgba(52, 152, 219, 0.3);
+            transform: translateX(5px);
+        }
+
+        /* Stage connector dot */
+        .stage-node::before {
+            content: '';
+            position: absolute;
+            left: -47px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 14px;
+            height: 14px;
+            background: var(--blueprint-accent);
+            border: 3px solid var(--blueprint-bg);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--blueprint-accent);
+            z-index: 2;
+        }
+
+        .stage-node.completed::before {
+            background: var(--success-glow);
+            box-shadow: 0 0 15px var(--success-glow);
+        }
+
+        .stage-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .stage-name {
+            font-size: 1.3rem;
+            color: var(--blueprint-highlight);
+            font-weight: 600;
+        }
+
+        .stage-status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: rgba(39, 174, 96, 0.2);
+            color: var(--success-glow);
+            border: 1px solid var(--success-glow);
+        }
+
+        .stage-agent {
+            display: inline-block;
+            background: rgba(52, 152, 219, 0.2);
+            color: var(--blueprint-accent);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+            border: 1px solid var(--blueprint-accent);
+        }
+
+        /* Expandable details */
+        .stage-details {
+            margin-top: 15px;
+        }
+
+        .detail-toggle {
+            background: rgba(52, 152, 219, 0.1);
+            border: 1px solid var(--blueprint-line);
+            padding: 10px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            color: var(--blueprint-accent);
+        }
+
+        .detail-toggle:hover {
+            background: rgba(52, 152, 219, 0.2);
+            border-color: var(--blueprint-accent);
+        }
+
+        .detail-toggle::after {
+            content: '▼';
+            transition: transform 0.3s;
+            font-size: 0.7rem;
+        }
+
+        .detail-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.5s ease-out;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+
+        .detail-content.expanded {
+            max-height: 2000px;
+            transition: max-height 0.8s ease-in;
+        }
+
+        .detail-toggle.active::after {
+            transform: rotate(180deg);
+        }
+
+        .detail-inner {
+            padding: 20px;
+        }
+
+        .code-block {
+            background: #000;
+            border: 1px solid var(--blueprint-line);
+            border-left: 3px solid var(--blueprint-accent);
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-top: 10px;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: #a8d8ea;
+        }
+
+        .code-block pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        /* Execution summary cards */
+        .execution-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+
+        .summary-card {
+            background: var(--blueprint-paper);
+            border: 2px solid var(--blueprint-line);
+            border-radius: 8px;
+            padding: 25px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+
+        .summary-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--blueprint-accent), var(--blueprint-highlight));
+        }
+
+        .summary-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .summary-title {
+            font-size: 1.1rem;
+            color: var(--blueprint-dim);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .summary-content {
+            font-size: 0.9rem;
+            line-height: 1.8;
+            color: var(--blueprint-text);
+        }
+
+        .summary-content strong {
+            color: var(--blueprint-highlight);
+        }
+
+        /* Footer */
+        .blueprint-footer {
+            margin-top: 60px;
+            padding: 30px;
+            text-align: center;
+            border-top: 2px solid var(--blueprint-line);
+            color: var(--blueprint-dim);
+            font-size: 0.9rem;
+        }
+
+        .footer-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--blueprint-accent), var(--blueprint-highlight));
+            color: var(--blueprint-bg);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-top: 15px;
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .blueprint-title {
+                font-size: 1.8rem;
+            }
+
+            .spec-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stage-schematic {
+                padding-left: 40px;
+            }
+
+            .stage-node::before {
+                left: -37px;
+            }
+        }
+
+        /* Technical annotations */
+        .annotation {
+            display: inline-block;
+            background: rgba(242, 196, 53, 0.1);
+            border: 1px dashed #f2c435;
+            color: #f2c435;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            margin-left: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Metrics display */
+        .metrics-row {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .metric {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--blueprint-line);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        .metric-label {
+            color: var(--blueprint-dim);
+            margin-right: 6px;
+        }
+
+        .metric-value {
+            color: var(--blueprint-highlight);
+            font-weight: 600;
+        }
+
+        /* Success indicator */
+        .success-stamp {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            border: 3px solid var(--success-glow);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            color: var(--success-glow);
+            transform: rotate(-15deg);
+            animation: stampAppear 0.5s ease-out;
+            box-shadow: 0 0 20px rgba(39, 174, 96, 0.3);
+        }
+
+        @keyframes stampAppear {
+            0% { transform: scale(0) rotate(-15deg); opacity: 0; }
+            50% { transform: scale(1.2) rotate(-15deg); }
+            100% { transform: scale(1) rotate(-15deg); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Background effects -->
+    <div class="blueprint-grid"></div>
+    <div class="blueprint-lines">
+        <div class="blueprint-line"></div>
+        <div class="blueprint-line"></div>
+        <div class="blueprint-line"></div>
+        <div class="blueprint-line"></div>
+        <div class="blueprint-line"></div>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="blueprint-header">
+            <div class="corner-marker tl"></div>
+            <div class="corner-marker tr"></div>
+            <div class="corner-marker bl"></div>
+            <div class="corner-marker br"></div>
+            
+            <div class="success-stamp">✓</div>
+
+            <div class="blueprint-title">Wallet Manager Agent</div>
+            <div class="blueprint-subtitle">Agent Build Process V1 | Technical Specification Document</div>
+
+            <div class="spec-grid">
+                <div class="spec-item">
+                    <div class="spec-label">Pipeline ID</div>
+                    <div class="spec-value">pipeline_1763598176652</div>
+                </div>
+                <div class="spec-item">
+                    <div class="spec-label">Total Duration</div>
+                    <div class="spec-value">590.1s</div>
+                </div>
+                <div class="spec-item">
+                    <div class="spec-label">Stages Completed</div>
+                    <div class="spec-value success">5 / 5</div>
+                </div>
+                <div class="spec-item">
+                    <div class="spec-label">Status</div>
+                    <div class="spec-value success">COMPLETED</div>
+                </div>
+                <div class="spec-item">
+                    <div class="spec-label">Working Directory</div>
+                    <div class="spec-value" style="font-size: 0.75rem;">/mnt/c/github/private-SuperCoinServ</div>
+                </div>
+                <div class="spec-item">
+                    <div class="spec-label">Errors</div>
+                    <div class="spec-value success">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stage Timeline -->
+        <div class="stage-timeline">
+            <h2 class="section-title">Construction Phases</h2>
+
+            <div class="stage-schematic">
+                <!-- Stage 1 -->
+                <div class="stage-node completed">
+                    <div class="stage-header">
+                        <div>
+                            <div class="stage-name">Phase 1: Design Agent Specification</div>
+                            <span class="stage-agent">Agent: task_planner</span>
+                        </div>
+                        <span class="stage-status">Completed</span>
+                    </div>
+
+                    <div class="metrics-row">
+                        <div class="metric">
+                            <span class="metric-label">Output:</span>
+                            <span class="metric-value">4,261 chars</span>
+                        </div>
+                    </div>
+
+                    <div class="stage-details">
+                        <div class="detail-toggle" onclick="toggleDetail(this)">
+                            View Design Specification
+                        </div>
+                        <div class="detail-content">
+                            <div class="detail-inner">
+                                <p><strong>Understanding:</strong> Create a comprehensive plan for building the wallet_manager agent based on section 2.2 of MINING_CYCLE_AUTOMATION_PLAN.md. The agent handles wallet operations including creation, address generation, balance queries, transaction monitoring, and backups.</p>
+                                
+                                <p style="margin-top: 15px;"><strong>Approach:</strong> Develop based on existing specifications and reference implementations from private-SuperCoinServ and bitcoin_daemon_manager.json patterns.</p>
+
+                                <p style="margin-top: 15px;"><strong>Key Requirements:</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>Wallet creation using bitcoin-cli createwallet</li>
+                                    <li>Address generation (getnewaddress)</li>
+                                    <li>Wallet funding via generatetoaddress (regtest)</li>
+                                    <li>Balance queries (getbalance, getwalletinfo, listunspent)</li>
+                                    <li>Transaction monitoring (listtransactions, gettransaction)</li>
+                                    <li>Wallet backup (backupwallet)</li>
+                                    <li>Error handling and recovery</li>
+                                </ul>
+
+                                <p style="margin-top: 15px;"><strong>Test Considerations:</strong> Comprehensive testing including wallet lifecycle, address generation variations, funding scenarios, balance states, transaction monitoring, backup operations, and error handling (daemon failures, duplicate wallets, RPC failures).</p>
+
+                                <div class="code-block">
+                                    <strong>DECISION:</strong> design_complete
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stage 2 -->
+                <div class="stage-node completed">
+                    <div class="stage-header">
+                        <div>
+                            <div class="stage-name">Phase 2: Review Agent Design</div>
+                            <span class="stage-agent">Agent: discerning_expert</span>
+                        </div>
+                        <span class="stage-status">Completed</span>
+                    </div>
+
+                    <div class="metrics-row">
+                        <div class="metric">
+                            <span class="metric-label">Output:</span>
+                            <span class="metric-value">3,287 chars</span>
+                        </div>
+                    </div>
+
+                    <div class="stage-details">
+                        <div class="detail-toggle" onclick="toggleDetail(this)">
+                            View Expert Review
+                        </div>
+                        <div class="detail-content">
+                            <div class="detail-inner">
+                                <p><strong>Assessment:</strong> The plan demonstrates clear understanding with methodical, well-structured approach. All requirements comprehensively covered.</p>
+
+                                <p style="margin-top: 15px;"><strong>Strengths Identified:</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>✓ Leverages existing reference implementations effectively</li>
+                                    <li>✓ Follows established agent JSON structure patterns</li>
+                                    <li>✓ Complete coverage of section 2.2 requirements</li>
+                                    <li>✓ Proper error handling considerations</li>
+                                    <li>✓ Logical 9-step sequential plan</li>
+                                    <li>✓ Excellent test scenario coverage</li>
+                                </ul>
+
+                                <p style="margin-top: 15px;"><strong>Evidence Quality:</strong> <span class="annotation">Strong</span></p>
+                                <p style="margin-top: 10px;">Concrete file outputs specified, multiple reference reads, file verification steps, JSON validation, and systematic requirement checks included.</p>
+
+                                <p style="margin-top: 15px;"><strong>Confidence:</strong> High confidence is well-justified due to clear specifications, available reference implementations, granted permissions, and well-defined bitcoin-cli commands.</p>
+
+                                <div class="code-block">
+                                    <strong>DECISION:</strong> APPROVED
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stage 3 -->
+                <div class="stage-node completed">
+                    <div class="stage-header">
+                        <div>
+                            <div class="stage-name">Phase 3: Implement Agent</div>
+                            <span class="stage-agent">Agent: agent_architect</span>
+                        </div>
+                        <span class="stage-status">Completed</span>
+                    </div>
+
+                    <div class="metrics-row">
+                        <div class="metric">
+                            <span class="metric-label">Output:</span>
+                            <span class="metric-value">1,772 chars</span>
+                        </div>
+                    </div>
+
+                    <div class="stage-details">
+                        <div class="detail-toggle" onclick="toggleDetail(this)">
+                            View Implementation Summary
+                        </div>
+                        <div class="detail-content">
+                            <div class="detail-inner">
+                                <p><strong>Implementation Complete:</strong> wallet_manager agent successfully created at <code style="color: var(--blueprint-highlight);">/mnt/c/github/claudeplus/agents/wallet_manager.json</code></p>
+
+                                <p style="margin-top: 20px;"><strong>✓ All Section 2.2 Requirements Implemented:</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>Create new wallet using bitcoin-cli createwallet</li>
+                                    <li>Generate receive addresses (bech32 format)</li>
+                                    <li>Fund wallet via regtest mining (generatetoaddress with 101 blocks)</li>
+                                    <li>Query balance (getbalance, getwalletinfo, listunspent)</li>
+                                    <li>Monitor incoming transactions (listtransactions)</li>
+                                    <li>Export wallet for backup (backupwallet with rotation)</li>
+                                </ul>
+
+                                <p style="margin-top: 20px;"><strong>✓ All User-Specified Decisions:</strong></p>
+                                <div class="metrics-row" style="margin-top: 10px;">
+                                    <span class="annotation">wallet_created</span>
+                                    <span class="annotation">wallet_funded</span>
+                                    <span class="annotation">balance_confirmed</span>
+                                    <span class="annotation">error</span>
+                                    <span class="annotation">wallet_loaded</span>
+                                    <span class="annotation">address_generated</span>
+                                </div>
+
+                                <p style="margin-top: 20px;"><strong>✓ System Prompt:</strong> 19KB comprehensive documentation with bitcoin-cli examples, error scenarios, recovery procedures, and best practices</p>
+
+                                <p style="margin-top: 15px;"><strong>✓ Configuration:</strong> RPC settings, wallet parameters, address pool (100 mining + 50 payout), automated backup (daily, 7-day retention), funding config, transaction monitoring</p>
+
+                                <div class="code-block">
+                                    <strong>DECISION:</strong> component_created
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stage 4 -->
+                <div class="stage-node completed">
+                    <div class="stage-header">
+                        <div>
+                            <div class="stage-name">Phase 4: Validate Agent Artifact</div>
+                            <span class="stage-agent">Agent: component_validator</span>
+                        </div>
+                        <span class="stage-status">Completed</span>
+                    </div>
+
+                    <div class="metrics-row">
+                        <div class="metric">
+                            <span class="metric-label">Output:</span>
+                            <span class="metric-value">5,230 chars</span>
+                        </div>
+                    </div>
+
+                    <div class="stage-details">
+                        <div class="detail-toggle" onclick="toggleDetail(this)">
+                            View Validation Report
+                        </div>
+                        <div class="detail-content">
+                            <div class="detail-inner">
+                                <p><strong>Validation Report: wallet_manager.json</strong></p>
+
+                                <p style="margin-top: 20px;"><strong>✅ Section 2.2 Requirements Verification (100% Coverage)</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>✅ Create new wallet (bitcoin-cli) - Lines 15-56</li>
+                                    <li>✅ Generate receive addresses - Lines 58-110</li>
+                                    <li>✅ Fund wallet (regtest mining) - Lines 112-144</li>
+                                    <li>✅ Query balance - Lines 146-202</li>
+                                    <li>✅ Monitor incoming transactions - Lines 204-254</li>
+                                    <li>✅ Export wallet for backup - Lines 256-302</li>
+                                </ul>
+
+                                <p style="margin-top: 20px;"><strong>✅ Required Permissions (6/6 Present)</strong></p>
+                                <div class="metrics-row" style="margin-top: 10px;">
+                                    <span class="annotation">Bash</span>
+                                    <span class="annotation">Read</span>
+                                    <span class="annotation">Write</span>
+                                    <span class="annotation">Edit</span>
+                                    <span class="annotation">Glob</span>
+                                    <span class="annotation">Grep</span>
+                                </div>
+
+                                <p style="margin-top: 20px;"><strong>✅ Required Decisions (4/4 + 2 bonus)</strong></p>
+                                <div class="metrics-row" style="margin-top: 10px;">
+                                    <span class="annotation">wallet_created</span>
+                                    <span class="annotation">wallet_funded</span>
+                                    <span class="annotation">balance_confirmed</span>
+                                    <span class="annotation">error</span>
+                                </div>
+
+                                <p style="margin-top: 20px;"><strong>✅ Structural Validation</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>✅ Valid JSON format</li>
+                                    <li>✅ All required fields present</li>
+                                    <li>✅ Proper nesting and syntax</li>
+                                    <li>✅ Comprehensive configuration (RPC, wallet, address pool, backup, funding, monitoring)</li>
+                                </ul>
+
+                                <p style="margin-top: 20px;"><strong>✅ System Prompt Quality (19KB)</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>✅ Wallet creation and loading</li>
+                                    <li>✅ Address generation with bech32 default</li>
+                                    <li>✅ Wallet funding for regtest (101 blocks)</li>
+                                    <li>✅ Balance queries with multiple methods</li>
+                                    <li>✅ Transaction monitoring and confirmation tracking</li>
+                                    <li>✅ Wallet backup with rotation strategy</li>
+                                    <li>✅ 7 error scenarios with recovery procedures</li>
+                                    <li>✅ Best practices for pool operations</li>
+                                    <li>✅ Security notes for production use</li>
+                                </ul>
+
+                                <div class="code-block">
+                                    <strong>DECISION:</strong> valid
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stage 5 -->
+                <div class="stage-node completed">
+                    <div class="stage-header">
+                        <div>
+                            <div class="stage-name">Phase 5: Finalize Agent</div>
+                            <span class="stage-agent">Agent: proof_validator</span>
+                        </div>
+                        <span class="stage-status">Completed</span>
+                    </div>
+
+                    <div class="metrics-row">
+                        <div class="metric">
+                            <span class="metric-label">Output:</span>
+                            <span class="metric-value">5,594 chars</span>
+                        </div>
+                    </div>
+
+                    <div class="stage-details">
+                        <div class="detail-toggle" onclick="toggleDetail(this)">
+                            View Final Verification
+                        </div>
+                        <div class="detail-content">
+                            <div class="detail-inner">
+                                <p><strong>VERIFICATION: Final Analysis</strong></p>
+
+                                <p style="margin-top: 15px;">The wallet_manager agent has been successfully created and fully meets all requirements from section 2.2 of MINING_CYCLE_AUTOMATION_PLAN.md.</p>
+
+                                <p style="margin-top: 20px;"><strong>Deliverables Verified:</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>✅ 100% Capability Coverage - All 6 capabilities with bitcoin-cli commands</li>
+                                    <li>✅ 100% Decision Coverage - All 4 required + 2 bonus decisions</li>
+                                    <li>✅ 100% Permission Coverage - All 6 required tools</li>
+                                    <li>✅ Correct File Location - Exact path verified</li>
+                                    <li>✅ Valid JSON - Validated with Python parser</li>
+                                    <li>✅ Complete Structure - All 10 required fields present</li>
+                                </ul>
+
+                                <p style="margin-top: 20px;"><strong>Evidence Check:</strong></p>
+                                <ul style="margin-left: 20px; margin-top: 10px; line-height: 2;">
+                                    <li>✅ File exists and readable: 22K size</li>
+                                    <li>✅ Valid JSON syntax verified</li>
+                                    <li>✅ All capabilities present in systemPrompt</li>
+                                    <li>✅ 10 bitcoin-cli commands documented</li>
+                                    <li>✅ 16 code blocks with 7 bash examples</li>
+                                    <li>✅ 40 mentions of bitcoin-cli commands</li>
+                                    <li>✅ 24 error handling scenarios</li>
+                                    <li>✅ Critical details: coinbase maturity, regtest prefix, 101 blocks, bech32 addresses</li>
+                                </ul>
+
+                                <p style="margin-top: 20px;"><strong>Quality Assessment:</strong> <span class="annotation">Exceptional - Exceeds Requirements</span></p>
+
+                                <div class="code-block">
+                                    <strong>DECISION:</strong> APPROVED
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Execution Summary -->
+        <div class="execution-summary">
+            <div class="summary-card">
+                <div class="summary-title">Blueprint Deliverables</div>
+                <div class="summary-content">
+                    <p><strong>Primary Artifact:</strong><br>
+                    /mnt/c/github/claudeplus/agents/wallet_manager.json</p>
+                    
+                    <p style="margin-top: 15px;"><strong>File Size:</strong> 22KB<br>
+                    <strong>Format:</strong> Valid JSON<br>
+                    <strong>System Prompt:</strong> 19KB comprehensive documentation</p>
+
+                    <p style="margin-top: 15px;"><strong>Capabilities:</strong> 6 core wallet operations<br>
+                    <strong>Decisions:</strong> 6 routing keywords<br>
+                    <strong>Permissions:</strong> 6 required tools</p>
+                </div>
+            </div>
+
+            <div class="summary-card">
+                <div class="summary-title">Technical Specifications</div>
+                <div class="summary-content">
+                    <p><strong>Agent Configuration:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px; line-height: 1.8;">
+                        <li>RPC endpoint settings</li>
+                        <li>Wallet creation parameters</li>
+                        <li>Address pool: 100 mining + 50 payout</li>
+                        <li>Automated backup: daily, 7-day retention</li>
+                        <li>Funding: 101 blocks for mature coinbase</li>
+                        <li>Transaction monitoring: 10s poll, 6 confirmations</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="summary-card">
+                <div class="summary-title">Quality Metrics</div>
+                <div class="summary-content">
+                    <p><strong>Validation Results:</strong></p>
+                    <ul style="margin-left: 20px; margin-top: 10px; line-height: 1.8;">
+                        <li>✅ 100% requirement coverage</li>
+                        <li>✅ 10 bitcoin-cli commands</li>
+                        <li>✅ 7 error scenarios with recovery</li>
+                        <li>✅ 16 code examples</li>
+                        <li>✅ 24 error handling cases</li>
+                        <li>✅ Security best practices included</li>
+                    </ul>
+                    
+                    <p style="margin-top: 15px;"><strong>Expert Assessment:</strong> Exceptional quality, exceeds requirements</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="blueprint-footer">
+            <p>Agent Build Process V1 | Pipeline Execution Report</p>
+            <p style="margin-top: 10px;">Generated from pipeline_1763598176652</p>
+            <div class="footer-badge">✓ CONSTRUCTION APPROVED</div>
+        </div>
+    </div>
+
+    <script>
+        function toggleDetail(element) {
+            const content = element.nextElementSibling;
+            const isExpanded = content.classList.contains('expanded');
+            
+            if (isExpanded) {
+                content.classList.remove('expanded');
+                element.classList.remove('active');
+            } else {
+                content.classList.add('expanded');
+                element.classList.add('active');
+            }
+        }
+    </script>
+</body>
+</html>

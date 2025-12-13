@@ -1,0 +1,66 @@
+Perfect! Now I can see the structure. The `shipFittings.set()` creates an object with a `hull` property (lines 84-96). So the ship ID fix on line 887 of StationUI.js **should** have resolved the bug. 
+
+However, the test evidence shows the bug was **NOT** reproduced because the test was blocked by Bug #1 (WebSocket disconnect). The original bug report mentions the TypeError, but we couldn't verify it in testing.
+
+**Conclusion for Bug #2:** The fix appears correct based on code analysis, but **cannot be confirmed** until Bug #1 is fixed.
+
+Let me now create the complete root cause analysis report:
+
+```json
+{
+  "rootCause": "Bug #1: The setPosition() teleport command creates a race condition between the async requestAnimationFrame loop (lines 789-793) and the independent main animation loop (SceneManager.animate() at line 2470). When teleporting long distances, the camera controller attempts to smoothly interpolate between extreme positions while both loops are rendering simultaneously, causing Chrome's WebGL renderer to crash with WebSocket code 1006. Bug #2: Already fixed - ship ID mismatch was corrected on StationUI.js:887, but cannot be verified due to Bug #1 blocking test execution.",
+  
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/testing/GameTestingInterface.js",
+      "lineNumbers": [777, 778, 779, 780, 781, 782, 783, 784, 785, 787, 788, 789, 790, 791, 792, 793],
+      "currentCode": "// FRAMEWORK FIX: Use requestAnimationFrame for proper GPU synchronization\n// Without this, the browser/renderer may crash when teleporting long distances,\n// causing WebSocket disconnection (code 1006)\n// requestAnimationFrame ensures the browser completes GPU rendering before proceeding\nif (this.simulator.sceneManager) {\n    // Update scene with new ship position\n    this.simulator.sceneManager.update(0, ship.physics.position);\n    // Force render to update camera and visuals\n    this.simulator.sceneManager.render();\n\n    // Wait for 5 animation frames to ensure GPU pipeline stabilization\n    // Each frame guarantees the previous render completed before the next begins\n    for (let i = 0; i < 5; i++) {\n        await new Promise(resolve => requestAnimationFrame(resolve));\n        this.simulator.sceneManager.update(0, ship.physics.position);\n        this.simulator.sceneManager.render();\n    }\n}",
+      "problem": "Race condition: The async requestAnimationFrame loop runs independently from the main animation loop (SceneManager.animate() at line 2470). Both loops call update() and render() simultaneously, causing the camera controller to calculate extreme position deltas when teleporting long distances, exceeding GPU rendering thresholds and crashing Chrome's WebGL renderer."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/core/CameraController.js",
+      "lineNumbers": [240, 241, 242, 243, 244, 245, 252, 253, 254, 255, 256, 259, 260, 261, 262],
+      "currentCode": "updateChaseCamera(deltaTime) {\n    if (!this.target) return;\n    const targetPos = this.target.position;\n    const targetVel = this.target.velocity || { x: 0, y: 0, z: 0 };\n    // Calculate desired camera position behind the ship\n    const shipForward = this.getShipForwardVector();\n    const shipRight = this.getShipRightVector();\n    const shipUp = this.getShipUpVector();\n    // Position behind ship\n    const desiredPosition = {\n        x: targetPos.x - shipForward.x * this.chase.distance + shipUp.x * this.chase.height,\n        y: targetPos.y - shipForward.y * this.chase.distance + shipUp.y * this.chase.height,\n        z: targetPos.z - shipForward.z * this.chase.distance + shipUp.z * this.chase.height\n    };\n    // Smooth camera movement\n    const damping = Math.min(1.0, this.chase.damping * deltaTime * 60);\n    this.smoothPosition.x += (desiredPosition.x - this.smoothPosition.x) * damping;\n    this.smoothPosition.y += (desiredPosition.y - this.smoothPosition.y) * damping;\n    this.smoothPosition.z += (desiredPosition.z - this.smoothPosition.z) * damping;",
+      "problem": "Camera smoothing interpolation (lines 259-262) calculates extreme deltas when the ship teleports from (0, 0, 0) to (50000, 0, 30000) instantly. The smoothPosition tries to interpolate across 50km+ distances while the main animation loop continues running, causing GPU pipeline overload."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/ui/StationUI.js",
+      "lineNumbers": [887],
+      "currentCode": "this.currentShipId = 'player';",
+      "problem": "ALREADY FIXED - This line correctly sets the ship ID to 'player' to match ShipFittingManager.playerShipId. The comment confirms this was a bug fix. However, the fix cannot be verified because Bug #1 blocks test execution from reaching the ship fitting UI interaction."
+    }
+  ],
+  
+  "executionFlow": [
+    "Bug #1 WebSocket Disconnect Flow:",
+    "1. GameTestingInterface.setPosition() called with coordinates (50000, 0, 30000)",
+    "2. ship.physics.position updated to new coordinates (lines 757-759)",
+    "3. ship.mesh.position updated to match (lines 764-766)",
+    "4. sceneManager.update(0, ship.physics.position) called (line 783)",
+    "5. sceneManager.render() called (line 785)",
+    "6. Async loop starts: await requestAnimationFrame() for 5 frames (lines 789-793)",
+    "7. RACE CONDITION: Main animation loop (SceneManager.animate() at line 2470) continues running independently",
+    "8. Main loop calls sceneManager.update(deltaTime) which triggers cameraController.update(deltaTime)",
+    "9. cameraController.updateChaseCamera() calculates desiredPosition based on ship's NEW position (50000, 0, 30000)",
+    "10. Camera smoothing tries to interpolate from smoothPosition (near 0, 0, 0) to desiredPosition (near 50000, 0, 30000)",
+    "11. Extreme position delta (50km+) exceeds GPU rendering thresholds",
+    "12. Chrome WebGL renderer crashes, terminating WebSocket connection with code 1006",
+    "",
+    "Bug #2 Ship Fitting TypeError Flow (Original - now fixed):",
+    "1. User double-clicks item in ship fitting UI inventory",
+    "2. StationUI.autoFitItem(itemId) called (line 1599)",
+    "3. getShipFitting(this.currentShipId) called with 'player' (line 1603)",
+    "4. PREVIOUSLY: this.currentShipId was 'player_ship_1', getShipFitting() returned undefined",
+    "5. PREVIOUSLY: Line 1607 tried to access undefined.hull, causing TypeError",
+    "6. NOW FIXED: this.currentShipId is 'player', matching ShipFittingManager.playerShipId",
+    "7. NOW: getShipFitting() returns valid fitting object with hull property",
+    "8. VERIFICATION BLOCKED: Cannot test because Bug #1 prevents reaching docking/fitting steps"
+  ],
+  
+  "whyItHappens": "Bug #1: The requestAnimationFrame fix attempts to stabilize the renderer but creates a race condition. The setPosition() method spawns an independent async rendering loop (lines 789-793) that runs in parallel with the main game loop (SceneManager.animate()). When teleporting long distances, the camera controller receives the new ship position while its smoothPosition is still at the old location. The smoothing algorithm tries to interpolate across extreme distances (50km+), generating position deltas that exceed Chrome's WebGL GPU rendering limits, causing a renderer crash and WebSocket code 1006 disconnect. Bug #2: Ship ID mismatch has been fixed - StationUI.currentShipId now correctly matches ShipFittingManager.playerShipId ('player'), preventing the undefined hull access error.",
+  
+  "proposedFix": "Bug #1: Modify setPosition() to pause/disable the main animation loop before teleporting, force camera to instantly snap to new position (bypass smoothing), then resume the main loop. Specifically: (1) Store reference to SceneManager.animate loop, (2) Cancel the main loop using a flag, (3) Update ship position, (4) Force camera.smoothPosition to instantly equal new desired position, (5) Render once, (6) Re-enable main loop. This eliminates the race condition and prevents extreme camera interpolation. Bug #2: Fix appears complete based on code analysis. After fixing Bug #1, re-run test_ship_fitting_auto_fit_bug.js to verify the ship fitting TypeError is resolved."
+}
+```
+
+**DECISION: root_cause_found**

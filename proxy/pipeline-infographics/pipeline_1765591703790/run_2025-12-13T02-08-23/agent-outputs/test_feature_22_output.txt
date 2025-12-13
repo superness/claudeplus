@@ -1,0 +1,89 @@
+Now I have all the information I need to provide my integration test results. Let me trace the full integration paths:
+
+## Test Results
+
+### Syntax Check
+**PASS** - TypeScript compiles with no errors (`npx tsc --noEmit` completed successfully).
+
+### Integration Path Verification
+
+#### Path 1: Combat Skill Execution
+- **Entry point**: `InputManager.handleKeyDown()` (lines 109-162)
+- **Calls**: `InputManager.executeSkill(slotIndex)` (lines 310-328)
+- **→ Calls**: `CombatManager.executeSkill(slotIndex)` (lines 127-206)
+- **→ Calls**: `CombatValidator.validateSkillUse()` (lines 119-164) - validates cooldown, energy, range, LoS, status effects
+- **→ Calls**: `CombatManager.performSkillExecution()` (lines 211-297)
+- **→ Calls**: `CombatManager.applyDamageToTarget()` (lines 302-323)
+- **→ Calls**: `calculateDamage()` from CombatSystem (lines 145-183)
+- **→ Calls**: `Enemy.takeDamage()` (lines 1162-1180)
+- **Reaches target**: YES - Enemy health decreases
+- **CONNECTED: YES**
+
+#### Path 2: Player Movement with Collision
+- **Entry point**: `InputManager.update()` (lines 263-290)
+- **Calls**: `Player.setMoveDirection()` (lines 244-247)
+- **→ Player.update()** (lines 301-323) calls `updateMovement()` (lines 328-385)
+- **→ Calls**: `CollisionSystem.resolveCollision()` (line 395-396)
+- **Reaches target**: YES - Position adjusted for collisions
+- **CONNECTED: YES**
+
+#### Path 3: Enemy Targeting
+- **Entry point**: `InputManager.handleLeftClick()` (lines 219-249) or Tab key (line 132-138)
+- **Calls**: `EntityManager.handleClick()` or `EntityManager.cycleTarget()`
+- **→ Calls**: `EntityManager.selectEnemy()` - sets `selectedEnemy`
+- **→ Callback**: `onTargetChanged` fires → UI updated
+- **Reaches target**: YES - Target selection updates and UI shows target info
+- **CONNECTED: YES**
+
+#### Path 4: Party Manager / Companions
+- **Entry point**: `Game.init()` (line 175-176)
+- **Calls**: `PartyManager.init()` and `setPlayerFaction('IMPERIAL')`
+- **→ Game.spawnDemoCompanions()** (lines 239-248)
+- **→ Calls**: `PartyManager.addCompanion()` (lines 167-242)
+- **→ Creates**: `Companion` entity with `CompanionAI` (line 134)
+- **→ Game loop**: `PartyManager.update(deltaTime)` (line 304) → `Companion.update()` (lines 633-657)
+- **Reaches target**: YES - Companions spawn, AI initialized, update loop running
+- **CONNECTED: YES**
+
+#### Path 5: Companion AI Decision-Making
+- **Entry point**: `Companion.updateAI(deltaTime, context)` (lines 663-668)
+- **Calls**: `CompanionAI.update(deltaTime, context)` (lines 126-148)
+- **→ Calls**: `CompanionAI.makeDecision(context)` (lines 153-181)
+- **→ Returns**: `AIDecision` with action, skillId, targetId
+- **ISSUE**: `Companion.updateAI()` exists but is **NEVER CALLED** from `PartyManager.update()`. PartyManager.update() only calls `companion.update(deltaTime)` (line 391) which does NOT call `updateAI()`.
+- **CONNECTED: NO** - Companion AI exists but is not invoked in the game loop.
+
+### Disconnected Systems Found
+
+1. **Companion AI is disconnected**: 
+   - `CompanionAI` class exists and is initialized (`client/src/game/companions/Companion.ts:134`)
+   - `Companion.updateAI()` method exists (`client/src/game/companions/Companion.ts:663-668`)
+   - **BUT** `PartyManager.update()` only calls `companion.update()` not `companion.updateAI(context)`
+   - The AI will never make decisions because it's never given the required `AIContext` parameter
+
+2. **CombatManager not updating companions**:
+   - Combat system handles player skills
+   - Companions have AI that can decide to use skills
+   - But companions' skill execution is not wired to CombatManager
+
+### Placeholder Code Found
+- `client/src/combat/CombatManager.ts:144,171` - TODO: Track player/enemy conditions
+- `client/src/combat/CombatManager.ts:263,275` - TODO: Apply actual buff/debuff effects
+- `client/src/combat/CombatManager.ts:308,309` - TODO: Get damage bonus and crit chance from player attributes
+- `client/src/combat/CombatManager.ts:344` - TODO: Check cone angle for AoE
+- `client/src/game/input/InputManager.ts:322` - TODO: Show error message in UI
+
+### Issues Found
+
+**CRITICAL**: Companion AI is disconnected from the update loop
+- `PartyManager.update()` calls `companion.update(deltaTime)` but NOT `companion.updateAI(deltaTime, context)`
+- The AI decision tree (`CompanionAI.update()`) requires an `AIContext` with enemy positions, ally health, player position, etc.
+- This context is never constructed or passed to the AI
+- Companions will render and animate but will **never make combat decisions**
+
+**MODERATE**: Combat validation works but some TODOs remain
+- The cooldown message fix is verified: `"Skill on cooldown: ${Math.ceil(slotState.cooldown)}s remaining"` (line 148)
+- Core validation paths are connected (energy, cooldown, range, LoS, status effects)
+- But attribute bonuses and cone angle calculations are placeholder
+
+DECISION: has_issues

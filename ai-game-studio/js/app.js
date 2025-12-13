@@ -72,13 +72,28 @@ async function checkAuth() {
   }
 }
 
+// Track pipelines we've already handled this session
+const handledPipelines = new Set();
+
 // Check for incomplete pipelines that can be resumed
 async function checkIncompletePipelines() {
   try {
     const result = await api('/pipelines/incomplete');
 
-    if (result.found) {
+    if (result.found && !handledPipelines.has(result.pipelineId)) {
       console.log('Found incomplete pipeline:', result);
+
+      // Check if this pipeline is already actively running (recently started)
+      const startTime = new Date(result.state?.startTime);
+      const timeSinceStart = Date.now() - startTime.getTime();
+      const fiveMinutes = 5 * 60 * 1000;
+
+      // If pipeline started less than 5 minutes ago and is "running", it's probably active
+      if (result.state?.status === 'running' && timeSinceStart < fiveMinutes) {
+        console.log('Pipeline appears to be actively running, skipping resume prompt');
+        handledPipelines.add(result.pipelineId);
+        return;
+      }
 
       // Show resume notification
       showResumeNotification(result);
@@ -149,6 +164,7 @@ function showResumeNotification(result) {
   `;
 
   document.getElementById('resume-btn').addEventListener('click', async () => {
+    handledPipelines.add(pipelineId);
     banner.innerHTML = '<span>Resuming pipeline...</span>';
 
     try {
@@ -172,6 +188,7 @@ function showResumeNotification(result) {
   });
 
   document.getElementById('dismiss-btn').addEventListener('click', () => {
+    handledPipelines.add(pipelineId);
     banner.remove();
   });
 }

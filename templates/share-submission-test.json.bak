@@ -1,0 +1,237 @@
+{
+  "id": "share-submission-test",
+  "name": "Share Submission Test",
+  "description": "Test share submission and acceptance with validation of pool responses and acceptance rate analysis",
+  "version": "1.0.0",
+  "category": "testing",
+  "stages": [
+    {
+      "id": "ensure_full_stack_running",
+      "name": "Ensure Full Stack Running",
+      "type": "monitor",
+      "agent": "network_monitor",
+      "description": "Verify daemon + pool + miner are all active and connected",
+      "decisions": [
+        {"choice": "stack_running", "description": "All components active and connected"},
+        {"choice": "stack_incomplete", "description": "One or more components not running"},
+        {"choice": "connectivity_issues", "description": "Components running but not properly connected"}
+      ]
+    },
+    {
+      "id": "set_low_difficulty",
+      "name": "Set Low Difficulty",
+      "type": "generator",
+      "agent": "config_generator",
+      "description": "Configure easy difficulty for fast share generation to enable rapid testing",
+      "inputs": ["ensure_full_stack_running"],
+      "decisions": [
+        {"choice": "difficulty_configured", "description": "Low difficulty set successfully"},
+        {"choice": "config_failed", "description": "Failed to update difficulty settings"}
+      ]
+    },
+    {
+      "id": "monitor_share_submissions",
+      "name": "Monitor Share Submissions",
+      "type": "monitor",
+      "agent": "stratum_monitor",
+      "description": "Capture and track share submission attempts from miner to pool",
+      "inputs": ["set_low_difficulty"],
+      "decisions": [
+        {"choice": "shares_captured", "description": "Share submissions successfully monitored"},
+        {"choice": "no_shares_detected", "description": "No share submissions detected within timeout"},
+        {"choice": "monitoring_failed", "description": "Failed to monitor stratum communication"}
+      ]
+    },
+    {
+      "id": "validate_pool_responses",
+      "name": "Validate Pool Responses",
+      "type": "validator",
+      "agent": "share_validator",
+      "description": "Check accept/reject responses from pool for submitted shares",
+      "inputs": ["monitor_share_submissions"],
+      "decisions": [
+        {"choice": "responses_valid", "description": "Pool responses properly formatted and received"},
+        {"choice": "responses_invalid", "description": "Pool responses malformed or incorrect"},
+        {"choice": "no_responses", "description": "Pool not responding to share submissions"}
+      ]
+    },
+    {
+      "id": "analyze_acceptance_rate",
+      "name": "Analyze Acceptance Rate",
+      "type": "analyzer",
+      "agent": "performance_analyzer",
+      "description": "Calculate percentage of shares accepted vs rejected",
+      "inputs": ["validate_pool_responses"],
+      "decisions": [
+        {"choice": "acceptance_rate_good", "description": "Acceptance rate meets or exceeds expected threshold"},
+        {"choice": "acceptance_rate_low", "description": "Acceptance rate below expected threshold"},
+        {"choice": "analysis_failed", "description": "Unable to calculate acceptance rate"}
+      ]
+    },
+    {
+      "id": "test_reject_handling",
+      "name": "Test Reject Handling",
+      "type": "validator",
+      "agent": "share_validator",
+      "description": "Verify that invalid shares are properly rejected with correct error messages",
+      "inputs": ["analyze_acceptance_rate"],
+      "decisions": [
+        {"choice": "reject_handling_correct", "description": "Invalid shares rejected with proper error messages"},
+        {"choice": "reject_handling_incorrect", "description": "Reject handling not working as expected"},
+        {"choice": "test_failed", "description": "Unable to test reject handling"}
+      ]
+    },
+    {
+      "id": "share_submission_verified",
+      "name": "Share Submission Verified",
+      "type": "validator",
+      "agent": "share_validator",
+      "description": "Final validation that share submission and acceptance system is fully functional",
+      "inputs": ["test_reject_handling"],
+      "decisions": [
+        {"choice": "complete", "description": "Share submission system verified and working correctly"},
+        {"choice": "verification_failed", "description": "Share submission issues detected in final validation"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "sequential",
+    "description": "Step-by-step validation of share submission from stack verification through acceptance rate analysis and reject handling",
+    "connections": [
+      {
+        "from": "ensure_full_stack_running",
+        "to": "set_low_difficulty",
+        "condition": "stack_running",
+        "description": "Stack running, configure low difficulty"
+      },
+      {
+        "from": "ensure_full_stack_running",
+        "to": null,
+        "condition": "stack_incomplete",
+        "description": "Stack incomplete - PIPELINE ENDS"
+      },
+      {
+        "from": "ensure_full_stack_running",
+        "to": null,
+        "condition": "connectivity_issues",
+        "description": "Connectivity issues detected - PIPELINE ENDS"
+      },
+      {
+        "from": "set_low_difficulty",
+        "to": "monitor_share_submissions",
+        "condition": "difficulty_configured",
+        "description": "Difficulty configured, begin monitoring shares"
+      },
+      {
+        "from": "set_low_difficulty",
+        "to": null,
+        "condition": "config_failed",
+        "description": "Configuration failed - PIPELINE ENDS"
+      },
+      {
+        "from": "monitor_share_submissions",
+        "to": "validate_pool_responses",
+        "condition": "shares_captured",
+        "description": "Shares captured, validate pool responses"
+      },
+      {
+        "from": "monitor_share_submissions",
+        "to": null,
+        "condition": "no_shares_detected",
+        "description": "No shares detected - PIPELINE ENDS"
+      },
+      {
+        "from": "monitor_share_submissions",
+        "to": null,
+        "condition": "monitoring_failed",
+        "description": "Monitoring failed - PIPELINE ENDS"
+      },
+      {
+        "from": "validate_pool_responses",
+        "to": "analyze_acceptance_rate",
+        "condition": "responses_valid",
+        "description": "Responses valid, analyze acceptance rate"
+      },
+      {
+        "from": "validate_pool_responses",
+        "to": null,
+        "condition": "responses_invalid",
+        "description": "Invalid responses - PIPELINE ENDS"
+      },
+      {
+        "from": "validate_pool_responses",
+        "to": null,
+        "condition": "no_responses",
+        "description": "No pool responses - PIPELINE ENDS"
+      },
+      {
+        "from": "analyze_acceptance_rate",
+        "to": "test_reject_handling",
+        "condition": "acceptance_rate_good",
+        "description": "Acceptance rate good, test reject handling"
+      },
+      {
+        "from": "analyze_acceptance_rate",
+        "to": "test_reject_handling",
+        "condition": "acceptance_rate_low",
+        "description": "Acceptance rate low but proceeding to test reject handling"
+      },
+      {
+        "from": "analyze_acceptance_rate",
+        "to": null,
+        "condition": "analysis_failed",
+        "description": "Analysis failed - PIPELINE ENDS"
+      },
+      {
+        "from": "test_reject_handling",
+        "to": "share_submission_verified",
+        "condition": "reject_handling_correct",
+        "description": "Reject handling correct, perform final verification"
+      },
+      {
+        "from": "test_reject_handling",
+        "to": null,
+        "condition": "reject_handling_incorrect",
+        "description": "Reject handling incorrect - PIPELINE ENDS"
+      },
+      {
+        "from": "test_reject_handling",
+        "to": null,
+        "condition": "test_failed",
+        "description": "Reject handling test failed - PIPELINE ENDS"
+      },
+      {
+        "from": "share_submission_verified",
+        "to": null,
+        "condition": "complete",
+        "description": "Share submission verified successfully - PIPELINE ENDS"
+      },
+      {
+        "from": "share_submission_verified",
+        "to": null,
+        "condition": "verification_failed",
+        "description": "Final verification failed - PIPELINE ENDS"
+      }
+    ]
+  },
+  "metadata": {
+    "tags": ["testing", "shares", "validation", "stratum", "mining-cycle"],
+    "author": "Mining Cycle Automation System",
+    "estimatedTime": "2-5 minutes",
+    "requiresWSL": true,
+    "basedOn": "Section 3.2 of MINING_CYCLE_AUTOMATION_PLAN.md",
+    "components": [
+      "network_monitor",
+      "config_generator",
+      "stratum_monitor",
+      "share_validator",
+      "performance_analyzer"
+    ],
+    "testScope": "Share submission and pool acceptance validation",
+    "prerequisites": [
+      "Bitcoin daemon running in regtest mode",
+      "CoiniumServ pool server active",
+      "Mining software connected to pool"
+    ]
+  }
+}

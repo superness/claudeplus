@@ -1,0 +1,541 @@
+{
+  "id": "pipeline_1763855833645",
+  "startTime": "2025-11-22T23:57:13.645Z",
+  "stages": [
+    {
+      "name": "setup_infrastructure",
+      "order": 1,
+      "agents": [
+        "bitcoin_daemon_manager",
+        "pool_server_manager",
+        "wallet_manager",
+        "config_generator"
+      ],
+      "description": "Complete infrastructure setup: bitcoind (regtest) → funded wallet → CoiniumServ pool server → daemon-pool RPC connection validated",
+      "actions": [
+        {
+          "agent": "config_generator",
+          "command": "validateConfig",
+          "params": {
+            "config_type": "daemon"
+          },
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "config_generator",
+          "command": "validateConfig",
+          "params": {
+            "config_type": "pool_server"
+          },
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "startDaemon",
+          "params": {
+            "network": "regtest",
+            "rpc_port": 18443,
+            "rpc_user": "pooltest",
+            "rpc_password": "pooltest123",
+            "data_dir": "/tmp/regtest-mining-cycle"
+          },
+          "timeout_seconds": 60
+        },
+        {
+          "agent": "wallet_manager",
+          "command": "createWallet",
+          "params": {
+            "wallet_name": "mining_cycle_test_wallet",
+            "generate_initial_blocks": 101
+          },
+          "timeout_seconds": 120
+        },
+        {
+          "agent": "pool_server_manager",
+          "command": "startPool",
+          "params": {
+            "config_path": "$POOL_CONFIG_PATH",
+            "daemon_host": "127.0.0.1",
+            "daemon_port": 18443,
+            "stratum_port": 3333
+          },
+          "timeout_seconds": 60
+        },
+        {
+          "description": "Verify pool-daemon RPC connection",
+          "agent": "pool_server_manager",
+          "command": "verifyRpcConnection",
+          "timeout_seconds": 30
+        }
+      ],
+      "success_criteria": {
+        "daemon_running": true,
+        "wallet_funded": true,
+        "pool_running": true,
+        "rpc_connection_verified": true,
+        "infrastructure_ready": true
+      },
+      "on_failure": "abort"
+    },
+    {
+      "name": "set_minimal_difficulty",
+      "order": 2,
+      "agents": [
+        "config_generator"
+      ],
+      "description": "Configure minimal difficulty (0.0001) for rapid block discovery in test environment, disable vardiff for predictable behavior",
+      "actions": [
+        {
+          "agent": "config_generator",
+          "command": "updatePoolConfig",
+          "params": {
+            "network_type": "regtest",
+            "minimal_difficulty": 0.0001,
+            "enable_vardiff": false,
+            "block_validation_enabled": true,
+            "share_validation_enabled": true,
+            "difficulty_retarget_enabled": false
+          },
+          "timeout_seconds": 30
+        },
+        {
+          "description": "Restart pool with minimal difficulty configuration",
+          "agent": "pool_server_manager",
+          "command": "restartPool",
+          "params": {
+            "graceful_shutdown": true,
+            "wait_seconds": 5
+          },
+          "timeout_seconds": 60
+        }
+      ],
+      "success_criteria": {
+        "difficulty_configured": true,
+        "pool_config_updated": true,
+        "pool_restarted": true
+      },
+      "on_failure": "abort"
+    },
+    {
+      "name": "start_mining",
+      "order": 3,
+      "agents": [
+        "miner_manager"
+      ],
+      "description": "Register test miner, create worker, configure payout address, and begin share submission",
+      "actions": [
+        {
+          "agent": "miner_manager",
+          "command": "registerMiner",
+          "params": {
+            "username": "full_cycle_test_miner",
+            "password": "testpass123",
+            "payout_address": "$TEST_WALLET_ADDRESS"
+          },
+          "timeout_seconds": 30
+        },
+        {
+          "agent": "miner_manager",
+          "command": "registerWorker",
+          "params": {
+            "worker_name": "cycle_worker_1",
+            "initial_difficulty": 0.0001,
+            "algorithm": "sha256d"
+          },
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "miner_manager",
+          "command": "startMining",
+          "params": {
+            "pool_url": "stratum+tcp://127.0.0.1:3333",
+            "worker_credentials": "full_cycle_test_miner.cycle_worker_1:testpass123",
+            "threads": 2,
+            "algorithm": "sha256d"
+          },
+          "timeout_seconds": 30
+        },
+        {
+          "description": "Wait for mining to stabilize",
+          "wait_seconds": 15
+        }
+      ],
+      "success_criteria": {
+        "miner_registered": true,
+        "worker_registered": true,
+        "miner_authenticated": true,
+        "mining_active": true,
+        "shares_being_submitted": true
+      },
+      "on_failure": "abort"
+    },
+    {
+      "name": "monitor_for_block",
+      "order": 4,
+      "agents": [
+        "block_validator"
+      ],
+      "description": "Monitor share submissions for valid block solution (share meeting block difficulty threshold), validate block structure",
+      "actions": [
+        {
+          "description": "Monitor for block discovery with timeout",
+          "agent": "block_validator",
+          "command": "monitorForBlock",
+          "params": {
+            "max_wait_seconds": 600,
+            "poll_interval_seconds": 5,
+            "monitor_pool_logs": true,
+            "monitor_daemon_logs": true
+          },
+          "timeout_seconds": 650
+        },
+        {
+          "agent": "block_validator",
+          "command": "validateBlockStructure",
+          "params": {
+            "block_data": "$DISCOVERED_BLOCK_DATA",
+            "verify_merkle_root": true,
+            "verify_coinbase_transaction": true,
+            "verify_proof_of_work": true,
+            "verify_block_header": true,
+            "verify_difficulty_target": true
+          },
+          "timeout_seconds": 45
+        }
+      ],
+      "success_criteria": {
+        "block_discovered": true,
+        "block_valid": true,
+        "merkle_root_correct": true,
+        "coinbase_valid": true,
+        "pow_valid": true,
+        "difficulty_met": true
+      },
+      "on_failure": "retry_with_lower_difficulty",
+      "retry_config": {
+        "max_retries": 3,
+        "retry_delay_seconds": 60,
+        "lower_difficulty_on_retry": true,
+        "new_difficulty_multiplier": 0.5
+      }
+    },
+    {
+      "name": "verify_pool_submission",
+      "order": 5,
+      "agents": [
+        "block_validator"
+      ],
+      "description": "Verify block was properly constructed by pool, stored in pool database, and contains correct miner attribution",
+      "actions": [
+        {
+          "description": "Wait for pool database update",
+          "wait_seconds": 3
+        },
+        {
+          "agent": "block_validator",
+          "command": "verifyPoolBlockSubmission",
+          "params": {
+            "block_hash": "$DISCOVERED_BLOCK_HASH",
+            "block_height": "$DISCOVERED_BLOCK_HEIGHT",
+            "verify_database_entry": true,
+            "verify_miner_attribution": true,
+            "verify_worker_attribution": true
+          },
+          "timeout_seconds": 30
+        },
+        {
+          "agent": "block_validator",
+          "command": "validateBlockData",
+          "params": {
+            "block_hash": "$DISCOVERED_BLOCK_HASH",
+            "check_completeness": true,
+            "check_coinbase_outputs": true,
+            "check_pool_address": true
+          },
+          "timeout_seconds": 25
+        }
+      ],
+      "success_criteria": {
+        "block_in_pool_database": true,
+        "block_data_complete": true,
+        "miner_attributed": true,
+        "worker_attributed": true,
+        "coinbase_outputs_valid": true
+      },
+      "on_failure": "log_and_continue"
+    },
+    {
+      "name": "verify_daemon_acceptance",
+      "order": 6,
+      "agents": [
+        "bitcoin_daemon_manager"
+      ],
+      "description": "Verify Bitcoin daemon accepted the block via submitblock RPC, block added to best chain, and block count incremented",
+      "actions": [
+        {
+          "description": "Wait for daemon block processing",
+          "wait_seconds": 5
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "getBlockCount",
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "getBlockHash",
+          "params": {
+            "block_height": "$DISCOVERED_BLOCK_HEIGHT"
+          },
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "getBlock",
+          "params": {
+            "block_hash": "$DISCOVERED_BLOCK_HASH",
+            "verbosity": 2
+          },
+          "timeout_seconds": 25
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "getBlockchainInfo",
+          "timeout_seconds": 20
+        }
+      ],
+      "success_criteria": {
+        "block_accepted": true,
+        "block_count_incremented": true,
+        "block_in_best_chain": true,
+        "block_hash_matches": true,
+        "no_orphan": true
+      },
+      "on_failure": "handle_orphan_or_reject"
+    },
+    {
+      "name": "mature_coinbase",
+      "order": 7,
+      "agents": [
+        "bitcoin_daemon_manager"
+      ],
+      "description": "Generate 101 blocks to mature the coinbase transaction (regtest requirement: 100 confirmations + 1)",
+      "actions": [
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "generateToAddress",
+          "params": {
+            "block_count": 101,
+            "address": "$MATURITY_ADDRESS",
+            "verify_generation": true
+          },
+          "timeout_seconds": 180
+        },
+        {
+          "description": "Wait for wallet to process new blocks",
+          "wait_seconds": 10
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "getBlockCount",
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "bitcoin_daemon_manager",
+          "command": "verifyBlockMaturity",
+          "params": {
+            "original_block_height": "$DISCOVERED_BLOCK_HEIGHT",
+            "required_confirmations": 101
+          },
+          "timeout_seconds": 30
+        }
+      ],
+      "success_criteria": {
+        "maturity_blocks_generated": true,
+        "block_count_increased_by": 101,
+        "coinbase_matured": true,
+        "confirmations_sufficient": true
+      },
+      "on_failure": "abort"
+    },
+    {
+      "name": "verify_wallet_credit",
+      "order": 8,
+      "agents": [
+        "wallet_manager"
+      ],
+      "description": "Verify pool wallet received the matured block reward (50 BTC in regtest), transaction confirmed, and balance updated correctly",
+      "actions": [
+        {
+          "description": "Wait for wallet synchronization",
+          "wait_seconds": 5
+        },
+        {
+          "agent": "wallet_manager",
+          "command": "getBalance",
+          "params": {
+            "wallet_name": "mining_cycle_test_wallet",
+            "min_confirmations": 1
+          },
+          "timeout_seconds": 20
+        },
+        {
+          "agent": "wallet_manager",
+          "command": "listTransactions",
+          "params": {
+            "wallet_name": "mining_cycle_test_wallet",
+            "count": 20,
+            "skip": 0,
+            "include_watchonly": false
+          },
+          "timeout_seconds": 25
+        },
+        {
+          "agent": "wallet_manager",
+          "command": "verifyBlockReward",
+          "params": {
+            "block_hash": "$DISCOVERED_BLOCK_HASH",
+            "expected_reward": 50,
+            "tolerance": 1e-8
+          },
+          "timeout_seconds": 30
+        }
+      ],
+      "success_criteria": {
+        "balance_increased": true,
+        "coinbase_transaction_present": true,
+        "transaction_confirmed": true,
+        "expected_reward_amount": true,
+        "reward_matches_block": true
+      },
+      "on_failure": "fail_test"
+    },
+    {
+      "name": "generate_report",
+      "order": 9,
+      "agents": [
+        "cycle_integration_tester"
+      ],
+      "description": "Generate comprehensive test report with all metrics: block discovery time, validation results, wallet balances, performance data",
+      "actions": [
+        {
+          "agent": "cycle_integration_tester",
+          "command": "collectTestMetrics",
+          "params": {
+            "test_name": "full-mining-cycle",
+            "collect_timing_data": true,
+            "collect_performance_data": true,
+            "collect_validation_data": true
+          },
+          "timeout_seconds": 45
+        },
+        {
+          "agent": "cycle_integration_tester",
+          "command": "generateReport",
+          "params": {
+            "report_type": "comprehensive",
+            "include_block_details": true,
+            "include_wallet_details": true,
+            "include_performance_metrics": true,
+            "include_validation_results": true,
+            "output_format": "json",
+            "save_to_file": true,
+            "report_path": "$TEST_RESULTS_DIR/full-mining-cycle-report.json"
+          },
+          "timeout_seconds": 60
+        },
+        {
+          "description": "Emit test completion event",
+          "internal_event": "full_mining_cycle_completed",
+          "event_data": {
+            "test_name": "full-mining-cycle",
+            "test_status": "PASSED",
+            "block_height": "$DISCOVERED_BLOCK_HEIGHT",
+            "block_hash": "$DISCOVERED_BLOCK_HASH",
+            "miner": "full_cycle_test_miner",
+            "worker": "cycle_worker_1",
+            "block_reward": "$BLOCK_REWARD",
+            "maturity_blocks": 101,
+            "final_wallet_balance": "$FINAL_WALLET_BALANCE",
+            "time_to_block_discovery_seconds": "$TIME_TO_BLOCK",
+            "total_test_duration_seconds": "$TOTAL_DURATION",
+            "timestamp": "$TEST_COMPLETION_TIMESTAMP"
+          }
+        }
+      ],
+      "success_criteria": {
+        "metrics_collected": true,
+        "report_generated": true,
+        "report_saved": true
+      },
+      "on_failure": "log_and_continue"
+    },
+    {
+      "name": "cycle_complete",
+      "order": 10,
+      "agents": [
+        "cycle_integration_tester"
+      ],
+      "description": "Final validation stage: verify all stages passed, cleanup test environment, mark cycle as complete",
+      "actions": [
+        {
+          "agent": "cycle_integration_tester",
+          "command": "validateCycleCompletion",
+          "params": {
+            "verify_all_stages_passed": true,
+            "verify_block_in_chain": true,
+            "verify_wallet_credited": true,
+            "verify_miner_credited": true
+          },
+          "timeout_seconds": 30
+        },
+        {
+          "description": "Stop test miner",
+          "agent": "miner_manager",
+          "command": "stopMining",
+          "params": {
+            "miner_id": "$TEST_MINER_ID",
+            "graceful": true
+          },
+          "timeout_seconds": 20
+        },
+        {
+          "description": "Archive test logs",
+          "agent": "cycle_integration_tester",
+          "command": "archiveLogs",
+          "params": {
+            "log_prefix": "full-mining-cycle",
+            "archive_daemon_logs": true,
+            "archive_pool_logs": true,
+            "archive_miner_logs": true,
+            "archive_path": "$TEST_RESULTS_DIR/logs/"
+          },
+          "timeout_seconds": 45
+        },
+        {
+          "description": "Mark cycle as complete",
+          "internal_event": "cycle_marked_complete",
+          "event_data": {
+            "pipeline": "full-mining-cycle",
+            "status": "SUCCESS",
+            "completion_time": "$COMPLETION_TIMESTAMP"
+          }
+        }
+      ],
+      "success_criteria": {
+        "all_stages_validated": true,
+        "miner_stopped": true,
+        "logs_archived": true,
+        "cycle_complete": true
+      }
+    }
+  ],
+  "connections": [],
+  "userContext": "Execute complete mining cycle test: Launch bitcoind (regtest) with low difficulty → Start CoiniumServ pool on Windows (from WSL) → Configure and run software miner → Verify miner receives jobs → Verify pool accepts shares → Verify block discovery → Verify wallet receives mining rewards. This is a full stack integration test to confirm all components work together correctly.",
+  "workingDir": "/mnt/c/github/private-SuperCoinServ",
+  "currentStageIndex": 0,
+  "completedStages": [],
+  "status": "completed",
+  "results": {},
+  "endTime": "2025-11-22T23:57:13.778Z"
+}

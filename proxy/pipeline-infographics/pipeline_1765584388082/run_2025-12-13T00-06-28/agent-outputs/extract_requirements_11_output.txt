@@ -1,0 +1,379 @@
+Now I have all the information needed. Let me compile the complete requirements extraction document for the Enemy Spawning feature.
+
+---
+
+# FEATURE REQUIREMENTS EXTRACTION: Enemy Spawning
+
+## Feature: Enemy Spawning System
+
+---
+
+## 1. Specifications from Design Docs
+
+### Enemy Types (from data-model.md:1160)
+```
+enemy_type VARCHAR(20) NOT NULL -- COMMON, ELITE, BOSS, MINI_BOSS, WORLD_BOSS
+```
+
+### AI Behaviors (from data-model.md:1173)
+```
+ai_behavior VARCHAR(50) -- AGGRESSIVE, DEFENSIVE, SUPPORT, etc.
+```
+
+### Enemy Template Schema (from data-model.md:1151-1189)
+```sql
+CREATE TABLE enemy_templates (
+    template_id         SERIAL PRIMARY KEY,
+    enemy_code          VARCHAR(50) NOT NULL UNIQUE,
+    display_name        VARCHAR(100) NOT NULL,
+    faction_id          INTEGER REFERENCES factions(faction_id),
+    enemy_type          VARCHAR(20) NOT NULL,  -- COMMON, ELITE, BOSS, MINI_BOSS, WORLD_BOSS
+    enemy_tags          VARCHAR(50)[],         -- ['DAEMON', 'ARMORED', 'PSYCHIC', etc.]
+    base_health         INTEGER NOT NULL,
+    base_armor          INTEGER NOT NULL,
+    base_dps            INTEGER NOT NULL,
+    min_level           INTEGER DEFAULT 1,
+    max_level           INTEGER DEFAULT 30,
+    ai_behavior         VARCHAR(50),           -- AGGRESSIVE, DEFENSIVE, SUPPORT, etc.
+    abilities           INTEGER[],             -- Skill IDs this enemy can use
+    xp_reward           INTEGER NOT NULL,
+    currency_min        INTEGER DEFAULT 0,
+    currency_max        INTEGER DEFAULT 0,
+    loot_table_id       INTEGER,
+    special_mechanics   JSONB DEFAULT '{}',    -- {"phases": [...], "enrage_timer": 300}
+    model_asset_path    VARCHAR(255),
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+## 2. Mechanics with Exact Values
+
+### Enemy Stats by Type (from combat-design.md:776-894)
+
+#### Imperial Enemies (Common)
+| Enemy | HP | Armor | DPS | Behavior |
+|-------|-----|-------|-----|----------|
+| PDF Conscript | 150 | 40 | 20 | "Groups, flees at 25% HP" |
+| Imperial Guardsman | 250 | 60 | 35 | "Holds position, uses cover" |
+| Stormtrooper | 350 | 90 | 55 | "Flanking, grenades" |
+| Commissar | 400 | 70 | 45 | "Boosts nearby troops +20% damage" |
+
+#### Imperial Enemies (Elite)
+| Enemy | HP | Armor | DPS | Special Abilities |
+|-------|-----|-------|-----|-------------------|
+| Space Marine Scout | 600 | 120 | 80 | "Sniper shots, stealth detection" |
+| Space Marine | 1000 | 180 | 120 | "Bolter volleys, melee charge" |
+| Terminator | 1500 | 250 | 150 | "Storm bolter + power fist combo" |
+| Dreadnought | 2500 | 300 | 200 | "Assault cannon, immune to knockdown" |
+
+#### Tau Enemies (Common)
+| Enemy | HP | Armor | DPS | Behavior |
+|-------|-----|-------|-----|----------|
+| Gue'vesa Auxiliary | 140 | 35 | 18 | "Expendable screens" |
+| Fire Warrior | 220 | 70 | 45 | "Pulse rifle, coordinated fire" |
+| Pathfinder | 180 | 50 | 55 | "Marker lights, hit and run" |
+| Gun Drone | 100 | 30 | 25 | "Swarm tactics, self-destruct" |
+
+#### Tau Enemies (Elite)
+| Enemy | HP | Armor | DPS | Special Abilities |
+|-------|-----|-------|-----|-------------------|
+| Fire Warrior Shas'ui | 350 | 90 | 65 | "Markerlight bonuses" |
+| Crisis Suit | 700 | 150 | 100 | "Jump jets, multi-weapon" |
+| Stealth Suit | 400 | 80 | 70 | "Invisibility until attacks" |
+| Broadside | 900 | 200 | 150 | "Long-range railgun, slow" |
+
+#### Ork Enemies (Common)
+| Enemy | HP | Armor | DPS | Behavior |
+|-------|-----|-------|-----|----------|
+| Gretchin | 60 | 10 | 8 | "Swarm, cowardly" |
+| Slugga Boy | 200 | 50 | 30 | "Rush to melee" |
+| Shoota Boy | 180 | 45 | 35 | "Spray and pray" |
+| Burna Boy | 220 | 55 | 40 | "Flamer, suicidal charges" |
+
+#### Ork Enemies (Elite)
+| Enemy | HP | Armor | DPS | Special Abilities |
+|-------|-----|-------|-----|-------------------|
+| Nob | 500 | 100 | 70 | "Power klaw, rally nearby Orks" |
+| Meganob | 800 | 180 | 100 | "Heavy armor, slow but devastating" |
+| Kommando | 300 | 60 | 80 | "Stealth, backstab" |
+| Deff Dread | 1200 | 220 | 130 | "Multiple weapons, stomp attack" |
+
+#### Environmental Enemies (Tyranids)
+| Enemy | HP | Armor | DPS | Behavior |
+|-------|-----|-------|-----|----------|
+| Ripper Swarm | 80 | 5 | 15 | "Overwhelm in numbers" |
+| Hormagaunt | 180 | 30 | 40 | "Leap attacks" |
+| Termagant | 160 | 25 | 35 | "Bio-weapons" |
+| Warrior | 600 | 100 | 90 | "Synapse creature, buffs others" |
+| Carnifex | 3000 | 200 | 180 | "Living battering ram" |
+
+#### Environmental Enemies (Chaos)
+| Enemy | HP | Armor | DPS | Behavior |
+|-------|-----|-------|-----|----------|
+| Cultist | 120 | 20 | 22 | "Frenzied attacks" |
+| Chaos Marine | 800 | 160 | 110 | "Corrupted bolter fire" |
+| Possessed | 600 | 80 | 130 | "Warp mutations, unpredictable" |
+| Daemon | 500 | 0 | 100 | "Immune to physical, weak to faith" |
+
+### Boss Examples (from combat-design.md:794-872)
+
+#### Captain Valdris (Imperial Commander)
+```
+├── HP: 8000
+├── Armor: 200 (power armor)
+├── DPS: 180 (power sword + plasma pistol)
+├── Phases:
+│   ├── Phase 1 (100-60%): Standard combat, calls reinforcements
+│   ├── Phase 2 (60-30%): Activates iron halo (+50% damage reduction)
+│   └── Phase 3 (30-0%): Frenzy mode, +100% attack speed
+└── Drops: T4 Imperial equipment, 500-800 currency
+```
+
+#### Shas'O Kais (Tau Commander)
+```
+├── HP: 6000
+├── Armor: 180 (commander battlesuit)
+├── DPS: 200 (fusion blaster + missile pods)
+├── Phases:
+│   ├── Phase 1: Standard combat with drone support
+│   ├── Phase 2: Calls Riptide support (mini-boss)
+│   └── Phase 3: Manta strike bombardment, must avoid zones
+└── Drops: T4 Tau equipment, 500-800 currency
+```
+
+#### Warboss Grimskull
+```
+├── HP: 12000
+├── Armor: 250 (mega armor)
+├── DPS: 220 (power klaw + twin shootas)
+├── Phases:
+│   ├── Phase 1: Melee beatdown, summons Boyz
+│   ├── Phase 2: Mounts war trike, charges across arena
+│   └── Phase 3: WAAAGH! mode, all nearby Orks enraged
+└── Drops: T4 Ork equipment, 600-1000 currency
+```
+
+### XP Rewards (from progression-design.md:73-79)
+```
+COMBAT XP
+├── Common Enemy Kill: 15-25 XP
+├── Elite Enemy Kill: 50-80 XP
+├── Boss Kill: 200-500 XP
+├── First-Time Boss: +100% bonus
+├── Difficulty Multiplier: Normal 1.0×, Hard 1.25×, Veteran 1.5×, Nightmare 2.0×
+└── Party Bonus: +5% per party member (max +15%)
+```
+
+### Time-to-Kill Targets (from balance-analysis.md:461-468)
+```
+Crusader sustained DPS: 145 (end game)
+Time to kill common enemy (300 HP): 2.1 seconds
+Time to kill elite enemy (1500 HP): 10.3 seconds
+Time to kill mini-boss (5000 HP): 34.5 seconds
+```
+
+### Difficulty Scaling (from combat-design.md:1008-1043)
+```
+NORMAL (Story Mode)
+├── Enemy HP: 100%
+├── Enemy Damage: 100%
+
+HARD (Challenge Mode)
+├── Enemy HP: 150%
+├── Enemy Damage: 125%
+
+VETERAN (Elite Mode)
+├── Enemy HP: 200%
+├── Enemy Damage: 150%
+├── Enemy Abilities: Enhanced (faster, more abilities)
+
+NIGHTMARE (Endgame)
+├── Enemy HP: 300%
+├── Enemy Damage: 200%
+├── Enemy Abilities: New mechanics per encounter
+```
+
+### Zone Instance Difficulty Modifiers (from api-specification.md:1151-1155)
+```json
+"difficulty_modifiers": {
+  "enemy_health_mult": 1.5,
+  "enemy_damage_mult": 1.4,
+  "drop_rate_mult": 1.25
+}
+```
+
+---
+
+## 3. Entities/Content with Names and Properties
+
+### Sample Enemy Templates (from data-model.md:1192-1198)
+```sql
+INSERT INTO enemy_templates (enemy_code, display_name, faction_id, enemy_type, base_health, base_armor, base_dps, xp_reward) VALUES
+('CULTIST', 'Heretic Cultist', NULL, 'COMMON', 120, 20, 22, 15),
+('GUARDSMAN', 'Imperial Guardsman', 1, 'COMMON', 250, 60, 35, 20),
+('FIRE_WARRIOR_ENEMY', 'Tau Fire Warrior', 2, 'COMMON', 220, 70, 45, 20),
+('SLUGGA_BOY', 'Ork Slugga Boy', 3, 'COMMON', 200, 50, 30, 20),
+('SPACE_MARINE_ENEMY', 'Adeptus Astartes', 1, 'ELITE', 1000, 180, 120, 80),
+('WARBOSS_GRIMSKULL', 'Warboss Grimskull', 3, 'BOSS', 12000, 250, 220, 1000);
+```
+
+### Enemy Tags (from data-model.md:1161)
+```
+enemy_tags VARCHAR(50)[] -- ['DAEMON', 'ARMORED', 'PSYCHIC', etc.]
+```
+
+### Zone Respawn Points (from data-model.md:1126-1129)
+```sql
+-- Spawning
+respawn_point_x     DECIMAL(10,2),
+respawn_point_y     DECIMAL(10,2),
+respawn_point_z     DECIMAL(10,2),
+```
+
+### WebSocket Entity State (from api-specification.md:1280-1288)
+```json
+{
+  "entity_id": "enemy-instance-uuid",
+  "entity_type": "ENEMY",
+  "template_code": "CULTIST",
+  "position": {"x": 130.0, "y": 460.0, "z": 0.0},
+  "health": 85,
+  "max_health": 120,
+  "conditions": ["BURNING"],
+  "target_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+---
+
+## 4. Technical/Visual Requirements
+
+### Service Boundaries (from api-specification.md:85-88)
+- **Combat Service**: Real-time combat, instances, enemy AI | owns `zone_instances`, `combat_log`
+- **World Service**: Zones, spawns, world state | owns `zones`, `enemy_templates`
+
+### WebSocket Protocol (from api-specification.md:1214)
+```
+Server tick rate: 20 ticks/second
+```
+
+### Entity Position Structure (from api-specification.md:1228-1230)
+```json
+{
+  "position": {"x": 123.5, "y": 456.7, "z": 0.0},
+  "velocity": {"x": 5.0, "y": 0.0, "z": 0.0},
+  "facing": 45.0
+}
+```
+
+---
+
+## 5. Referenced Systems (Guild Wars 1)
+
+From combat-design.md:6-8:
+> "Drawing from Guild Wars 1's combat DNA: **skill-based, build-centric, team-focused combat** where player knowledge and preparation matter more than gear level or time invested."
+
+From combat-design.md:1313-1319:
+```
+This combat system draws heavily from Guild Wars 1's design philosophy:
+- Limited skill bar forces build decisions before combat
+- No auto-attack means every action is intentional
+- Team composition provides force multiplication
+- Skill and preparation matter more than time invested
+```
+
+---
+
+## 6. Encounter Design (from combat-design.md:1050-1094)
+
+### Solo Encounter Template
+```
+Standard Fight (1-3 minutes):
+├── 3-5 common enemies OR 1 elite
+├── Clear space with minimal adds
+├── Healing opportunity after fight
+└── Resource drop to sustain consumables
+
+Mini-Boss (3-5 minutes):
+├── Single powerful enemy with mechanic
+├── Mechanic must be avoidable through skill
+├── Phase transition at 50% HP
+└── Checkpoint after completion
+
+Boss (5-10 minutes):
+├── Multi-phase encounter
+├── Each phase introduces new mechanic
+├── Phases: Learn → Execute → Survive
+└── Generous rewards for completion
+```
+
+### Group Encounter Template (4-player)
+```
+Trash Pack:
+├── 6-10 common enemies with 1-2 elites
+├── Tank can gather, DPS can AoE
+├── Support manages conditions
+└── ~2 minutes per pack
+
+Elite Encounter:
+├── 2-3 elites with supporting commons
+├── Requires target priority decisions
+├── Tank/support split attention
+└── ~3-4 minutes per encounter
+
+Boss Encounter:
+├── Single boss with add phases
+├── Tank: Positioning and threat
+├── DPS: Burst windows and mechanics
+├── Support: Healing and cleansing
+└── 5-15 minutes depending on difficulty
+```
+
+---
+
+## 7. Implementation Checklist
+
+### Enemy Template System
+- [ ] Create EnemyTemplate data structure matching schema (enemy_code, display_name, faction_id, enemy_type, base_health, base_armor, base_dps, etc.)
+- [ ] Implement 5 enemy types: COMMON, ELITE, BOSS, MINI_BOSS, WORLD_BOSS
+- [ ] Implement 3 AI behaviors: AGGRESSIVE, DEFENSIVE, SUPPORT
+- [ ] Load enemy templates from backend/config
+
+### Spawning Mechanics
+- [ ] Create SpawnPoint component with position (x, y, z)
+- [ ] Implement spawn radius/zone for enemy groups
+- [ ] Create spawn triggers (proximity-based)
+- [ ] Implement respawn timers
+
+### Enemy Instance Creation
+- [ ] Create Enemy entity with template reference
+- [ ] Apply difficulty multipliers to base stats (HP/damage based on difficulty_modifiers)
+- [ ] Assign unique entity_id (UUID format)
+- [ ] Set initial position and facing
+
+### Enemy Visual Representation
+- [ ] Create placeholder 3D models for each enemy type
+- [ ] Implement enemy nameplate/health bar UI
+- [ ] Display enemy conditions visually (BURNING, etc.)
+- [ ] Show enemy type indicator (COMMON/ELITE/BOSS)
+
+### Enemy State Synchronization
+- [ ] Match WebSocket STATE_UPDATE format
+- [ ] Include: entity_id, entity_type, template_code, position, health, max_health, conditions, target_id
+- [ ] Update at 20 ticks/second (50ms intervals)
+
+### Basic AI Behaviors
+- [ ] AGGRESSIVE: Moves toward player, attacks on sight
+- [ ] DEFENSIVE: Holds position, uses cover, retreats at low HP
+- [ ] SUPPORT: Buffs nearby allies (+20% damage for Commissar)
+
+### Starter Enemies to Implement
+- [ ] Cultist (COMMON): 120 HP, 20 armor, 22 DPS, 15 XP - "Frenzied attacks"
+- [ ] Guardsman (COMMON): 250 HP, 60 armor, 35 DPS, 20 XP - "Holds position, uses cover"
+- [ ] Slugga Boy (COMMON): 200 HP, 50 armor, 30 DPS, 20 XP - "Rush to melee"
+
+---
+
+**DECISION: requirements_extracted**

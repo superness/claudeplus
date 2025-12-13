@@ -1,0 +1,45 @@
+Now I understand the full picture! Let me document the root cause:
+
+```json
+{
+  "rootCause": "The crafting/fitting fix in trackCraftingActions() (lines 1053-1095) has a logic flaw that causes it to silently fail when setupMissionTracking() is called multiple times (e.g., from save game restore or mission re-initialization). When this happens, the _craftingTracked, _miningTracked, and _questTracked flags persist on the manager objects, preventing the hooks from being re-installed. The ELSE clause structure (line 1074) means that if craftingManager exists but craftItem doesn't exist, NO tracking is set up, and the flag is never set, BUT if the code runs a second time and the flag IS set from fitting tracking, then ALL tracking functions return early due to the flag checks, breaking mining and exploration tracking.",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/UniverseIntegrationManager.js",
+      "lineNumbers": [957, 977, 1016, 1035, 1058, 1071, 1077, 1090],
+      "currentCode": "if (resourceManager && !resourceManager._miningTracked && resourceManager.addResource) { ... } // Similar pattern for exploration and crafting",
+      "problem": "The tracking flags (_miningTracked, _questTracked, _craftingTracked, _fittingTracked) are set on the manager objects and never cleared. When setupMissionTracking() is called a second time (from save game restore or mission re-initialization), all hooks are skipped because the flags are already true, even though the mission tracking context has changed (new mission ID, new objectives)"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/UniverseIntegrationManager.js",
+      "lineNumbers": [1074-1094],
+      "currentCode": "} else { // Fallback: check for fitting manager equipment changes",
+      "problem": "The ELSE clause means fitting tracking ONLY runs if craftingManager doesn't exist OR _craftingTracked is already true. But if craftingManager exists and craftItem() doesn't exist (which is the actual state), the inner if (originalCraftItem) fails silently, setting no flags and no tracking. On subsequent calls, if _fittingTracked was set, the outer if fails and both crafting AND fitting tracking are skipped."
+    }
+  ],
+  "executionFlow": [
+    "1. Player completes consciousness awakening",
+    "2. UniverseIntegrationManager.generateTutorialMission() creates mission (line 857)",
+    "3. showMissionOffer() calls setupMissionTracking() (line 920)",
+    "4. FIRST CALL: setupMissionTracking() calls trackMiningActions(), trackExplorationActions(), trackCraftingActions()",
+    "5. trackMiningActions(): resourceManager exists, _miningTracked is undefined, addResource exists → Hook installed, _miningTracked = true",
+    "6. trackExplorationActions(): anomalyExplorer exists, _questTracked is undefined → Hook installed, _questTracked = true",
+    "7. trackCraftingActions(): craftingManager exists, _craftingTracked is undefined, BUT craftItem() doesn't exist → originalCraftItem is undefined → inner if fails → NO hook, NO flag set",
+    "8. trackCraftingActions() ELSE clause: fittingManager exists, _fittingTracked is undefined → Hook installed on equipModule, _fittingTracked = true",
+    "9. Player saves game and reloads OR mission is re-initialized",
+    "10. SaveGameManager.loadUniverseState() or another flow calls setupMissionTracking() again (line 920)",
+    "11. SECOND CALL: setupMissionTracking() calls ALL tracking functions again",
+    "12. trackMiningActions(): resourceManager._miningTracked is TRUE → Early return, NO hook installed for new mission",
+    "13. trackExplorationActions(): anomalyExplorer._questTracked is TRUE → Early return, NO hook installed for new mission",
+    "14. trackCraftingActions(): craftingManager._craftingTracked is UNDEFINED (never set) → craftItem still doesn't exist → inner if fails again",
+    "15. trackCraftingActions() ELSE clause: fittingManager._fittingTracked is TRUE → Early return, hook already exists",
+    "16. Result: Mining and exploration hooks exist from FIRST call but call checkMissionProgress() with OLD mission context",
+    "17. When player mines or explores, hooks fire but reference stale mission data OR wrong mission ID → Updates don't propagate correctly",
+    "18. Crafting/fitting hook from FIRST call still works because it wasn't cleared and still points to valid checkMissionProgress()"
+  ],
+  "whyItHappens": "The regression occurred because the crafting fix introduced the ELSE clause pattern (line 1074) and persistent flags (_craftingTracked, _fittingTracked) that are never cleared between mission tracking sessions. When setupMissionTracking() is called multiple times (save/load, mission re-initialization, or tutorial restart), the flags prevent hooks from being re-installed with the new mission context. Mining and exploration tracking break because their hooks from the first call reference stale mission data (this.tutorialMission is overwritten on line 926, but the HOOKS still point to the old closure context). Crafting/fitting continues working because its hook happens to still be valid OR because fitting manager is more frequently re-initialized.",
+  "proposedFix": "1. Clear all tracking flags at the START of setupMissionTracking() before installing new hooks:\n\n```javascript\nsetupMissionTracking(mission) {\n    this.tutorialMission = mission;\n    \n    // CRITICAL: Clear all tracking flags to allow re-initialization\n    if (window.simulator?.resourceManager) {\n        window.simulator.resourceManager._miningTracked = false;\n    }\n    if (window.simulator?.anomalyExplorer) {\n        window.simulator.anomalyExplorer._questTracked = false;\n    }\n    if (window.simulator?.craftingManager) {\n        window.simulator.craftingManager._craftingTracked = false;\n    }\n    if (window.simulator?.shipFittingManager) {\n        window.simulator.shipFittingManager._fittingTracked = false;\n    }\n    \n    // Now install fresh hooks\n    this.trackMiningActions();\n    this.trackExplorationActions();\n    this.trackCraftingActions();\n    this.trackQuantumJumpActions();\n}\n```\n\n2. ALTERNATIVE: Remove the ELSE clause and change the crafting tracking logic to:\n\n```javascript\ntrackCraftingActions() {\n    console.log('Setting up crafting action tracking...');\n\n    // Try crafting manager first\n    const craftingManager = window.simulator?.craftingManager;\n    if (craftingManager && !craftingManager._craftingTracked) {\n        const originalCraftItem = craftingManager.craftItem?.bind(craftingManager);\n        if (originalCraftItem) {\n            // ... existing craftItem hook code\n            craftingManager._craftingTracked = true;\n            return; // Success, don't run fitting fallback\n        }\n    }\n    \n    // If crafting tracking failed or not available, use fitting as fallback\n    const fittingManager = window.simulator?.shipFittingManager;\n    if (fittingManager && !fittingManager._fittingTracked) {\n        // ... existing equipModule hook code\n        fittingManager._fittingTracked = true;\n    }\n}\n```"
+}
+```
+
+**DECISION: root_cause_found**

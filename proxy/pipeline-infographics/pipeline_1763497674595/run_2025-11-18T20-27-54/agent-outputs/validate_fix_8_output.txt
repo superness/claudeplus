@@ -1,0 +1,101 @@
+Perfect! Now I can calculate what's happening:
+
+**Atron base stats:**
+- agility: 3.2
+- maxVelocity: 350 m/s
+
+**After afterburner (multiply 0.9 for agility, 1.5 for maxSpeed):**
+- agility: 3.2 × 0.9 = 2.88
+- maxVelocity: 350 × 1.5 = 525 m/s
+
+**TimeConstant calculation (Ship.js:94):**
+- τ = agility / 500000
+- Before: τ = 3.2 / 500000 = 0.0000064 seconds
+- After: τ = 2.88 / 500000 = 0.00000576 seconds
+
+**THIS IS THE BUG!** The EVE formula for timeConstant is **WRONG**!
+
+In EVE Online, the formula is:
+```
+τ = mass × inertiaModifier / 500000
+```
+
+But the code is using:
+```
+τ = agility / 500000
+```
+
+And "agility" is only 3.2, not `mass × inertiaModifier = 1200000 × 3.2 = 3,840,000`.
+
+So the timeConstant should be:
+```
+τ = 3,840,000 / 500,000 = 7.68 seconds
+```
+
+Not `τ = 3.2 / 500000 = 0.0000064 seconds`!
+
+That's why acceleration is essentially instant - the timeConstant is **1 MILLION times too small**!
+
+Let me create the validation report:
+
+## FIX VALIDATION REPORT
+
+```json
+{
+  "validation": "FIX_INCOMPLETE",
+  "bugResolved": false,
+  "beforeAfterComparison": {
+    "before": "Instant acceleration to 525 m/s in 0.5s when afterburner fitted",
+    "after": "STILL instant acceleration to 525 m/s in 0.5s when afterburner fitted",
+    "match": "NO CHANGE - Bug persists with exact same symptoms"
+  },
+  "physicsData": {
+    "withoutAfterburner": {
+      "speedAt1s": "97.25 m/s",
+      "speedAt3s": "155.51 m/s",
+      "acceleration": "Gradual exponential curve ✓"
+    },
+    "withAfterburner": {
+      "speedAt05s": "525 m/s (INSTANT)",
+      "speedAt15s": "525 m/s (no curve)",
+      "accelerationRate": "0 (should be exponential)",
+      "instantAcceleration": true,
+      "instantDeceleration": true
+    }
+  },
+  "root Cause_analysis": {
+    "originalHypothesis": "syncStatsFromFitting() called every frame causing multiply effects to compound",
+    "originalFix": "Event-driven stats sync (only sync when fitting changes)",
+    "hypothesisWrong": true,
+    "actualRootCause": "INCORRECT TIMECONSTANT FORMULA - Using agility alone instead of (mass × inertiaModifier)",
+    "evidenceAnalysis": {
+      "atronBaseStats": {
+        "mass": 1200000,
+        "inertiaModifier": 3.2,
+        "agility": 3.2,
+        "maxVelocity": 350
+      },
+      "incorrectFormula": "τ = agility / 500000 = 3.2 / 500000 = 0.0000064 seconds",
+      "correctFormula": "τ = (mass × inertiaModifier) / 500000 = 3840000 / 500000 = 7.68 seconds",
+      "errorMagnitude": "TimeConstant is 1,200,000x TOO SMALL",
+      "physicsImpact": "k = 1/τ becomes HUGE → factor ≈ 1.0 → instant acceleration"
+    }
+  },
+  "regressionCheck": {
+    "newErrors": [],
+    "brokenCommands": [],
+    "eventListenerAdded": "Properly added with cleanup",
+    "deepCopyProtection": "Implemented correctly",
+    "syntaxError": "Minor comment syntax error found (/ instead of //)"
+  },
+  "confidence": 0.99,
+  "nextSteps": [
+    "Fix timeConstant formula in Ship.js:94",
+    "Change from: this.physics.timeConstant = stats.agility / 500000",
+    "Change to: this.physics.timeConstant = (stats.mass * stats.inertiaModifier) / 500000",
+    "Re-test with WebSocket automation"
+  ]
+}
+```
+
+**DECISION: FIX_INCOMPLETE**

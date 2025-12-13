@@ -1,0 +1,68 @@
+Now I have enough information to complete my test report. Let me summarize the findings:
+
+## Test Results
+
+### Syntax Check
+**Pass** - TypeScript compiles successfully (36 modules, builds in 2.35s)
+
+### Integration Path Verification
+
+#### Path 1: Companion AI Decision → Movement
+- Entry point: `PartyManager.update()` → `companion.updateAI()` → `executeAIDecision()`
+- Calls: `moveCompanionTowards()` → `companion.setTargetPosition()`
+- Reaches target: **YES** - Companion position is updated
+- **CONNECTED: YES**
+
+#### Path 2: Companion AI Decision → Skill Execution
+- Entry point: `PartyManager.update()` → `companion.updateAI()` → `executeAIDecision()` with `action: 'SKILL'`
+- Calls: `this.onCompanionDecision(companionId, decision)` → `CombatManager.executeCompanionSkill()`
+- Calls: `target.takeDamage()` → `Enemy.takeDamage()`
+- Reaches target: **YES** - Enemy health decreases
+- **CONNECTED: YES**
+
+#### Path 3: Companion Template ID References
+- Game.ts:267-269 uses: `IMP_HENCH_MEDIC_JONAS`, `IMP_HENCH_CRUSADER_MARCUS`, `IMP_HENCH_ENGINSEER_COG`
+- CompanionTemplates.ts:108,138,193 defines: Same IDs exactly
+- **CONNECTED: YES** - Template IDs match
+
+#### Path 4: Companion Skills → Skill Definitions
+- CompanionTemplates uses skill IDs like `IMP_GD_FIRST_AID`, `IMP_GD_PRECISE_SHOT`, etc.
+- Skills.ts defines these (verified 36 skills total, IMP_GD_* skills exist)
+- **CONNECTED: YES**
+
+#### Path 5: Enemy AI Fighting Back
+- Entry point: **NONE**
+- Enemy.ts has `ai_behavior` property in template but **NO AI UPDATE LOOP**
+- EntityManager.update() only calls `enemy.update(deltaTime)` which does: position interpolation, health bar, idle animation
+- **CONNECTED: NO** - Enemies are **COMPLETELY PASSIVE**
+
+### Disconnected Systems Found
+
+1. **Enemy AI Combat System - CRITICAL**
+   - `EnemyTemplate.ai_behavior` is defined ('AGGRESSIVE', 'DEFENSIVE', 'SUPPORT', etc.)
+   - `EnemyTemplate.base_dps` is defined
+   - But there is **NO ENEMY AI CLASS** and **NO CODE that makes enemies attack**
+   - Enemies just stand there waiting to be killed
+
+2. **Companion Healing Target Resolution - PARTIAL**
+   - CompanionAI finds allies needing healing (`checkSupport()`)
+   - But heal targeting (`decision.targetId`) may not resolve correctly when AI tries to heal player
+
+### Placeholder Code Found
+- `CombatManager.ts:298-299`: `// TODO: Apply actual buff effects via CombatSystem`
+- `CombatManager.ts:311`: `// TODO: Apply actual debuff effects via CombatSystem`
+- `PartyManager.ts:578,597,611`: `// TODO: Track marked targets`, `// TODO: Check for cleansable conditions`
+
+### Issues Found
+
+1. **CRITICAL: Enemies do not fight back**
+   - Enemy AI behavior types are defined but never executed
+   - Enemies are static targets that don't attack the player or companions
+   - This completely breaks the combat loop - it's just a target dummy simulator
+
+2. **Visual feedback gaps** (from user requirements):
+   - Death animations exist (mesh rotation) but are minimal
+   - Enemy AI fighting back is missing entirely
+   - Companion AI skill execution works but enemies are non-threatening
+
+DECISION: has_issues

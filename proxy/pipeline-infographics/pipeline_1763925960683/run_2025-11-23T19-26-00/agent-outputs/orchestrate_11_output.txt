@@ -1,0 +1,70 @@
+## STATE ANALYSIS
+
+I've analyzed the current infrastructure state:
+
+### ✓ Working Components:
+1. **Bitcoin Daemon**: Running (PID 2499, 28799)
+   - RPC accessible on port 18443
+   - Chain: regtest with 332 blocks
+   - Wallet funded: 6000 BTC
+   - Fully operational
+
+2. **Dependencies**: All installed
+   - bitcoind: /home/super/bin/bitcoind
+   - Mono runtime: /usr/bin/mono
+   - CoiniumServ.exe: present
+
+3. **Configuration Files**: All present
+   - bitcoin.conf: exists
+   - pool config.json: exists
+   - pool default.json: exists
+
+### ✗ Critical Issues Detected:
+
+1. **Pool Process Running But Dysfunctional**:
+   - CoiniumServ.exe process exists (PID 33824)
+   - **Stratum port 3333 NOT listening** (port check failed)
+   - Pool logs show repeated errors: "Invalid wallet address: bcrt1qpsrfamx3tnkhk5xyy3k0vyprlfcwfmls4j2nf7.worker1"
+   - Job creation failing for miners
+
+2. **Root Cause Identified**: 
+   - Wallet address validation: The address itself is VALID (verified by bitcoind)
+   - But pool is appending ".worker1" suffix making it invalid
+   - This is breaking job creation for miners
+   - Stratum server may not have started due to initialization failures
+
+3. **Impact**:
+   - Daemon ✓ operational
+   - Pool ✗ dysfunctional (process exists but Stratum not listening)
+   - Miner ✗ cannot connect (Stratum port not available)
+   - End-to-end mining cycle ✗ broken
+
+### Dependencies Satisfied:
+- Daemon is working and accessible
+- Configs exist but pool has functional issues
+- Pool process exists but not operational
+
+### Next Action Required:
+The pool server has critical functional issues preventing it from accepting mining connections. The wallet address handling in job creation is failing, preventing the Stratum server from properly initializing or accepting miners.
+
+---
+
+DECISION: handle_pool_errors
+
+REASONING:
+Pool-specific error detected requiring specialized pool error handler:
+- Pool process running but Stratum port not listening (non-functional state)
+- Repeated job creation failures: "Invalid wallet address" errors in logs
+- Wallet address validation issue with worker suffix handling
+- Pool initialization likely failed due to job manager errors
+- Daemon is healthy and accessible, so this is isolated to pool component
+- Requires pool-specific recovery: restart pool with corrected config or handle worker suffix issue
+
+This is a pool-specific functional error, not a generic infrastructure failure. The specialized pool error handler should:
+1. Stop the dysfunctional pool process
+2. Address the wallet address/worker suffix issue
+3. Restart pool with proper configuration
+4. Verify Stratum port is listening
+5. Validate daemon connectivity
+
+DECISION: handle_pool_errors

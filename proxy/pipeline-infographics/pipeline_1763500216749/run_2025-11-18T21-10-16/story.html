@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Execution: Development Cycle Meta-Router V1</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --color-bg-primary: #0a0e1a;
+            --color-bg-secondary: #151a2e;
+            --color-accent-red: #ff3366;
+            --color-accent-cyan: #00d9ff;
+            --color-accent-purple: #9d4edd;
+            --color-accent-gold: #ffd700;
+            --color-text-primary: #ffffff;
+            --color-text-secondary: #b4bcd0;
+            --color-success: #00ff88;
+            --color-warning: #ffaa00;
+            --color-error: #ff3366;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: var(--color-bg-primary);
+            color: var(--color-text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        
+        /* Animated Circuit Board Background */
+        .circuit-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            opacity: 0.15;
+            background-image: 
+                repeating-linear-gradient(90deg, transparent, transparent 50px, rgba(0, 217, 255, 0.1) 50px, rgba(0, 217, 255, 0.1) 51px),
+                repeating-linear-gradient(0deg, transparent, transparent 50px, rgba(157, 78, 221, 0.1) 50px, rgba(157, 78, 221, 0.1) 51px);
+            animation: circuit-flow 20s linear infinite;
+        }
+        
+        @keyframes circuit-flow {
+            from { background-position: 0 0; }
+            to { background-position: 100px 100px; }
+        }
+        
+        /* Glowing Nodes Animation */
+        .circuit-bg::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: radial-gradient(circle, rgba(0, 217, 255, 0.3) 2px, transparent 2px);
+            background-size: 100px 100px;
+            animation: pulse-nodes 3s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-nodes {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.6; }
+        }
+        
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        /* Hero Section - Tech Blueprint Style */
+        .hero {
+            text-align: center;
+            padding: 60px 20px;
+            margin-bottom: 60px;
+            position: relative;
+            background: linear-gradient(135deg, rgba(157, 78, 221, 0.1) 0%, rgba(0, 217, 255, 0.1) 100%);
+            border: 2px solid rgba(0, 217, 255, 0.3);
+            border-radius: 20px;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--color-accent-cyan), var(--color-accent-purple), var(--color-accent-red));
+            border-radius: 20px;
+            z-index: -1;
+            opacity: 0;
+            animation: border-glow 3s ease-in-out infinite;
+        }
+        
+        @keyframes border-glow {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 0.5; }
+        }
+        
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, var(--color-accent-cyan) 0%, var(--color-accent-purple) 50%, var(--color-accent-red) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradient-shift 5s ease infinite;
+            background-size: 200% 200%;
+        }
+        
+        @keyframes gradient-shift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        .hero-meta {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            flex-wrap: wrap;
+            margin-top: 30px;
+        }
+        
+        .meta-chip {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .meta-chip:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--color-accent-cyan);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 217, 255, 0.3);
+        }
+        
+        .meta-chip .icon {
+            font-size: 1.2rem;
+        }
+        
+        .meta-chip .label {
+            color: var(--color-text-secondary);
+            font-size: 0.8rem;
+            margin-right: 5px;
+        }
+        
+        .meta-chip .value {
+            color: var(--color-text-primary);
+            font-weight: 600;
+        }
+        
+        /* Status Banner */
+        .status-banner {
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.2) 0%, rgba(0, 217, 255, 0.2) 100%);
+            border: 2px solid var(--color-success);
+            border-radius: 15px;
+            padding: 20px 30px;
+            margin: 40px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            font-size: 1.3rem;
+            font-weight: 600;
+            animation: status-pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes status-pulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(0, 255, 136, 0.3); }
+            50% { box-shadow: 0 0 40px rgba(0, 255, 136, 0.6); }
+        }
+        
+        .status-icon {
+            font-size: 2rem;
+            animation: rotate-icon 3s linear infinite;
+        }
+        
+        @keyframes rotate-icon {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Investigation Section */
+        .investigation-section {
+            margin: 60px 0;
+        }
+        
+        .section-title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .section-title::before {
+            content: '';
+            width: 5px;
+            height: 40px;
+            background: linear-gradient(180deg, var(--color-accent-cyan), var(--color-accent-purple));
+            border-radius: 5px;
+        }
+        
+        /* Classification Card */
+        .classification-card {
+            background: linear-gradient(135deg, rgba(255, 51, 102, 0.1) 0%, rgba(157, 78, 221, 0.1) 100%);
+            border: 2px solid var(--color-accent-red);
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .classification-card::before {
+            content: '🔍';
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 6rem;
+            opacity: 0.1;
+            animation: magnify 4s ease-in-out infinite;
+        }
+        
+        @keyframes magnify {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        
+        .classification-header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .classification-badge {
+            background: var(--color-accent-red);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            box-shadow: 0 5px 25px rgba(255, 51, 102, 0.4);
+            animation: badge-glow 2s ease-in-out infinite;
+        }
+        
+        @keyframes badge-glow {
+            0%, 100% { box-shadow: 0 5px 25px rgba(255, 51, 102, 0.4); }
+            50% { box-shadow: 0 10px 40px rgba(255, 51, 102, 0.7); }
+        }
+        
+        .confidence-meter {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 50px;
+            height: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--color-accent-red), var(--color-accent-gold));
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 20px;
+            font-weight: 700;
+            animation: fill-meter 2s ease-out;
+        }
+        
+        @keyframes fill-meter {
+            from { width: 0%; }
+        }
+        
+        .reasoning-box {
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border-left: 4px solid var(--color-accent-red);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-size: 1.05rem;
+            line-height: 1.8;
+        }
+        
+        .context-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        
+        .context-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .context-item:hover {
+            background: rgba(255, 255, 255, 0.07);
+            border-color: var(--color-accent-cyan);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 217, 255, 0.2);
+        }
+        
+        .context-label {
+            color: var(--color-accent-cyan);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        
+        .context-value {
+            color: var(--color-text-primary);
+            font-size: 1.1rem;
+        }
+        
+        .context-list {
+            list-style: none;
+            margin-top: 10px;
+        }
+        
+        .context-list li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        
+        .context-list li::before {
+            content: '▸';
+            position: absolute;
+            left: 5px;
+            color: var(--color-accent-red);
+        }
+        
+        /* Pipeline Flow Diagram */
+        .pipeline-flow {
+            margin: 60px 0;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 20px;
+            padding: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .flow-stages {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+            position: relative;
+        }
+        
+        .flow-stages::before {
+            content: '';
+            position: absolute;
+            left: 40px;
+            top: 60px;
+            bottom: 60px;
+            width: 3px;
+            background: linear-gradient(180deg, 
+                var(--color-accent-cyan) 0%, 
+                var(--color-accent-purple) 50%, 
+                var(--color-accent-red) 100%);
+            opacity: 0.3;
+        }
+        
+        .stage-node {
+            display: flex;
+            align-items: flex-start;
+            gap: 30px;
+            position: relative;
+        }
+        
+        .stage-marker {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--color-accent-cyan), var(--color-accent-purple));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: 700;
+            box-shadow: 0 5px 25px rgba(0, 217, 255, 0.4);
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+            animation: marker-pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes marker-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .stage-marker.active {
+            background: linear-gradient(135deg, var(--color-accent-gold), var(--color-accent-red));
+            animation: marker-active 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes marker-active {
+            0%, 100% { box-shadow: 0 5px 25px rgba(255, 215, 0, 0.4); }
+            50% { box-shadow: 0 10px 50px rgba(255, 215, 0, 0.8); }
+        }
+        
+        .stage-marker.pending {
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.3);
+            box-shadow: none;
+        }
+        
+        .stage-content {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            transition: all 0.3s ease;
+        }
+        
+        .stage-content:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--color-accent-cyan);
+            transform: translateX(10px);
+        }
+        
+        .stage-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .stage-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: var(--color-text-primary);
+        }
+        
+        .stage-status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .stage-status.undefined {
+            background: rgba(180, 188, 208, 0.2);
+            color: var(--color-text-secondary);
+        }
+        
+        .stage-agent {
+            color: var(--color-accent-cyan);
+            font-size: 0.95rem;
+            margin-bottom: 10px;
+        }
+        
+        .stage-meta {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            font-size: 0.9rem;
+            color: var(--color-text-secondary);
+        }
+        
+        .stage-meta span {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        /* Technical Data Section */
+        .technical-section {
+            margin: 60px 0;
+        }
+        
+        .data-accordion {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        .accordion-header {
+            padding: 25px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.03);
+            transition: all 0.3s ease;
+        }
+        
+        .accordion-header:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .accordion-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .accordion-icon {
+            font-size: 1.5rem;
+            transition: transform 0.3s ease;
+        }
+        
+        .data-accordion:hover .accordion-icon {
+            transform: rotate(90deg);
+        }
+        
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.5s ease;
+        }
+        
+        .data-accordion:target .accordion-content {
+            max-height: 5000px;
+        }
+        
+        .accordion-body {
+            padding: 25px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        .code-block {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-left: 4px solid var(--color-accent-cyan);
+            border-radius: 10px;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: #e0e0e0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .code-block::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .code-block::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+        }
+        
+        .code-block::-webkit-scrollbar-thumb {
+            background: var(--color-accent-cyan);
+            border-radius: 10px;
+        }
+        
+        /* Stats Dashboard */
+        .stats-dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin: 40px 0;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, rgba(0, 217, 255, 0.1), rgba(157, 78, 221, 0.1));
+            border: 2px solid rgba(0, 217, 255, 0.3);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 15px 50px rgba(0, 217, 255, 0.3);
+            border-color: var(--color-accent-cyan);
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            animation: shine 3s linear infinite;
+        }
+        
+        @keyframes shine {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        .stat-value {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--color-accent-cyan), var(--color-accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+        
+        .stat-label {
+            color: var(--color-text-secondary);
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Footer */
+        .report-footer {
+            margin-top: 80px;
+            padding: 40px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .footer-line {
+            color: var(--color-text-secondary);
+            margin: 10px 0;
+        }
+        
+        .footer-highlight {
+            color: var(--color-accent-cyan);
+            font-weight: 600;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            .hero-meta {
+                gap: 15px;
+            }
+            
+            .meta-chip {
+                font-size: 0.8rem;
+                padding: 10px 15px;
+            }
+            
+            .classification-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .confidence-meter {
+                width: 100%;
+            }
+            
+            .stage-node {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .stage-content:hover {
+                transform: none;
+            }
+            
+            .stats-dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="circuit-bg"></div>
+    
+    <div class="container">
+        <!-- Hero Section -->
+        <div class="hero">
+            <h1>Development Cycle Meta-Router V1</h1>
+            <p style="font-size: 1.2rem; color: var(--color-text-secondary); margin-top: 10px;">
+                Pipeline Execution Report
+            </p>
+            
+            <div class="hero-meta">
+                <div class="meta-chip">
+                    <span class="icon">🆔</span>
+                    <span class="label">ID:</span>
+                    <span class="value">pipeline_1763500216749</span>
+                </div>
+                <div class="meta-chip">
+                    <span class="icon">⏱️</span>
+                    <span class="label">Duration:</span>
+                    <span class="value">45.5 min</span>
+                </div>
+                <div class="meta-chip">
+                    <span class="icon">📂</span>
+                    <span class="label">Project:</span>
+                    <span class="value">superstarships</span>
+                </div>
+                <div class="meta-chip">
+                    <span class="icon">✅</span>
+                    <span class="label">Stages:</span>
+                    <span class="value">2/6 Completed</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Banner -->
+        <div class="status-banner">
+            <span class="status-icon">⚙️</span>
+            <span>Pipeline Completed Successfully</span>
+        </div>
+        
+        <!-- Stats Dashboard -->
+        <div class="stats-dashboard">
+            <div class="stat-card">
+                <div class="stat-value">2729.4s</div>
+                <div class="stat-label">Total Runtime</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">6</div>
+                <div class="stat-label">Total Stages</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">2</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">0</div>
+                <div class="stat-label">Errors</div>
+            </div>
+        </div>
+        
+        <!-- Investigation Section -->
+        <div class="investigation-section">
+            <h2 class="section-title">
+                <span>🔍 Request Analysis</span>
+            </h2>
+            
+            <div class="classification-card">
+                <div class="classification-header">
+                    <div class="classification-badge">
+                        🐛 BUG_FIX
+                    </div>
+                    <div class="confidence-meter">
+                        <div class="confidence-fill" style="width: 98%;">
+                            98% Confidence
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="reasoning-box">
+                    <strong>Classification Reasoning:</strong><br>
+                    User reports that afterburner physics is still broken despite previous fix attempt. The issue causes instant direction changes and throttle response instead of EVE-style acceleration curves. This is a regression or incomplete fix that requires investigation of the root cause and proper implementation of smooth physics behavior.
+                </div>
+                
+                <div class="context-grid">
+                    <div class="context-item">
+                        <div class="context-label">Original Request</div>
+                        <div class="context-value">
+                            Afterburner physics bug fix did NOT work - ship still has instant movement instead of acceleration curves
+                        </div>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Affected Area</div>
+                        <div class="context-value">
+                            ShipPhysics.js, afterburner module, ship movement physics, acceleration curves
+                        </div>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Priority</div>
+                        <div class="context-value" style="color: var(--color-accent-red); font-weight: 700;">
+                            ⚠️ HIGH
+                        </div>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Key Indicators</div>
+                        <ul class="context-list">
+                            <li>bug fix</li>
+                            <li>did NOT actually resolve</li>
+                            <li>still experiencing</li>
+                            <li>broken behavior</li>
+                            <li>instant changes</li>
+                            <li>ignoring ship orientation</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Previous Attempt</div>
+                        <div class="context-value">
+                            Changed velocity from THREE.Vector3 to plain object - ineffective
+                        </div>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Expected Behavior</div>
+                        <div class="context-value">
+                            EVE-style physics with smooth acceleration/deceleration and orientation-based thrust
+                        </div>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Actual Behavior</div>
+                        <div class="context-value">
+                            Instant direction changes and instant throttle response when afterburner fitted
+                        </div>
+                    </div>
+                    
+                    <div class="context-item">
+                        <div class="context-label">Investigation Required</div>
+                        <div class="context-value" style="color: var(--color-success);">
+                            ✅ Yes
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pipeline Flow -->
+        <div class="pipeline-flow">
+            <h2 class="section-title">
+                <span>🔄 Pipeline Execution Flow</span>
+            </h2>
+            
+            <div class="flow-stages">
+                <!-- Stage 1 -->
+                <div class="stage-node">
+                    <div class="stage-marker active">1</div>
+                    <div class="stage-content">
+                        <div class="stage-header">
+                            <div class="stage-title">Request Classification</div>
+                            <div class="stage-status undefined">EXECUTED</div>
+                        </div>
+                        <div class="stage-agent">🤖 Agent: request_classifier</div>
+                        <div class="stage-meta">
+                            <span>📝 Prompt: 2,741 chars</span>
+                            <span>📤 Output: 2,479 chars</span>
+                            <span>⏱️ Duration: N/A</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stage 2 -->
+                <div class="stage-node">
+                    <div class="stage-marker">2</div>
+                    <div class="stage-content">
+                        <div class="stage-header">
+                            <div class="stage-title">Bug Fix Pipeline</div>
+                            <div class="stage-status undefined">PENDING</div>
+                        </div>
+                        <div class="stage-agent">🤖 Agent: pipeline_executor</div>
+                        <div class="stage-meta">
+                            <span>📝 Prompt: 0 chars</span>
+                            <span>📤 Output: 0 chars</span>
+                            <span>⏱️ Duration: N/A</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stage 3 -->
+                <div class="stage-node">
+                    <div class="stage-marker pending">3</div>
+                    <div class="stage-content">
+                        <div class="stage-header">
+                            <div class="stage-title">Quick Code Change</div>
+                            <div class="stage-status undefined">PENDING</div>
+                        </div>
+                        <div class="stage-agent">🤖 Agent: code_implementer</div>
+                        <div class="stage-meta">
+                            <span>📝 Prompt: 0 chars</span>
+                            <span>📤 Output: 0 chars</span>
+                            <span>⏱️ Duration: N/A</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stage 4 -->
+                <div class="stage-node">
+                    <div class="stage-marker pending">4</div>
+                    <div class="stage-content">
+                        <div class="stage-header">
+                            <div class="stage-title">Feature Development Pipeline</div>
+                            <div class="stage-status undefined">PENDING</div>
+                        </div>
+                        <div class="stage-agent">🤖 Agent: pipeline_executor</div>
+                        <div class="stage-meta">
+                            <span>📝 Prompt: 0 chars</span>
+                            <span>📤 Output: 0 chars</span>
+                            <span>⏱️ Duration: N/A</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stage 5 -->
+                <div class="stage-node">
+                    <div class="stage-marker pending">5</div>
+                    <div class="stage-content">
+                        <div class="stage-header">
+                            <div class="stage-title">Handle Refactor Request</div>
+                            <div class="stage-status undefined">PENDING</div>
+                        </div>
+                        <div class="stage-agent">🤖 Agent: task_executor</div>
+                        <div class="stage-meta">
+                            <span>📝 Prompt: 0 chars</span>
+                            <span>📤 Output: 0 chars</span>
+                            <span>⏱️ Duration: N/A</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stage 6 -->
+                <div class="stage-node">
+                    <div class="stage-marker pending">6</div>
+                    <div class="stage-content">
+                        <div class="stage-header">
+                            <div class="stage-title">Handle Question</div>
+                            <div class="stage-status undefined">PENDING</div>
+                        </div>
+                        <div class="stage-agent">🤖 Agent: task_executor</div>
+                        <div class="stage-meta">
+                            <span>📝 Prompt: 0 chars</span>
+                            <span>📤 Output: 0 chars</span>
+                            <span>⏱️ Duration: N/A</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Technical Data Section -->
+        <div class="technical-section">
+            <h2 class="section-title">
+                <span>⚙️ Technical Deep Dive</span>
+            </h2>
+            
+            <!-- Agent Execution Details -->
+            <div class="data-accordion" id="agent-details">
+                <div class="accordion-header">
+                    <div class="accordion-title">
+                        <span>🤖</span>
+                        <span>Agent Execution: classify_request (Execution #1)</span>
+                    </div>
+                    <div class="accordion-icon">▶</div>
+                </div>
+                <div class="accordion-content">
+                    <div class="accordion-body">
+                        <h3 style="color: var(--color-accent-cyan); margin-bottom: 20px;">Agent Prompt (2,741 characters)</h3>
+                        <div class="code-block">You are a Request Classifier that analyzes user requests and determines what type of development work is needed.
+
+Your job is to classify requests into these categories:
+
+**BUG_FIX** - Something is broken or not working correctly:
+- "The ship doesn't move when I press W"
+- "Game crashes when I dock at station"
+- "Health bar shows wrong value"
+- "Clicking buy button does nothing"
+- Keywords: broken, bug, crash, error, doesn't work, not working, issue, problem, fail
+
+**QUICK_CHANGE** - Simple, direct code modifications (1-5 line changes):
+- "Change this color to red"
+- "Update the text to say 'Welcome'"
+- "Set max speed to 500"
+- "Make this button bigger"
+- "Rename this function to calculateScore"
+- Keywords: change, update, set, make, adjust, rename (+ simple/specific target)
+- Must be: specific target, simple modification, no new logic/features
+
+**FEATURE_REQUEST** - New functionality or enhancement:
+- "Add a tutorial for new players"
+- "I want to see a minimap"
+- "Add sound effects for weapons"
+- "Implement a trading system"
+- Keywords: add, implement, create, new, I want, feature, enhancement, improve
+
+**REFACTOR** - Code improvement without changing behavior:
+- "Clean up the combat system code"
+- "Refactor ship rendering logic"
+- "Improve performance of collision detection"
+- Keywords: refactor, clean up, optimize, improve performance, restructure
+
+**QUESTION** - User needs information:
+- "How does the upgrade system work?"
+- "What does this code do?"
+- "Explain the game loop"
+- Keywords: how, what, why, explain, question
+
+Analysis process:
+1. Read the user's request carefully
+2. Identify key indicators (keywords, tone, specificity)
+3. Determine primary intent
+4. Extract relevant context for the next pipeline
+5. Provide confidence score
+
+Output format:
+```json
+{
+  "classification": "BUG_FIX|QUICK_CHANGE|FEATURE_REQUEST|REFACTOR|QUESTION",
+  "confidence": 0.95,
+  "reasoning": "Explanation of why this classification was chosen",
+  "context": {
+    "originalRequest": "User's full request",
+    "keyIndicators": ["broken", "doesn't work"],
+    "affectedArea": "combat system, ship movement, UI, etc.",
+    "priority": "high|medium|low"
+  }
+}
+```
+
+IMPORTANT: End your response with one of these decisions:
+- DECISION: BUG_FIX
+- DECISION: QUICK_CHANGE
+- DECISION: FEATURE_REQUEST
+- DECISION: REFACTOR
+- DECISION: QUESTION
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: BUG_FIX (Request is a bug fix)
+- DECISION: QUICK_CHANGE (Request is a simple code modification)
+- DECISION: FEATURE_REQUEST (Request is a new feature)
+- DECISION: REFACTOR (Request is code refactoring)
+- DECISION: QUESTION (Request is a question)
+
+Format: End with "DECISION: [YOUR_CHOICE]" on the last line.</div>
+                        
+                        <h3 style="color: var(--color-accent-purple); margin: 40px 0 20px 0;">Agent Output (2,479 characters)</h3>
+                        <div class="code-block">I need to analyze this request to classify it correctly.
+
+Looking at the user's request:
+- Reports a **previously attempted fix did NOT work** - the bug still exists
+- Describes specific broken behavior: instant direction change, instant throttle response, no acceleration curve
+- Requires investigation of why previous fix failed
+- Needs to find the REAL root cause
+- Requires implementation of a proper fix
+- Includes verification/testing requirements
+
+This is clearly a **BUG_FIX** request because:
+1. **Primary indicator**: "bug fix... did NOT actually resolve the issue" - something is broken
+2. **Broken behavior described**: Instant movement instead of EVE-style physics curves
+3. **Previous fix attempt failed**: The velocity plain object fix didn't work
+4. **Investigation needed**: Why the fix failed and what the real root cause is
+5. **Fix required**: Restore proper EVE-style physics with acceleration curves
+
+This is NOT a:
+- QUICK_CHANGE: Requires investigation, testing, and potentially complex fixes
+- FEATURE_REQUEST: Not asking for new functionality, asking to restore existing physics
+- REFACTOR: Not about code improvement, about fixing broken behavior
+- QUESTION: Not asking for information, asking for a bug to be fixed
+
+```json
+{
+  "classification": "BUG_FIX",
+  "confidence": 0.98,
+  "reasoning": "User reports that afterburner physics is still broken despite previous fix attempt. The issue causes instant direction changes and throttle response instead of EVE-style acceleration curves. This is a regression or incomplete fix that requires investigation of the root cause and proper implementation of smooth physics behavior.",
+  "context": {
+    "originalRequest": "Afterburner physics bug fix did NOT work - ship still has instant movement instead of acceleration curves",
+    "keyIndicators": ["bug fix", "did NOT actually resolve", "still experiencing", "broken behavior", "instant changes", "ignoring ship orientation"],
+    "affectedArea": "ShipPhysics.js, afterburner module, ship movement physics, acceleration curves",
+    "priority": "high",
+    "previousAttempt": "Changed velocity from THREE.Vector3 to plain object - ineffective",
+    "expectedBehavior": "EVE-style physics with smooth acceleration/deceleration and orientation-based thrust",
+    "actualBehavior": "Instant direction changes and instant throttle response when afterburner fitted",
+    "requiresInvestigation": true,
+    "requiresTesting": true
+  }
+}
+```
+
+DECISION: BUG_FIX</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Pipeline Metadata -->
+            <div class="data-accordion" id="metadata">
+                <div class="accordion-header">
+                    <div class="accordion-title">
+                        <span>📊</span>
+                        <span>Pipeline Metadata & Configuration</span>
+                    </div>
+                    <div class="accordion-icon">▶</div>
+                </div>
+                <div class="accordion-content">
+                    <div class="accordion-body">
+                        <div class="context-grid">
+                            <div class="context-item">
+                                <div class="context-label">Pipeline Name</div>
+                                <div class="context-value">Development Cycle Meta-Router V1</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Pipeline ID</div>
+                                <div class="context-value">pipeline_1763500216749</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Working Directory</div>
+                                <div class="context-value">/mnt/c/github/superstarships</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Total Runtime</div>
+                                <div class="context-value">2729.4 seconds (45.5 minutes)</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Total Stages</div>
+                                <div class="context-value">6 stages configured</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Completed Stages</div>
+                                <div class="context-value">2 of 6 (33.3%)</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Error Count</div>
+                                <div class="context-value" style="color: var(--color-success);">0 errors ✅</div>
+                            </div>
+                            <div class="context-item">
+                                <div class="context-label">Final Status</div>
+                                <div class="context-value" style="color: var(--color-success);">Completed ✅</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="report-footer">
+            <div class="footer-line">
+                Generated by <span class="footer-highlight">Pipeline Infographic System</span>
+            </div>
+            <div class="footer-line">
+                Execution ID: <span class="footer-highlight">pipeline_1763500216749</span>
+            </div>
+            <div class="footer-line">
+                Report generated with ✨ and circuit boards
+            </div>
+        </div>
+    </div>
+</body>
+</html>

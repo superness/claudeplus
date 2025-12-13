@@ -1,0 +1,67 @@
+## Validation Report
+
+Based on my thorough analysis of the test evidence and source code, I must deliver this verdict:
+
+```json
+{
+  "validation": "FIX_INCOMPLETE",
+  "bugResolved": false,
+  "beforeAfterComparison": {
+    "before": "When afterburner fitted: Ship instantly jumped to 525 m/s in 0.5s when throttle applied",
+    "after": "When afterburner fitted: Ship STILL instantly jumps to 525 m/s in 0.5s when throttle applied",
+    "match": "NO CHANGE - Bug still exists with identical behavior"
+  },
+  "evidenceFromTest": {
+    "testFile": "bug_evidence_afterburner_physics_1763502026010.json",
+    "normalPhysics_WITHOUT_afterburner": {
+      "speedAt1s": "73.28 m/s",
+      "speedAt3s": "137.07 m/s",
+      "accelerationCurve": "NORMAL (follows EVE exponential formula)"
+    },
+    "brokenPhysics_WITH_afterburner": {
+      "speedAt0.5s": "525 m/s (INSTANT!)",
+      "speedAt1.5s": "525 m/s (no curve, instant max)",
+      "accelerationRate": "0 m/s² (should be exponential)",
+      "deceleration": "INSTANT (525 → 0 in 0.5s)"
+    }
+  },
+  "whatTheFixDid": {
+    "file": "js/systems/StationManager.js:553-576",
+    "changes": "Added rotation alignment code to match ship orientation with undock velocity direction",
+    "intent": "Prevent direction mismatch between ship forward vector and velocity direction",
+    "whatItFixed": "Possibly prevents ships from changing direction (yaw/pitch), but does NOT fix instant acceleration"
+  },
+  "whatTheFixDIDNOTFix": {
+    "instantAcceleration": "Ship still jumps from 0 to 525 m/s instantly (should take 20-35 seconds)",
+    "accelerationCurve": "Exponential curve still bypassed - no gradual acceleration observed",
+    "instantDeceleration": "Ship still stops instantly (525 → 0 m/s in 0.5s)"
+  },
+  "regressionCheck": {
+    "newErrors": [],
+    "brokenCommands": [],
+    "status": "No new regressions detected, but original bug remains unfixed"
+  },
+  "rootCauseAnalysis": {
+    "previousDiagnosis": "INCORRECT - Fix assumed rotation misalignment caused instant acceleration",
+    "realProblem": "The instant acceleration to max speed indicates velocity is being set directly, OR the exponential acceleration factor is being calculated incorrectly, OR timeConstant is near zero causing instant convergence",
+    "whereToLookNext": [
+      "ShipPhysics.js:157-165 - Check if timeConstant is valid when afterburner fitted (should be agility/500000)",
+      "Ship.js:116-120 - Verify agility value is preserved when afterburner changes maxVelocity",
+      "Check if afterburner affects agility stat (agility→0 would cause timeConstant→0 → instant acceleration)",
+      "Check if there's code path that bypasses applyExponentialAcceleration() when afterburner active",
+      "Verify that factor calculation '1 - Math.exp(-k * deltaTime)' doesn't evaluate to 1.0 (instant change)"
+    ],
+    "suspectedIssue": "When afterburner is fitted, either: (1) agility stat is being corrupted to 0 or very low value, OR (2) timeConstant is being set incorrectly, OR (3) there's a code path setting velocity directly that only activates with afterburner"
+  },
+  "confidence": 0.99,
+  "recommendation": "The fix addressed rotation alignment but missed the actual bug. Need to: 1) Add logging to track timeConstant value when afterburner is fitted/active, 2) Verify agility stat is preserved during syncStatsFromFitting(), 3) Check if any code directly sets velocity when afterburner is active, 4) Trace complete physics update path with afterburner to find where exponential acceleration is bypassed"
+}
+```
+
+---
+
+## DECISION: FIX_INCOMPLETE
+
+The afterburner physics bug is **NOT RESOLVED**. The test evidence proves the ship still exhibits instant acceleration (0 → 525 m/s in 0.5 seconds) and instant deceleration (525 → 0 in 0.5s) when an afterburner is fitted. 
+
+The fix that was implemented (rotation alignment in StationManager.js) addressed a different symptom (direction mismatch) but did not fix the core issue causing instant velocity changes that bypass the EVE-style exponential acceleration curve.

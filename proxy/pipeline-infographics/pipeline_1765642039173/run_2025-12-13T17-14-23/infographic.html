@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: Living Game World Pipeline</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+
+    
+
+    <div class="header">
+      <h1><span class="running-indicator"></span>Living Game World Pipeline</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1765642039173</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">687.4s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">5/6</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">⚡ Running</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Progression Designer</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Designs leveling, skill trees, and advancement</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">progression_designer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">designer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">151.0s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">14</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,824 characters)</span></div>
+        <button class="collapsible" data-target="output_progression_designer_14">Click to expand output from progression_designer</button>
+        <div class="collapsible-content" id="output_progression_designer_14">
+          <pre class="code-content">## Summary
+
+I&#039;ve created the **Progression Design Document** for Cosmic Tic-Tac-Toe, establishing a comprehensive advancement system that rewards engagement while preserving the game&#039;s elegant simplicity.
+
+**Key Systems Designed:**
+
+**Leveling System:** 100-level account progression using Cosmic Resonance (XP) earned from matches. The gentle exponential curve (~890 matches to max) ensures steady progress. A 10-tier Prestige system extends endgame with exclusive cosmetics and cumulative XP bonuses.
+
+**Dual Skill Trees:** Parallel paths for Orbis (defensive/flowing aesthetics) and Crucia (aggressive/sharp aesthetics), each with 3 branches and 12 nodes. Completing both unlocks the Awakened Path for dual-force mastery. Total investment: 2,100 Orbs + 2,100 Shards + 26 Alignment Crystals.
+
+**Gear Progression:** Five-tier symbol evolution (Basic → Legendary) for both O and X, plus tiered grid skins, victory effects, and profile items. Costs integrate with the economy document&#039;s pricing structure.
+
+**Unlock Timeline:** Gradual feature access—basic gameplay at match 1, trading at 50, The Eternal AI at 200, Prestige at 500+.
+
+**Milestones:** Regular celebration moments for matches played (10/50/100/500), wins (25/100/500), streaks (3/5/10+), and collection completion percentages.
+
+**Combat Integration:** XP bonuses for strategic play (swift victories +50 CR, forks +25 CR, comebacks +35 CR) ensure skilled play accelerates progression.
+
+**Endgame Systems:** Prestige cycling (10 levels), collection completion tracking, seasonal passes with 50 tiers, and mastery achievements keep veterans engaged indefinitely.
+
+The system ensures every match contributes to meaningful progress while respecting the balance analysis findings—all progression is cosmetic, never affecting gameplay.
+
+DECISION: progression_complete</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: PROGRESSION_COMPLETE</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;PROGRESSION_COMPLETE&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>engagement_scorer</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Engagement Scorer</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Validates progression feels fun and rewarding</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">engagement_scorer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">reviewer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">121.0s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">15</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,713 characters)</span></div>
+        <button class="collapsible" data-target="output_engagement_scorer_15">Click to expand output from engagement_scorer</button>
+        <div class="collapsible-content" id="output_engagement_scorer_15">
+          <pre class="code-content">## Summary
+
+I&#039;ve completed the engagement analysis for Cosmic Tic-Tac-Toe&#039;s progression system. Here are the key findings:
+
+**Verdict: ENGAGING**
+
+The progression system successfully transforms a simple tic-tac-toe game into a compelling long-term experience. Key strengths include:
+
+- **Excellent reward density** - Every match yields tangible progress through XP, currencies, and streak bonuses
+- **Multiple parallel tracks** - Account leveling, dual skill trees, collections, achievements, and seasonal content ensure players always have goals
+- **Meaningful choices** - Faction identity (Orbis vs Crucia) and tree branching offer real aesthetic customization
+- **Respect for player time** - Even losses reward 50 Essence, no match feels wasted
+- **Pure cosmetic progression** - No pay-to-win mechanics protect competitive integrity
+
+**Minor Concerns Identified:**
+
+1. **Levels 70-85** represent a slight grind point where level-ups slow but major rewards are distant
+2. **Prestige reset psychology** - Going from level 100 to level 1 may trigger loss aversion despite retained cosmetics
+3. **Forced symbol variety** - Requiring 50 wins with each symbol for Awakened content may frustrate specialists
+4. **FOMO elements** - Limited-time events create anxiety for casual players
+
+**Integration Status:** The progression system aligns cleanly with both the economy design (currency earning rates match progression costs) and combat design (XP bonuses reinforce strategic play). No conflicts detected.
+
+The system is ready for integration with minor tuning recommendations (add intermediate milestone rewards, display &quot;Prestige X, Level Y&quot; format, consider reducing Awakened win requirements).
+
+DECISION: approved</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: APPROVED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;APPROVED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>systems_integrator</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Systems Integrator</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Combines all systems into cohesive whole</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">systems_integrator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">integrator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">170.3s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">16</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,559 characters)</span></div>
+        <button class="collapsible" data-target="output_systems_integrator_16">Click to expand output from systems_integrator</button>
+        <div class="collapsible-content" id="output_systems_integrator_16">
+          <pre class="code-content">## Summary
+
+I&#039;ve created a comprehensive systems integration document for Cosmic Tic-Tac-Toe that synthesizes all the design systems (lore, geography, culture, combat, economy, and progression) into a unified game design.
+
+**Key Integration Achievements:**
+
+1. **System Integration Map** - Visual diagram showing how all systems connect, with data flows between combat outcomes, economy rewards, and progression XP
+
+2. **Resolved Design Conflicts:**
+   - First-mover advantage balanced through asymmetric faction bonuses
+   - Streak farming prevented via AI difficulty reward multipliers
+   - Prestige reset psychology mitigated with &quot;Prestige X, Level Y&quot; display format
+
+3. **Four Core Gameplay Loops:**
+   - Micro (single match ~60 seconds)
+   - Session (10 matches ~30 minutes)
+   - Monthly progression
+   - 6-month veteran journey
+
+4. **Unified Balance Philosophy:**
+   - Spectacle rewards engagement
+   - Cosmetic-only progression (no pay-to-win)
+   - Time respect (losses still reward 50% of victory)
+   - Meaningful player choices
+
+5. **Implementation Priorities:**
+   - Phase 1: Core combat + basic visuals + essential economy
+   - Phase 2: Faction identity + expanded progression + shops
+   - Phase 3: Advanced features + prestige + legendary tier
+   - Phase 4: Live service + events + social features
+
+The design transforms simple tic-tac-toe into an epic cosmic ritual where every match feels consequential, every player can express faction identity, and spectacular graphics reward engagement regardless of outcome.
+
+DECISION: integration_complete</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: INTEGRATION_COMPLETE</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;INTEGRATION_COMPLETE&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>emergence_detector</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Emergence Detector</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Identifies unintended interactions and emergent behaviors</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">emergence_detector</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">reviewer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">122.3s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">17</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,370 characters)</span></div>
+        <button class="collapsible" data-target="output_emergence_detector_17">Click to expand output from emergence_detector</button>
+        <div class="collapsible-content" id="output_emergence_detector_17">
+          <pre class="code-content">## Emergence Analysis Complete
+
+**VERDICT: MINOR_ISSUES**
+
+### Summary
+
+I&#039;ve analyzed all integrated systems for emergent behaviors. The design is solid overall, but I found one critical exploit that needs fixing:
+
+### Critical Exploit Found: Streak Shield Farm
+- **Mechanism:** Players can use Streak Shield (1 VF) + Void Novice AI (90% win rate) to trivially farm 15+ VF and Primordial Sparks
+- **Impact:** Undermines the entire rare currency economy
+- **Fix:** Require Grid Walker (1.0x difficulty) or higher AI for streak rewards (VF/AC/PS)
+
+### Positive Emergent Behaviors Worth Keeping:
+1. **&quot;Draw Philosopher&quot; playstyle** - The Eternal creates a Zen-like &quot;perfect play&quot; community
+2. **&quot;Awakened Grinder&quot; identity** - Dual-mastery requirements create respected community members
+3. **&quot;Dual Affinity + Streak&quot; timing** - Creates exciting &quot;big play&quot; moments
+
+### Other Minor Issues:
+- Alt account trading needs stronger mitigation (increase tax to 20%)
+- Cap overflow behavior needs clarification
+- Draw-specialists against The Eternal have no streak rewards (add draw streak)
+
+### Edge Cases Identified:
+- Cap collision when earning rewards
+- Faction War timing exploits
+- Seasonal achievement resets mid-progress
+
+The design demonstrates strong system coherence. With the Streak Shield fix applied, the game is ready for balance auditing.
+
+DECISION: minor_exploits</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: MINOR_EXPLOITS</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;MINOR_EXPLOITS&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>balance_auditor</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Balance Auditor</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Final holistic balance check across all systems</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">balance_auditor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">reviewer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">119.3s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">18</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,422 characters)</span></div>
+        <button class="collapsible" data-target="output_balance_auditor_18">Click to expand output from balance_auditor</button>
+        <div class="collapsible-content" id="output_balance_auditor_18">
+          <pre class="code-content">## Balance Audit Summary
+
+**VERDICT: NEEDS_TUNING**
+
+I&#039;ve completed the comprehensive balance audit for Cosmic Tic-Tac-Toe. The game demonstrates fundamentally sound design with an excellent cosmetic-only progression system that respects player time and creates fair gameplay.
+
+**Key Findings:**
+
+**Strengths:**
+- Power curve is smooth across all playtime milestones (1h to 200h+)
+- Economy flows correctly with appropriate scarcity for rare currencies
+- 50% defeat rewards ensure no wasted player time
+- Both Orbis and Crucia playstyles are equally viable
+- Pure cosmetic progression maintains perfect fairness
+
+**Critical Issues (Must Fix):**
+1. **Streak Shield Farm Exploit** - Players can combine Streak Shield (1 VF) with Void Novice AI to trivially farm 15+ VF from easy wins. **FIX: Require Grid Walker+ difficulty for streak rewards (VF/AC/PS)**
+
+**Medium Issues:**
+2. **Cap overflow handling** - No clarity on what happens when earning rewards near currency caps
+3. **No draw streak for The Eternal** - Draw specialists have no equivalent streak pathway
+
+**Minor Issues:**
+4. Alt account trading allows slow faction currency bypass (recommend increasing trade tax to 20%)
+
+**Launch Readiness: 85%** (95% with fixes applied)
+
+The design transforms simple tic-tac-toe into an engaging cosmic experience. With the Streak Shield fix applied, the game is ready for player experience validation.
+
+DECISION: needs_tuning</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: NEEDS_TUNING</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;NEEDS_TUNING&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>player_experience_simulator</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage running">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Player Experience Simulator</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Simulates actual player journeys and experiences</div>
+        </div>
+        <span class="stage-badge badge-running">running</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">player_experience_simulator</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">reviewer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">In progress...</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">19</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+
+      
+
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

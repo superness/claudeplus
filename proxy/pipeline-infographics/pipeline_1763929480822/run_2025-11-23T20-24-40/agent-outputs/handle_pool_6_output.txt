@@ -1,0 +1,55 @@
+**CRITICAL REALIZATION**: This is a **fundamental architectural mismatch** between CoiniumServ and the miner configuration:
+
+1. **CoiniumServ Design**: Solo mining pool where miners provide their own wallet address as username
+2. **Current Miner**: Sending `wallet.worker1` format (standard pool mining practice)
+3. **The Conflict**: CoiniumServ tries to use `bcrt1q...7.worker1` as a wallet address and fails validation
+
+**This is NOT fixable from the pool configuration alone.** The issue requires EITHER:
+- A: Miner reconfiguration to send bare wallet address (no worker suffix)
+- B: CoiniumServ code modification to strip worker suffixes  
+- C: Use a different pool software that supports true pool mining
+
+Since I'm the Pool Manager and this is a critical pool operation error that cannot be resolved through configuration alone, I need to report this as a **pool_error** with detailed diagnosis.
+
+## Pool Error Summary
+
+**Error Type**: Pool-Miner Protocol Incompatibility  
+**Status**: Cannot be resolved through pool configuration  
+**Root Cause**: CoiniumServ is designed for solo mining mode and cannot handle worker name suffixes in miner usernames
+
+**Evidence**:
+- Pool process running (PID 4148, now stopped)
+- Stratum server listening on 0.0.0.0:3333
+- Miner connects successfully and authenticates
+- Job creation fails: "Invalid wallet address: bcrt1qpsrfamx3tnkhk5xyy3k0vyprlfcwfmls4j2nf7.worker1"
+- Error occurs in `GenerationTransaction` constructor when building coinbase
+- Pool code attempts to use miner's username as wallet address
+- Worker suffix `.worker1` makes address invalid for Bitcoin validation
+
+**Configuration Attempts Made**:
+1. ✓ Updated pool wallet to valid bech32 address from daemon
+2. ✓ Added `rewards` section (correct format: `{"address": percent}`)
+3. ✓ Set `validateUsername: false` to disable validation
+4. ✗ **Failed**: Pool still uses miner username as wallet address regardless of settings
+
+**Technical Analysis**:
+- CoiniumServ architecture: Solo mining pool (each miner provides their own address)
+- `wallet.address` in config: Not used for miner rewards, only for pool reference
+- `rewards` array: Pool fee deductions, not primary mining address
+- Miner authentication: Username expected to be a valid wallet address
+- Current miner: Sending `address.workername` (standard Stratum convention)
+- Incompatibility: CoiniumServ expects bare addresses, cannot parse worker suffixes
+
+**Required Resolution** (Outside Pool Manager Scope):
+The **miner** must be reconfigured to connect using ONE of these patterns:
+- Username: bare wallet address (no `.worker1` suffix)
+- Username: arbitrary string (not a wallet address) if pool supports anonymous mining
+- Different pool software that supports standard pool mining with worker names
+
+**Current State**:
+- Daemon: RUNNING and accessible (172.22.45.9:18443)
+- Pool: STOPPED (incompatibility detected)
+- Stratum port: NOT listening (pool stopped)
+- Miner: Will fail to mine until reconfigured
+
+DECISION: pool_error

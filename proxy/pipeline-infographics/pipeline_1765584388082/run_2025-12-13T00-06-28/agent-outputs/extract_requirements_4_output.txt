@@ -1,0 +1,135 @@
+Now I have a complete picture. Let me compile the requirements extraction for the Collision feature.
+
+## Feature: Collision
+
+### Specifications from Design Docs
+
+#### Technical/Visual Requirements
+
+The design documents reference **Guild Wars 1** as the primary inspiration. From the user's original request:
+
+> "3D third-person perspective similar to Guild Wars 1"
+
+The existing World.ts creates gothic buildings and structures that the player should not be able to walk through. From `World.ts:178-213`:
+```typescript
+const buildingConfigs = [
+  { pos: new THREE.Vector3(30, 0, 30), size: { w: 10, h: 20, d: 10 } },
+  { pos: new THREE.Vector3(-40, 0, 20), size: { w: 15, h: 30, d: 12 } },
+  { pos: new THREE.Vector3(25, 0, -35), size: { w: 12, h: 25, d: 8 } },
+  { pos: new THREE.Vector3(-30, 0, -30), size: { w: 8, h: 15, d: 8 } },
+  { pos: new THREE.Vector3(50, 0, 0), size: { w: 20, h: 40, d: 15 } },
+  { pos: new THREE.Vector3(-50, 0, 10), size: { w: 18, h: 35, d: 14 } },
+];
+```
+
+Industrial pipes at radius 60, from `World.ts:222-232`:
+```typescript
+for (let i = 0; i < 8; i++) {
+  const angle = (i / 8) * Math.PI * 2;
+  const radius = 60;
+  const pipeGeometry = new THREE.CylinderGeometry(1, 1, 15, 8);
+  // ...
+  pipe.position.x = Math.cos(angle) * radius;
+  pipe.position.z = Math.sin(angle) * radius;
+}
+```
+
+#### Mechanics
+
+From `Player.ts:343-345`, current movement does **no collision detection**:
+```typescript
+// Keep player on ground (simple ground clamping)
+this.position.y = Math.max(0, this.position.y);
+```
+
+From the combat design docs, there are references to **positioning mechanics** that imply collision matters:
+
+**Movement and Range Mechanics** from combat-design.md:
+- `"180° frontal arc for melee attacks"` - implies positional awareness
+- `"Immobilize: Cannot move (can still attack)"` - player can still be blocked by obstacles
+- `"Movement during activation (varies by skill)"` - movement is core gameplay
+- `"Ground-target for area effects"` - implies ground plane interactions
+
+**Skill positioning references** from combat-design.md:
+- `"Jump Jets: Leap to location, 12 sec CD"` - 800 range - implies collision-aware pathfinding
+- `"Vectored Thrusters: Dash through enemies"` - implies collision awareness
+- `"Advanced Positions: Teleport to target location, 25 sec CD"` - 1200 range
+
+**Click-to-move from InputManager.ts:172-193** - already implemented but needs collision:
+```typescript
+// Create ground plane for intersection
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+// ... raycast to ground for movement target
+this.player.moveTo(target);
+```
+
+#### Entities/Content
+
+**Buildings (Box collision)** from World.ts:
+- 6 rectangular buildings with positions and dimensions (w, h, d)
+- Need AABB (Axis-Aligned Bounding Box) collision
+
+**Pipes (Cylinder collision)** from World.ts:
+- 8 cylindrical pipes at radius 60
+- Each is 1 unit radius, 15 units tall
+
+**Player Character** from Player.ts:
+- Body: CapsuleGeometry(0.4, 1.2) at y=1.4
+- Total height approximately 2.6 units
+- Effective collision radius: ~0.5-0.6 units
+
+**Ground plane** from World.ts:
+- 500x500 units with slight height variation
+- Has wave-like terrain: `Math.sin(x * 0.05) * 0.5 + Math.cos(z * 0.05) * 0.5`
+
+#### Referenced Systems
+
+**Guild Wars 1** - from all design documents and original request:
+- Smooth collision response (sliding along walls)
+- Player cannot clip through solid objects
+- Click-to-move should pathfind around obstacles or stop at walls
+- No complex physics simulation needed - just solid wall blocking
+
+### Implementation Checklist
+
+[ ] **Collision Data Structure**
+- Create array/storage for obstacle bounding volumes in World.ts
+- Store building positions and AABB bounds (position, width, depth)
+- Store pipe positions and collision radius
+
+[ ] **Player Collision Radius**
+- Define player collision radius (~0.5 units based on body geometry)
+- Player uses simple circle/cylinder collision (XZ plane)
+
+[ ] **WASD Movement Collision**
+- Before applying movement in Player.ts updateMovement()
+- Check if new position would collide with any obstacle
+- If collision: slide along wall (project movement vector onto wall normal)
+- If still colliding: stop movement
+
+[ ] **Click-to-Move Collision**
+- Check if target position is inside an obstacle
+- If target is blocked: stop at edge of obstacle OR cancel move
+- During movement: check each frame for collision
+
+[ ] **Ground Clamping Enhancement**
+- Current: `this.position.y = Math.max(0, this.position.y)`
+- Enhanced: Sample terrain height at player XZ position (account for World's height variation)
+
+[ ] **Collision Response Method: Sliding**
+- Guild Wars 1 style: player slides along walls, not stops dead
+- Calculate penetration depth and direction
+- Push player out by penetration amount in collision normal direction
+- Preserve velocity component parallel to wall
+
+[ ] **Expose Collision Data from World**
+- Add method `getColliders()` or similar to World.ts
+- Return array of collision primitives (boxes, cylinders)
+- Player can query this for collision checks
+
+[ ] **Performance Consideration**
+- Simple spatial check (6 buildings + 8 pipes = 14 objects)
+- No spatial partitioning needed for this scale
+- Simple AABB vs circle and cylinder vs circle tests
+
+DECISION: requirements_extracted

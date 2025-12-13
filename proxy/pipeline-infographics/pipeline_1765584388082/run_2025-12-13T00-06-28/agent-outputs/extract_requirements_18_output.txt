@@ -1,0 +1,333 @@
+Now I have comprehensive information from all design documents. Let me compile the specific requirements for the Basic Combat feature.
+
+## Feature: Basic Combat
+
+### Specifications from Design Docs
+
+#### Technical/Visual Requirements
+
+From CLAUDE.md and design context:
+> "Warhammer 40K MMO that plays like guild wars 1"
+> "3D third-person perspective similar to Guild Wars 1"
+> "TypeScript/Express API server with PostgreSQL database and WebSocket combat system"
+> "WebSocket combat at `ws://localhost:3001/instances/{instanceId}`"
+
+#### Combat System Type
+
+From combat-design.md:
+> "Combat System Type: **Hybrid Real-Time with Skill Queue**"
+> 
+> ```
+> COMBAT FLOW
+> Real-Time Movement + Skill-Based Abilities
+> ├── No auto-attack (all damage from skills)
+> ├── 8-skill hotbar (Guild Wars 1 style)
+> ├── Skills have activation times (0.25-3 seconds)
+> ├── Skill queue allows 1 action buffer
+> ├── Movement during activation (varies by skill)
+> └── No global cooldown (individual skill cooldowns)
+> 
+> TARGETING SYSTEM
+> ├── Tab-targeting for primary abilities
+> ├── Ground-target for area effects
+> ├── Smart-target for allies/heals
+> ├── No lock-on requirement (can switch freely)
+> └── 180° frontal arc for melee attacks
+> ```
+
+#### Core Combat Stats
+
+From combat-design.md:
+> ```
+> Primary Attributes
+> | Attribute | Effect | Soft Cap | Hard Cap |
+> | Strength | +1% melee damage per 10 | 200 | 400 |
+> | Ballistics | +1% ranged damage per 10 | 200 | 400 |
+> | Toughness | +1% health per 10, +0.5% armor per 10 | 200 | 400 |
+> | Willpower | +1% ability damage per 10, +1% condition duration | 200 | 400 |
+> | Initiative | +1% attack speed per 10, +0.5% movement per 10 | 200 | 400 |
+> 
+> DERIVED STAT FORMULAS
+> 
+> Health = 200 + (Level × 20) + (Toughness × 5)
+> ├── Level 1: 220-320 HP
+> ├── Level 20: 600-900 HP
+> └── Level 30 (cap): 800-1200 HP
+> 
+> Energy = 50 + (Willpower × 0.25)
+> ├── Base regen: 3 per second
+> ├── Range: 50-100 energy pool
+> 
+> Armor = Base (class) + Equipment + (Toughness × 0.5)
+> ├── Damage reduction = Armor / (Armor + 100)
+> ├── Cap: 80% reduction (requires 400 armor)
+> ├── Example: 100 armor = 50% reduction
+> 
+> Critical Chance = 5% + (Initiative × 0.05%)
+> ├── Base: 5%
+> ├── Soft cap: 25% (at 400 Initiative)
+> 
+> Critical Damage = 150% + (Strength or Ballistics × 0.1%)
+> ├── Base: 150%
+> ├── Soft cap: 190%
+> └── Hard cap: 250%
+> ```
+
+#### Damage Calculation Formula
+
+From combat-design.md:
+> ```
+> DAMAGE CALCULATION (Per Hit)
+> 
+> Base Damage = Weapon Damage × Skill Multiplier
+> Modified Damage = Base Damage × (1 + Attribute Bonus) × (1 + Skill Bonuses)
+> Armor Reduction = Modified Damage × (1 - Armor Mitigation) × (1 - Damage Type Modifier)
+> Final Damage = Armor Reduction × Critical Multiplier × Condition Modifiers
+> 
+> EXAMPLE CALCULATION:
+> ├── Weapon: 50 base damage
+> ├── Skill multiplier: 1.5×
+> ├── Strength bonus: +20% (200 Strength)
+> ├── Target armor: 100 (50% reduction)
+> ├── Damage type: Piercing (-25% armor effectiveness)
+> ├── Critical: Yes (175% multiplier)
+> ├── Target has "Vulnerable" (+15% damage taken)
+> ├── Base: 50 × 1.5 = 75
+> ├── Attribute: 75 × 1.20 = 90
+> ├── Armor: 100 × 0.75 = 75 effective armor
+> ├── Reduction: 90 × (1 - 0.428) = 51.5
+> ├── Critical: 51.5 × 1.75 = 90.1
+> ├── Condition: 90.1 × 1.15 = 103.6
+> └── Final Damage: 104
+> 
+> DAMAGE BONUS CAP: +200% maximum from all sources combined
+> ```
+
+#### Damage Types
+
+From combat-design.md:
+> ```
+> Physical Damage Types:
+> | Type | Source | Armor Interaction | Special |
+> | Kinetic | Bolters, slugs, impacts | Full armor reduction | Knockback chance |
+> | Piercing | Needles, blades, claws | Ignores 25% armor | Bleed application |
+> | Explosive | Grenades, missiles, plasma | 75% armor effectiveness | AoE splash |
+> | Rending | Power weapons, chainswords | Ignores 50% armor | Armor degradation |
+> 
+> Energy Damage Types:
+> | Type | Source | Armor Interaction | Special |
+> | Thermal | Flamers, meltas, plasma | Ignores armor, resisted by shields | Burning condition |
+> | Electric | Arc weapons, shock | 50% armor effectiveness | Energy disruption |
+> | Warp | Psychic powers (Imperial) | Ignores physical armor | Corruption stacks |
+> | Photon | Tau pulse weapons | Full armor reduction | Shield disruption |
+> ```
+
+#### Status Effects & Conditions
+
+From combat-design.md:
+> ```
+> Damaging Conditions:
+> | Condition | Damage | Duration | Stack | Source |
+> | Bleeding | 5 + (Weapon Damage × 0.1)/sec | 6 sec | 5 | Piercing attacks |
+> | Burning | 8 + (Weapon Damage × 0.15)/sec | 4 sec | 3 | Thermal attacks |
+> | Poison | 3 + (Weapon Damage × 0.08)/sec | 10 sec | 10 | Toxin weapons |
+> | Corruption | 10 + (Willpower × 0.2)/sec | 5 sec | 3 | Warp effects |
+> | Shock | 6/sec + 50% skill interrupt | 3 sec | 1 | Electric attacks |
+> 
+> Control Conditions:
+> | Condition | Effect | Duration | Cleanse |
+> | Stun | Cannot act | 1-3 sec | Stability buff |
+> | Knockdown | Prone, -50% defense | 2 sec | Quick recovery skill |
+> | Fear | Movement away from source | 2-4 sec | Morale skills |
+> | Slow | -40% movement speed | 3-6 sec | Cleanse skills |
+> | Blind | -90% accuracy | 2-4 sec | Cleanse skills |
+> | Immobilize | Cannot move (can still attack) | 2-4 sec | Teleport/charge skills |
+> | Taunt | Must attack taunting enemy | 3 sec | Immunity after expiry |
+> 
+> Beneficial Conditions:
+> | Condition | Effect | Duration | Source |
+> | Regeneration | +15 HP/sec | 10 sec | Healing skills |
+> | Protection | +33% armor | 5 sec | Defensive skills |
+> | Swiftness | +33% movement | 10 sec | Speed skills |
+> | Aegis | Block next attack | Until triggered | Shield skills |
+> | Fury | +20% critical chance | 5 sec | Aggressive skills |
+> | Might | +25% damage (additive) | 8 sec | Buff skills |
+> | Inspired | +15% all stats | 10 sec | Leadership skills |
+> 
+> Condition Immunity System:
+> ├── Stun immunity: 8 seconds after stun ends
+> ├── Knockdown immunity: 6 seconds
+> ├── Fear immunity: 10 seconds
+> ├── Taunt immunity: 15 seconds
+> ├── "Recently Inspired" immunity: 30 seconds
+> ```
+
+#### Sample Skill Definitions (Battle Sister Example)
+
+From combat-design.md:
+> ```
+> ZEAL LINE (Damage)
+> ├── Holy Strike: 80 damage, 4 sec CD, 10 energy
+> │   └── Single target, +50% vs Daemons
+> ├── Righteous Fury: 120 damage, 8 sec CD, 15 energy
+> │   └── Cone AoE, burns enemies
+> ├── Emperor's Wrath: 200 damage, 20 sec CD, 25 energy
+> │   └── Leap attack, AoE knockdown
+> └── Acts of Faith: 300 damage, 45 sec CD, 40 energy
+>     └── Channel 3 sec, massive holy AoE
+> ```
+
+From combat-design.md (Guardsman):
+> ```
+> MARKSMANSHIP LINE (Single Target)
+> ├── Precise Shot: 60 damage, 3 sec CD, 8 energy
+> │   └── +25% crit chance
+> ├── Headshot: 150 damage, 12 sec CD, 18 energy
+> │   └── 2 sec stun on crit
+> ├── Overwatch: Auto-attack enemies entering area, 20 sec CD, 25 energy
+> │   └── 8 second duration, 40 damage per trigger
+> └── Kill Shot: 400 damage, 30 sec CD, 35 energy
+>     └── Execute enemies below 25% HP (instant kill threshold)
+> ```
+
+#### Enemy Stats (for Basic Combat Testing)
+
+From combat-design.md:
+> ```
+> Common Enemies:
+> | Enemy | HP | Armor | DPS | Behavior |
+> | PDF Conscript | 150 | 40 | 20 | Groups, flees at 25% HP |
+> | Imperial Guardsman | 250 | 60 | 35 | Holds position, uses cover |
+> | Cultist | 120 | 20 | 22 | Frenzied attacks |
+> | Gretchin | 60 | 10 | 8 | Swarm, cowardly |
+> | Slugga Boy | 200 | 50 | 30 | Rush to melee |
+> 
+> Elite Enemies:
+> | Enemy | HP | Armor | DPS | Special Abilities |
+> | Space Marine Scout | 600 | 120 | 80 | Sniper shots, stealth detection |
+> | Space Marine | 1000 | 180 | 120 | Bolter volleys, melee charge |
+> | Nob | 500 | 100 | 70 | Power klaw, rally nearby Orks |
+> ```
+
+#### Time-to-Kill Targets
+
+From balance-analysis.md:
+> ```
+> TIME-TO-KILL TARGETS (4-player party, appropriate gear)
+> Common Enemy: 3-5 seconds
+> Elite Enemy: 15-25 seconds
+> Mini-Boss: 45-90 seconds
+> Full Boss: 3-8 minutes (depending on mechanics)
+> 
+> Solo TTK (appropriate gear):
+> Common Enemy: 5-8 seconds
+> Elite Enemy: 30-45 seconds
+> Mini-Boss: 2-4 minutes
+> Full Boss: 5-15 minutes (solo-tuned bosses only)
+> ```
+
+#### DPS Targets by Class
+
+From combat-design.md:
+> ```
+> TARGET DPS BY CLASS/ROLE (Sustained, T3 Gear, Level 15)
+> 
+> Pure DPS Classes:
+> ├── Choppa Boy (melee): 175-200 DPS
+> ├── Fire Warrior (ranged): 170-190 DPS
+> ├── Guardsman (ranged): 160-180 DPS
+> └── Kommando (burst): 140 sustained, 300 burst
+> 
+> Hybrid Classes:
+> ├── Battle Sister: 120-140 DPS
+> ├── Crisis Suit: 150-170 DPS
+> ├── Pathfinder: 130-150 DPS
+> └── Shoota Boy: 150-170 DPS
+> 
+> Support/Tank Classes:
+> ├── Water Caste: 100-130 DPS
+> ├── Crusader: 80-100 DPS
+> ├── Tech-Priest: 90-110 DPS
+> └── Weirdboy: 140-180 DPS (variance by WAAAGH!)
+> ```
+
+#### Combat Flag System (For Stealth)
+
+From combat-design.md:
+> ```
+> Combat Flag System: 4-second combat timer prevents stealth re-entry after attacking
+> 
+> Sneak: Enter stealth, 10 sec CD, 12 energy
+> └── BLOCKED while "In Combat" (4 sec after any offensive action)
+> ```
+
+#### XP and Loot from Combat
+
+From combat-design.md:
+> ```
+> XP AWARDS BY ENEMY TYPE:
+> ├── Common Enemy Kill: 15-25 XP
+> ├── Elite Enemy Kill: 50-80 XP
+> ├── Boss Kill: 200-500 XP
+> 
+> Standard Enemy Drops:
+> ├── Currency: 10-25 Thrones (100%)
+> ├── T1 Material: 60% chance, 1-2 quantity
+> ├── T2 Material: 15% chance, 1 quantity
+> ├── Equipment: 0.5% chance (T1-T2)
+> ```
+
+### Implementation Checklist
+
+#### Core Combat System
+- [ ] Create `CombatSystem` class that processes skill activations
+- [ ] Implement `dealDamage(attacker, target, skill)` method
+- [ ] Connect player `useSkill()` to actually deal damage to targeted entity
+- [ ] Implement damage calculation formula: `Base × (1 + Attr) × (1 - Armor)`
+- [ ] Add critical hit check (5% base + Initiative bonus)
+- [ ] Add critical damage multiplier (150% base)
+
+#### Skill Definitions
+- [ ] Create skill definition interface with: `id, name, damage, energyCost, cooldown, range, targetType, damageType`
+- [ ] Implement at least 4 starter skills for testing:
+  - Holy Strike: 80 damage, 10 energy, 4s cooldown, melee
+  - Precise Shot: 60 damage, 8 energy, 3s cooldown, ranged
+  - Chop: 70 damage, 8 energy, 3s cooldown, melee
+  - Pulse Volley: 70 damage, 10 energy, 4s cooldown, ranged
+- [ ] Skills have `activation_time` (0.25-3 seconds)
+- [ ] Skills have individual cooldowns (no global CD)
+
+#### Damage Types
+- [ ] Implement damage type enum: KINETIC, PIERCING, EXPLOSIVE, RENDING, THERMAL, ELECTRIC, WARP, PHOTON
+- [ ] Piercing ignores 25% armor
+- [ ] Rending ignores 50% armor
+- [ ] Thermal ignores armor (resisted by shields)
+- [ ] Electric has 50% armor effectiveness
+
+#### Target-Skill Connection
+- [ ] When skill used with valid target in range, call `target.takeDamage(finalDamage)`
+- [ ] Check range before skill execution (melee = 0, ranged varies)
+- [ ] Check energy cost before execution
+- [ ] Apply cooldown after successful use
+- [ ] Display floating damage numbers on hit
+
+#### Enemy Responses
+- [ ] Enemy `takeDamage()` reduces `currentHealth`
+- [ ] Enemy death when `currentHealth <= 0`
+- [ ] Enemy drops XP (15-25 for common)
+- [ ] Enemy drops currency (10-25 Thrones)
+- [ ] Enemy corpse/death animation
+
+#### Combat Feedback
+- [ ] Show damage numbers floating above enemies
+- [ ] Hit confirmation visual/audio
+- [ ] Skill activation animation
+- [ ] Energy consumption display update
+- [ ] Cooldown visual on skill bar
+
+#### Stat Integration
+- [ ] Player attributes affect damage (Strength for melee, Ballistics for ranged)
+- [ ] Enemy armor reduces incoming damage: `damage × (1 - armor/(armor+100))`
+- [ ] Health regeneration outside combat
+
+DECISION: requirements_extracted

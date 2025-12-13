@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- NO meta refresh - viewer handles refreshing via iframe reload to preserve toggle state -->
+  <title>Pipeline: Game Feature Implementer V2</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .metric {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+    .metric-label {
+      font-size: 0.85em;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #333;
+      margin-top: 5px;
+    }
+    .timeline {
+      position: relative;
+      padding-left: 40px;
+      margin-top: 20px;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 20px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    .stage {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      margin-bottom: 20px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.2s;
+    }
+    .stage:hover {
+      transform: translateX(5px);
+    }
+    .stage::before {
+      content: '';
+      position: absolute;
+      left: -28px;
+      top: 30px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 0 0 2px #667eea;
+    }
+    .stage.running::before { background: #ffc107; box-shadow: 0 0 0 2px #ffc107, 0 0 20px #ffc107; }
+    .stage.completed::before { background: #28a745; box-shadow: 0 0 0 2px #28a745; }
+    .stage.error::before { background: #dc3545; box-shadow: 0 0 0 2px #dc3545; }
+    .stage-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 15px;
+    }
+    .stage-title {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #333;
+    }
+    .stage-badge {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-running { background: #fff3cd; color: #856404; }
+    .badge-completed { background: #d4edda; color: #155724; }
+    .badge-error { background: #f8d7da; color: #721c24; }
+    .stage-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .meta-item {
+      font-size: 0.9em;
+    }
+    .meta-label {
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .meta-value {
+      color: #333;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    .stage-output {
+      margin-top: 15px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .stage-output pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+      line-height: 1.6;
+      color: #333;
+    }
+    .error-box {
+      background: #fff5f5;
+      border: 2px solid #fc8181;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 15px;
+    }
+    .error-title {
+      color: #c53030;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .error-stack {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.85em;
+      color: #742a2a;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .routing-info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 6px;
+    }
+    .routing-decision {
+      font-weight: bold;
+      color: #1976D2;
+      margin-bottom: 5px;
+    }
+    .completion-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .completion-banner h2 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .running-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ffc107;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 1.5s infinite;
+    }
+    .ai-summary {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      border-left: 6px solid #667eea;
+    }
+    .ai-summary h2 {
+      font-size: 1.8em;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .summary-narrative {
+      font-size: 1.1em;
+      line-height: 1.8;
+      color: #555;
+    }
+    .collapsible {
+      cursor: pointer;
+      padding: 12px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: bold;
+      color: #495057;
+      transition: background 0.2s;
+    }
+    .collapsible:hover {
+      background: #e9ecef;
+    }
+    .collapsible::before {
+      content: '▶ ';
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+    .collapsible.active::before {
+      transform: rotate(90deg);
+    }
+    .collapsible-content {
+      display: none;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      margin-top: 5px;
+      border-left: 4px solid #667eea;
+    }
+    .collapsible-content.active {
+      display: block;
+    }
+    .prompt-section {
+      background: #fff5e6;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .output-section {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 6px;
+    }
+    .section-label {
+      font-weight: bold;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .char-count {
+      font-size: 0.85em;
+      color: #6c757d;
+      font-style: italic;
+    }
+    pre.code-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 0.85em;
+      line-height: 1.6;
+      color: #333;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      max-height: none;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    
+
+    
+
+    <div class="header">
+      <h1><span class="running-indicator"></span>Game Feature Implementer V2</h1>
+      <p style="color: #6c757d; font-size: 1.1em; margin-top: 5px;">Pipeline ID: pipeline_1765581698395</p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">Elapsed Time</div>
+          <div class="metric-value">429.0s</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stages Completed</div>
+          <div class="metric-value">5/6</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Errors</div>
+          <div class="metric-value" style="color: #28a745">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Status</div>
+          <div class="metric-value" style="font-size: 1.2em;">⚡ Running</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline">
+      
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Assess Current State</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Analyzes what exists: design docs, existing code, what&#039;s working, what&#039;s not.</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">game_state_assessor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">analyzer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">50.3s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">1</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">1,176 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">1,635 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(1,176 characters)</span></div>
+        <button class="collapsible" data-target="prompt_assess_state_1">Click to expand prompt from game_state_assessor</button>
+        <div class="collapsible-content" id="prompt_assess_state_1">
+          <pre class="code-content">You are a game development state assessor. Your job is to analyze a game project and determine its current state.
+
+You MUST use Read and Glob tools to examine:
+1. Check if a game client exists (look for index.html, game.js, phaser references)
+2. Check for design docs (look in docs/ or design-docs/)
+3. Check what code exists (src/ folder structure)
+4. Check if the game runs (look for package.json, check scripts)
+
+After examining the project, output a brief assessment:
+
+## Current State
+- Client exists: yes/no
+- Design docs: list what exists
+- Backend code: describe what&#039;s there
+- Can run: yes/no
+
+## Recommendation
+State whether we need to set up the client first or can start implementing features.
+
+DECISION: needs_setup (if no game client exists)
+DECISION: ready_for_features (if client exists and we can add features)
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- needs_setup: Go to setup_client
+- ready_for_features: Go to select_feature
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: needs_setup
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(1,635 characters)</span></div>
+        <button class="collapsible" data-target="output_assess_state_1">Click to expand output from game_state_assessor</button>
+        <div class="collapsible-content" id="output_assess_state_1">
+          <pre class="code-content">## Current State
+
+- **Client exists**: No - No game client found. No index.html, game.js, or Phaser references exist in the project. The only HTML files found are in node_modules.
+- **Design docs**: Extensive documentation exists in `design-docs/`:
+  - `combat-design.md` - Detailed combat mechanics, damage types, skill system
+  - `progression-design.md` - Leveling, XP curves, horizontal progression
+  - `balance-analysis.md`
+  - `balance-audit.md`
+  - `engagement-analysis.md`
+  - `emergence-analysis.md`
+  - `systems-integration.md`
+  - `player-experience.md`
+  - `data-model.md`
+  - `api-specification.md`
+- **Backend code**: Full TypeScript/Express backend exists with:
+  - Models: Character, Combat, Skill, Item, Quest, Economy, Social, World, Guild
+  - Services: Auth, Character, Combat, Economy, Social, World, Validation
+  - APIs: Auth, Character, Combat, Quest, Inventory, Economy, Social, World
+  - WebSocket handler for combat
+  - PostgreSQL database with migrations and seeds
+  - Full test suite
+- **Can run**: Yes - Backend can run with `npm run dev`, tests with `npm test`
+
+## Recommendation
+
+The project has a complete backend server but **no game client whatsoever**. We need to set up a game client from scratch. Given the design docs specify real-time movement, skill bars, and Guild Wars 1-style gameplay, a web-based client using Phaser.js would be ideal. We need to:
+
+1. Create a `client/` directory structure
+2. Set up Phaser.js game framework
+3. Create basic HTML/CSS entry point
+4. Build scenes (boot, login, character select, game world)
+5. Implement player movement first, then combat
+
+DECISION: needs_setup</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: NEEDS_SETUP</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;NEEDS_SETUP&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>setup_client</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Setup Game Client</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Creates Phaser.js game client boilerplate if it doesn&#039;t exist.</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">client_scaffolder</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">implementer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">106.0s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">2</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">1,212 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">875 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(1,212 characters)</span></div>
+        <button class="collapsible" data-target="prompt_setup_client_2">Click to expand prompt from client_scaffolder</button>
+        <div class="collapsible-content" id="prompt_setup_client_2">
+          <pre class="code-content">You are a game client scaffolder. Your job is to create a working Phaser.js web game client.
+
+You MUST use the Write tool to create these files:
+
+1. **client/index.html** - HTML page that loads Phaser and the game
+2. **client/js/game.js** - Main Phaser game configuration
+3. **client/js/scenes/BootScene.js** - Initial loading scene
+4. **client/js/scenes/GameScene.js** - Main gameplay scene with basic rendering
+5. **client/package.json** - With a simple http-server for local dev
+
+Use Phaser 3 (load from CDN: https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js)
+
+The game should:
+- Have an 800x600 canvas
+- Show a colored background
+- Display &quot;Game Loading...&quot; then transition to game scene
+- Have a basic game loop ready for features
+- Use arcade physics
+
+After creating all files, run:
+- cd client &amp;&amp; npm install
+
+Output a brief summary of what you created.
+
+DECISION: setup_complete
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- setup_complete: Go to select_feature
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: setup_complete
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(875 characters)</span></div>
+        <button class="collapsible" data-target="output_setup_client_2">Click to expand output from client_scaffolder</button>
+        <div class="collapsible-content" id="output_setup_client_2">
+          <pre class="code-content">## Summary
+
+Created a Phaser.js game client scaffold with:
+
+**Files Created:**
+- `client/index.html` - HTML entry point with dark Warhammer theme styling, loads Phaser 3.60 from CDN
+- `client/js/game.js` - Phaser config (800x600, arcade physics, no gravity)
+- `client/js/scenes/BootScene.js` - Loading screen with progress bar and &quot;Game Loading...&quot; text
+- `client/js/scenes/GameScene.js` - Main gameplay with:
+  - Grid-based floor for visual reference
+  - Player rectangle (placeholder for sprite)
+  - WASD + Arrow key movement (200px/s, normalized diagonals)
+  - World bounds collision
+  - FPS and position debug display
+- `client/package.json` - Dev server setup with `http-server`
+
+**To Run:**
+```bash
+cd client &amp;&amp; npm start
+# Opens at http://localhost:8080
+```
+
+The client is ready for feature development (player sprites, combat, skills, etc.).
+
+DECISION: setup_complete</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: SETUP_COMPLETE</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;SETUP_COMPLETE&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>select_feature</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Select Next Feature</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Picks ONE feature from the priority list that isn&#039;t implemented yet.</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">feature_selector_v2</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">18.5s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">3</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">1,468 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">926 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(1,468 characters)</span></div>
+        <button class="collapsible" data-target="prompt_select_feature_3">Click to expand prompt from feature_selector_v2</button>
+        <div class="collapsible-content" id="prompt_select_feature_3">
+          <pre class="code-content">You are a feature selector. Your ONLY job is to pick ONE feature to implement next.
+
+You MUST:
+1. Check what&#039;s already implemented in the client code
+2. Pick the FIRST feature from the priority list that isn&#039;t done
+
+## Feature Priority Order
+
+1. Player character - Sprite that moves with WASD/arrows
+2. Basic map/world - Tile-based environment
+3. Collision - Walls block movement
+4. Enemy spawning - Enemies appear in the world
+5. Basic combat - Player can attack enemies
+6. Health/death - HP system, death and respawn
+7. UI elements - Health bar, skill bar, HUD
+8. Skills system - GW1-style skill bar with abilities
+9. Classes - Character class selection and abilities
+10. Items/loot - Enemies drop items
+11. Inventory - Collect and manage items
+12. Economy - Currency, trading, shops
+13. Progression - XP, leveling, unlocks
+
+## Output
+
+Just state which feature is next:
+
+```
+## Next Feature: [Feature Name]
+
+### Already Implemented
+[List what exists]
+
+### Why This Feature
+[Brief explanation]
+
+DECISION: feature_selected
+```
+
+Do NOT extract requirements - the next stage does that.
+Do NOT describe how to implement it - just pick the feature.
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- feature_selected: Go to extract_requirements
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: feature_selected
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(926 characters)</span></div>
+        <button class="collapsible" data-target="output_select_feature_3">Click to expand output from feature_selector_v2</button>
+        <div class="collapsible-content" id="output_select_feature_3">
+          <pre class="code-content">## Next Feature: Basic map/world
+
+### Already Implemented
+- **Player character** ✅ - Rectangle sprite (placeholder) at 32x48 pixels in gold color (#d4af37)
+- **WASD/Arrow key movement** ✅ - 200px/s speed with normalized diagonals
+- **World bounds collision** ✅ - Player collides with screen edges
+- **Basic grid floor** ✅ - Visual 40px grid pattern for reference
+- **Physics** ✅ - Arcade physics enabled with no gravity
+- **Debug display** ✅ - FPS and position text
+
+### Why This Feature
+Feature #1 (Player character that moves with WASD/arrows) is already complete. The scaffold includes a movable player rectangle with full keyboard controls and physics. The next priority item is #2: Basic map/world - creating a proper tile-based environment instead of just a simple grid overlay. This will provide actual game world structure for subsequent features like collision, enemy spawning, and combat.
+
+DECISION: feature_selected</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: FEATURE_SELECTED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;FEATURE_SELECTED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>extract_requirements</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Extract Design Requirements</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Reads ALL relevant design docs and extracts SPECIFIC requirements for this feature. Outputs concrete specs, not summaries.</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">design_extractor</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">planner</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">147.8s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">4</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">2,140 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">6,466 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(2,140 characters)</span></div>
+        <button class="collapsible" data-target="prompt_extract_requirements_4">Click to expand prompt from design_extractor</button>
+        <div class="collapsible-content" id="prompt_extract_requirements_4">
+          <pre class="code-content">You are a design requirements extractor. Your job is to read the design documents and extract SPECIFIC, CONCRETE requirements for the selected feature.
+
+You MUST:
+1. Read ALL design docs in the project (output/design-docs/, docs/, design-docs/)
+2. Find EVERY reference to the selected feature
+3. Extract EXACT specifications - numbers, names, behaviors, not summaries
+
+## What to Extract
+
+For the selected feature, find and quote:
+
+### From combat-design.md:
+- Exact damage numbers, ranges, cooldowns
+- Specific ability names and effects
+- Class/faction-specific mechanics
+- Attack patterns, animations described
+
+### From data-model.md:
+- Entity structures, properties, types
+- Relationships between entities
+
+### From balance-analysis.md:
+- Target values (DPS, TTK, HP pools)
+- Scaling formulas
+
+### From progression-design.md:
+- Unlock requirements, level gates
+- Skill progression
+
+### From any other docs:
+- Visual/aesthetic requirements
+- Faction-specific details (Imperial, Tau, Ork)
+- Lore-consistent naming
+
+## Output Format
+
+```
+## Feature: [name]
+
+### Specifications from Design Docs
+
+#### Combat Mechanics
+[QUOTE exact text from docs]
+- Damage: [exact number]
+- Range: [exact number]
+- Cooldown: [exact number]
+- Special effects: [list]
+
+#### Visual Requirements
+[QUOTE exact text from docs]
+- Colors: [hex codes or descriptions]
+- Animations: [list]
+- Faction aesthetic: [description]
+
+#### Entity Data
+[QUOTE exact text from docs]
+- Properties: [list with types]
+- Relationships: [list]
+
+#### Classes/Factions Affected
+[QUOTE exact text from docs]
+- [List each with specific details]
+
+### Implementation Checklist
+[ ] [Specific requirement 1]
+[ ] [Specific requirement 2]
+...
+```
+
+Do NOT summarize. QUOTE the design docs directly. The implementer needs exact specs.
+
+DECISION: requirements_extracted
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- requirements_extracted: Go to review_plan
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: requirements_extracted
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(6,466 characters)</span></div>
+        <button class="collapsible" data-target="output_extract_requirements_4">Click to expand output from design_extractor</button>
+        <div class="collapsible-content" id="output_extract_requirements_4">
+          <pre class="code-content">Now I have enough information. Let me compile the comprehensive requirements extraction for the &quot;Basic map/world&quot; feature:
+
+## Feature: Basic map/world
+
+### Specifications from Design Docs
+
+#### Zone/World Structure
+
+From **systems-integration.md** (lines 483-491):
+&gt; ```
+&gt; | Zone Type | Imperial | Tau | Ork |
+&gt; |-----------|----------|-----|-----|
+&gt; | Starting | Shrine World | Sept Colony | Rok Crash Site |
+&gt; | Hub City | Cathedral Complex | Commerce Hub | Mek Town |
+&gt; | Dungeon | Chaos Incursion | Tyranid Assault | WAAAGH! Rivals |
+&gt; | Raid | Daemon Prince (8-player) | Titan (8-player) | Gargant (8-player) |
+&gt; | PvP Arena | Colosseum | Trial Ground | Da Pit |
+&gt; | Faction War | Holy Crusade Zones | Expansion Colonies | WAAAGH! Warpath |
+&gt; ```
+
+#### Map Bounds &amp; Zone Data
+
+From **world.model.ts** (lines 77-88):
+&gt; ```typescript
+&gt; export interface ZoneBounds {
+&gt;   minX: number;
+&gt;   minY: number;
+&gt;   maxX: number;
+&gt;   maxY: number;
+&gt; }
+&gt; 
+&gt; export interface WorldPosition {
+&gt;   x: number;
+&gt;   y: number;
+&gt;   z: number;
+&gt; }
+&gt; ```
+
+From **api-specification.md** (lines 1942-1944):
+&gt; ```json
+&gt; &quot;map_bounds&quot;: {
+&gt;   &quot;min&quot;: {&quot;x&quot;: 0, &quot;y&quot;: 0},
+&gt;   &quot;max&quot;: {&quot;x&quot;: 2000, &quot;y&quot;: 2000}
+&gt; }
+&gt; ```
+
+#### Zone Types &amp; Features
+
+From **world.model.ts** (lines 10-17, 90-97):
+&gt; ```typescript
+&gt; export type ZoneType =
+&gt;   | &#039;STARTING_ZONE&#039;
+&gt;   | &#039;HUB_CITY&#039;
+&gt;   | &#039;ADVENTURE_ZONE&#039;
+&gt;   | &#039;DUNGEON&#039;
+&gt;   | &#039;RAID&#039;
+&gt;   | &#039;PVP_ARENA&#039;
+&gt;   | &#039;FACTION_WAR&#039;;
+&gt; 
+&gt; export type ZoneFeature =
+&gt;   | &#039;AUCTION_HOUSE&#039;
+&gt;   | &#039;GUILD_HALL&#039;
+&gt;   | &#039;VENDORS&#039;
+&gt;   | &#039;BANK&#039;
+&gt;   | &#039;CRAFTING_STATION&#039;
+&gt;   | &#039;WAYPOINT&#039;
+&gt;   | &#039;QUEST_BOARD&#039;;
+&gt; ```
+
+#### Waypoint System
+
+From **world.model.ts** (lines 103-115):
+&gt; ```typescript
+&gt; export interface Waypoint {
+&gt;   id: string;
+&gt;   zoneId: string;
+&gt;   name: string;
+&gt;   position: WorldPosition;
+&gt;   isDefault: boolean;
+&gt; }
+&gt; ```
+
+From **progression-design.md** (lines 92-95):
+&gt; ```
+&gt; EXPLORATION XP
+&gt; ├── Discovery (New Area): 100-300 XP
+&gt; ├── Discovery (Hidden Area): 500-1,000 XP
+&gt; ├── Waypoint Unlock: 50 XP
+&gt; ├── Vista/Landmark: 75-150 XP
+&gt; └── Map Completion: 2,000-5,000 XP
+&gt; ```
+
+#### Points of Interest
+
+From **world.model.ts** (lines 121-136):
+&gt; ```typescript
+&gt; export type PoiType =
+&gt;   | &#039;SERVICE&#039;
+&gt;   | &#039;QUEST_GIVER&#039;
+&gt;   | &#039;VENDOR&#039;
+&gt;   | &#039;DUNGEON_ENTRANCE&#039;
+&gt;   | &#039;LANDMARK&#039;;
+&gt; 
+&gt; export interface PointOfInterest {
+&gt;   id: string;
+&gt;   zoneId: string;
+&gt;   name: string;
+&gt;   type: PoiType;
+&gt;   position: WorldPosition;
+&gt;   iconAssetPath?: string;
+&gt;   linkedEntityId?: string;
+&gt; }
+&gt; ```
+
+#### Existing GameScene Implementation
+
+From **GameScene.js** (lines 16-23, 52-68):
+&gt; ```javascript
+&gt; // Current implementation
+&gt; this.cameras.main.setBackgroundColor(&#039;#0d1117&#039;);
+&gt; this.player = this.add.rectangle(400, 300, 32, 48, 0xd4af37);
+&gt; 
+&gt; // Current grid floor (40px tiles)
+&gt; for (let x = 0; x &lt;= 800; x += 40) {
+&gt;     graphics.moveTo(x, 0);
+&gt;     graphics.lineTo(x, 600);
+&gt; }
+&gt; ```
+
+**Current values:**
+- Player sprite: 32x48 pixels, gold color (#d4af37)
+- Grid size: 40px tiles
+- Game canvas: 800x600 pixels
+- Background: #0d1117 (dark)
+- Movement speed: 200px/s
+
+#### Faction Aesthetic Requirements
+
+From **systems-integration.md** (lines 431-478):
+&gt; ```
+&gt; IMPERIAL GAMEPLAY IDENTITY
+&gt; ├── Combat Style: Defensive, resilient, miracle-powered
+&gt; └── Lore Feel: Slow, inevitable, holy wrath
+&gt; 
+&gt; TAU GAMEPLAY IDENTITY
+&gt; ├── Combat Style: Ranged, coordinated, tactical
+&gt; └── Lore Feel: Precise, coordinated, technologically superior
+&gt; 
+&gt; ORK GAMEPLAY IDENTITY
+&gt; ├── Combat Style: Aggressive, chaotic, melee-focused
+&gt; └── Lore Feel: Brutal, numerous, unpredictable
+&gt; ```
+
+#### Visual Reference (Warhammer 40K Aesthetic)
+
+From **combat-design.md** (line 36):
+&gt; &quot;Ground-target for area effects&quot;
+
+Implied tile-based/grid-based combat environment for area effect targeting.
+
+#### Difficulty &amp; Zone Modifiers
+
+From **world.model.ts** (lines 33-39):
+&gt; ```typescript
+&gt; export const DIFFICULTY_MODIFIERS: Record&lt;DifficultyLevel, DifficultyModifiers&gt; = {
+&gt;   STORY: { enemyHealthMult: 0.5, enemyDamageMult: 0.5, dropRateMult: 0.5, experienceMult: 0.5 },
+&gt;   NORMAL: { enemyHealthMult: 1.0, enemyDamageMult: 1.0, dropRateMult: 1.0, experienceMult: 1.0 },
+&gt;   HARD: { enemyHealthMult: 1.25, enemyDamageMult: 1.2, dropRateMult: 1.15, experienceMult: 1.15 },
+&gt;   VETERAN: { enemyHealthMult: 1.5, enemyDamageMult: 1.4, dropRateMult: 1.25, experienceMult: 1.25 },
+&gt;   NIGHTMARE: { enemyHealthMult: 2.0, enemyDamageMult: 1.8, dropRateMult: 1.5, experienceMult: 1.5 },
+&gt; };
+&gt; ```
+
+#### Instance/Zone Constants
+
+From **world.model.ts** (lines 347-350):
+&gt; ```typescript
+&gt; export const DEFAULT_INSTANCE_DURATION_HOURS = 4;
+&gt; export const MAX_DUNGEON_PLAYERS = 4;
+&gt; export const MAX_RAID_PLAYERS = 8;
+&gt; ```
+
+### Implementation Checklist
+
+**Core Tilemap System:**
+- [ ] Create Phaser tilemap with proper tile size (40px based on existing grid)
+- [ ] Implement tile layer for floor tiles
+- [ ] Implement tile layer for collision/wall tiles  
+- [ ] Implement tile layer for decoration/overlay tiles
+
+**Zone Data Structure:**
+- [ ] Create Zone class/object matching `Zone` interface from world.model.ts
+- [ ] Implement ZoneBounds for world boundaries (replace hardcoded 800x600)
+- [ ] Support WorldPosition (x, y, z) coordinate system
+
+**Basic Zone Types:**
+- [ ] Implement STARTING_ZONE tileset (faction-specific aesthetics)
+- [ ] Create basic floor tiles (stone/metal/organic variations)
+- [ ] Create basic wall/obstacle tiles for collision
+
+**Collision System:**
+- [ ] Replace `setCollideWorldBounds(true)` with tilemap collision
+- [ ] Create collision layer that player cannot pass through
+- [ ] Implement tile-based collision detection
+
+**Camera System:**
+- [ ] Add camera following player
+- [ ] Implement camera bounds matching zone bounds (0,0 to 2000,2000 per API spec)
+- [ ] Camera zoom for appropriate view distance
+
+**Visual Assets (Placeholder):**
+- [ ] Create placeholder floor tiles (40x40px) - dark industrial (#0d1117 base)
+- [ ] Create placeholder wall tiles (40x40px) - darker/highlighted edges
+- [ ] Create transition tiles between floor types
+
+**Waypoint Foundation:**
+- [ ] Create Waypoint visual indicator placeholder
+- [ ] Store spawn/respawn point (respawnPoint from Zone interface)
+
+**POI Foundation:**
+- [ ] Create basic POI marker placeholder
+- [ ] Support different POI types (SERVICE, QUEST_GIVER, VENDOR, etc.)
+
+**Zone Transitions:**
+- [ ] Create zone boundary indicators
+- [ ] Placeholder for dungeon entrance POI type
+
+DECISION: requirements_extracted</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: REQUIREMENTS_EXTRACTED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;REQUIREMENTS_EXTRACTED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>review_plan</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage completed">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Review Implementation Plan</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Reviews the extracted requirements. Checks for completeness, identifies gaps, ensures fidelity to original design docs.</div>
+        </div>
+        <span class="stage-badge badge-completed">completed</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">feature_requirements_reviewer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">reviewer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">102.5s</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">5</span>
+        </div>
+        
+        <div class="meta-item">
+          <span class="meta-label">Prompt Size:</span>
+          <span class="meta-value">2,056 chars</span>
+        </div>
+        
+        
+        <div class="meta-item">
+          <span class="meta-label">Output Size:</span>
+          <span class="meta-value">3,072 chars</span>
+        </div>
+        
+      </div>
+
+      
+      <div class="prompt-section">
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(2,056 characters)</span></div>
+        <button class="collapsible" data-target="prompt_review_plan_5">Click to expand prompt from feature_requirements_reviewer</button>
+        <div class="collapsible-content" id="prompt_review_plan_5">
+          <pre class="code-content">You are a feature requirements reviewer. Your job is to verify that extracted requirements are COMPLETE and FAITHFUL to the original design documents.
+
+You MUST:
+1. Read the extracted requirements from the previous stage
+2. Read the ORIGINAL design docs yourself to verify
+3. Check for missing specifications
+4. Ensure no generic placeholders snuck in
+
+## Review Checklist
+
+### Completeness Check
+- [ ] All relevant design docs were consulted
+- [ ] Specific numbers extracted (not &quot;some damage&quot; but &quot;70 damage&quot;)
+- [ ] Faction-specific details included (Imperial, Tau, Ork)
+- [ ] Visual/aesthetic requirements captured
+- [ ] Class-specific mechanics noted
+
+### Fidelity Check
+- [ ] Quotes match original docs
+- [ ] No invented requirements (stuff not in docs)
+- [ ] No generic game design substituted for specific design
+- [ ] Warhammer 40K aesthetic preserved
+- [ ] Guild Wars 1 mechanics referenced where applicable
+
+### Red Flags (REJECT if found)
+- &quot;Basic&quot; or &quot;simple&quot; versions of complex designed systems
+- Generic colors (red, blue) instead of faction colors
+- Missing skill bars, energy costs, cooldowns from GW1-style design
+- Placeholder enemies instead of designed enemy types
+- Missing faction mechanics (Acts of Faith, Markerlights, WAAAGH!)
+
+## Output
+
+If requirements are complete:
+```
+## Review: APPROVED
+
+### Verified Specifications
+[List key specs that are correct]
+
+### Ready for Implementation
+The requirements capture the design intent. Proceed.
+
+DECISION: plan_approved
+```
+
+If requirements are incomplete:
+```
+## Review: NEEDS MORE DETAIL
+
+### Missing Information
+[List what&#039;s missing]
+
+### Docs to Check
+[Which design docs need re-reading]
+
+DECISION: needs_more_detail
+```
+
+=== ROUTING DECISION REQUIRED ===
+After your response, you MUST choose exactly ONE decision from:
+- plan_approved: Go to implement_client
+- needs_more_detail: Go to extract_requirements
+
+**CRITICAL**: Your VERY LAST LINE must be exactly:
+DECISION: [ONE_OF_THE_ABOVE_CHOICES]
+Example: DECISION: plan_approved
+Do NOT add explanations after the decision keyword.
+</pre>
+        </div>
+      </div>
+      
+
+      
+      <div class="output-section">
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(3,072 characters)</span></div>
+        <button class="collapsible" data-target="output_review_plan_5">Click to expand output from feature_requirements_reviewer</button>
+        <div class="collapsible-content" id="output_review_plan_5">
+          <pre class="code-content">Now I have all the information needed to complete my review. Let me assess the extracted requirements against the original design documents.
+
+## Review: APPROVED
+
+### Verified Specifications
+
+**Zone/World Structure** - VERIFIED
+- Zone types (STARTING_ZONE, HUB_CITY, ADVENTURE_ZONE, DUNGEON, RAID, PVP_ARENA, FACTION_WAR) correctly extracted from `world.model.ts:10-17`
+- Faction-specific zone names (Shrine World, Sept Colony, Rok Crash Site, etc.) correctly quoted from `systems-integration.md:483-491`
+
+**Map Bounds &amp; Coordinate System** - VERIFIED
+- `ZoneBounds` interface (minX, minY, maxX, maxY) correctly extracted from `world.model.ts:77-82`
+- `WorldPosition` interface (x, y, z) correctly extracted from `world.model.ts:84-88`
+- Map bounds example (0,0 to 2000,2000) correctly extracted from `api-specification.md:1942-1944`
+
+**Zone Features** - VERIFIED
+- Zone features enum (AUCTION_HOUSE, GUILD_HALL, VENDORS, BANK, CRAFTING_STATION, WAYPOINT, QUEST_BOARD) correctly extracted from `world.model.ts:90-97`
+
+**Waypoint System** - VERIFIED
+- Waypoint interface correctly quoted from `world.model.ts:103-108`
+- Exploration XP values for waypoint unlock (50 XP) and discovery correctly quoted from `progression-design.md:92-95`
+
+**Points of Interest** - VERIFIED
+- POI types (SERVICE, QUEST_GIVER, VENDOR, DUNGEON_ENTRANCE, LANDMARK) correctly extracted from `world.model.ts:121-126`
+- POI interface correctly quoted from `world.model.ts:128-136`
+
+**Difficulty System** - VERIFIED
+- Difficulty modifiers table correctly quoted from `world.model.ts:33-39`
+- All five difficulty levels (STORY, NORMAL, HARD, VETERAN, NIGHTMARE) captured
+
+**Instance Constants** - VERIFIED
+- DEFAULT_INSTANCE_DURATION_HOURS = 4, MAX_DUNGEON_PLAYERS = 4, MAX_RAID_PLAYERS = 8 correctly extracted from `world.model.ts:347-350`
+
+**Existing Client Implementation** - VERIFIED
+- Current GameScene.js values correctly identified:
+  - Player sprite: 32x48 pixels, gold color (#d4af37) from line 20
+  - Grid size: 40px tiles from lines 57, 64
+  - Game canvas: 800x600 pixels (world bounds from lines 57-66)
+  - Background: #0d1117 from line 14
+  - Movement speed: 200px/s from line 72
+
+**Faction Aesthetic Requirements** - VERIFIED
+- Imperial, Tau, and Ork gameplay identities correctly summarized from `systems-integration.md:431-478`
+- Combat styles and lore feel captured for all three factions
+
+### Items Correctly Not Included (Would Be Out of Scope)
+- No invented requirements detected
+- No generic placeholders substituted for specific designs
+- No oversimplification of designed mechanics
+
+### Ready for Implementation
+The requirements capture the design intent accurately. The extraction correctly identifies:
+1. Specific numeric values (40px tiles, 200px/s speed, 0,0-2000,2000 bounds)
+2. Faction-specific zone names and aesthetics
+3. Data structures from the TypeScript models
+4. Current client implementation baseline
+5. All relevant interfaces for world/zone management
+
+The implementation checklist is reasonable and maps to the extracted specifications.
+
+DECISION: plan_approved</pre>
+        </div>
+      </div>
+      
+
+      
+
+      
+      <div class="routing-info">
+        <div class="routing-decision">🔀 Routing Decision: PLAN_APPROVED</div>
+        <div style="font-size: 0.9em; color: #555; margin-top: 5px;">Decision &quot;PLAN_APPROVED&quot; matched connection condition</div>
+        <div style="margin-top: 10px; font-weight: bold;">→ Next Stage: <strong>implement_client</strong></div>
+      </div>
+      
+    </div>
+
+    <div class="stage running">
+      <div class="stage-header">
+        <div>
+          <div class="stage-title">Implement Client Feature</div>
+          <div style="color: #6c757d; font-size: 0.9em; margin-top: 5px;">Implements the feature EXACTLY as specified in the reviewed requirements. No generic placeholders.</div>
+        </div>
+        <span class="stage-badge badge-running">running</span>
+      </div>
+
+      <div class="stage-meta">
+        <div class="meta-item">
+          <span class="meta-label">Agent:</span>
+          <span class="meta-value">client_implementer_v2</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Type:</span>
+          <span class="meta-value">implementer</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Duration:</span>
+          <span class="meta-value">In progress...</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Execution #:</span>
+          <span class="meta-value">6</span>
+        </div>
+        
+        
+      </div>
+
+      
+
+      
+
+      
+
+      
+    </div>
+    </div>
+
+    
+  </div>
+
+  <script>
+    // Interactive collapsible sections
+    document.addEventListener('DOMContentLoaded', function() {
+      const collapsibles = document.querySelectorAll('.collapsible');
+
+      collapsibles.forEach(button => {
+        button.addEventListener('click', function() {
+          this.classList.toggle('active');
+          const targetId = this.getAttribute('data-target');
+          const content = document.getElementById(targetId);
+
+          if (content) {
+            content.classList.toggle('active');
+          }
+        });
+      });
+
+      // Add "Expand All" / "Collapse All" buttons
+      const header = document.querySelector('.header');
+      if (header && collapsibles.length > 0) {
+        const controlsDiv = document.createElement('div');
+        controlsDiv.style.marginTop = '20px';
+
+        const collapseAllBtn = document.createElement('button');
+        collapseAllBtn.textContent = 'Collapse All Sections';
+        collapseAllBtn.style.cssText = 'padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; font-weight: bold;';
+        collapseAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.add('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.add('active');
+          });
+        });
+
+        const expandAllBtn = document.createElement('button');
+        expandAllBtn.textContent = 'Expand All Sections';
+        expandAllBtn.style.cssText = 'padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;';
+        expandAllBtn.addEventListener('click', function() {
+          collapsibles.forEach(btn => {
+            btn.classList.remove('active');
+            const targetId = btn.getAttribute('data-target');
+            const content = document.getElementById(targetId);
+            if (content) content.classList.remove('active');
+          });
+        });
+
+        controlsDiv.appendChild(collapseAllBtn);
+        controlsDiv.appendChild(expandAllBtn);
+        header.appendChild(controlsDiv);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+## INFRASTRUCTURE STATE ANALYSIS
+
+**Current State Assessment**:
+
+1. **Dependencies**: ✅ INSTALLED
+   - bitcoind: `/home/super/bin/bitcoind`
+   - Mono runtime: `/usr/bin/mono`
+   - cpuminer: `/home/super/.local/bin/cpuminer`
+
+2. **Configurations**: ✅ EXISTS
+   - Daemon config: `~/.bitcoin/bitcoin.conf` (RPC credentials: coiniumtest/testpass123)
+   - Pool config: `/mnt/c/github/private-SuperCoinServ/build/bin/Debug/config/config.json`
+   - Pool-specific config: `config/pools/default.json` (configured for regtest, port 3333)
+
+3. **Bitcoin Daemon**: ✅ RUNNING BUT ISSUES DETECTED
+   - Process running (PIDs: 3919, 15717)
+   - RPC port 18443 listening ✅
+   - RPC accessible with correct credentials ✅
+   - Block height: 2693 (actively generating blocks)
+   - Wallets available: `testwallet`, `miner_wallet` ✅
+   - **ISSUE**: No default wallet loaded (wallet operations require `-rpcwallet=<name>`)
+
+4. **CoiniumServ Pool**: ⚠️ RUNNING BUT CRITICAL ERRORS
+   - Process running (PID 50828) ✅
+   - **CRITICAL ISSUE**: Stratum port 3333 NOT listening (should be, but isn't)
+   - Log shows: "Stratum server listening on 0.0.0.0:3333" at 12:24:51
+   - But `netstat` shows port 3333 is NOT actually bound
+   - **CRITICAL ERROR**: "New job creation failed: Wrong type passed" (repeated errors)
+   - This indicates JobManager cannot create mining jobs from getblocktemplate
+   - Clients connected but were disconnected (likely due to no jobs available)
+
+5. **Miner**: ❌ NOT CONFIGURED
+   - cpuminer installed but not configured with pool connection
+
+**Root Cause Analysis**:
+- Pool process is running but **JobManager is failing to create jobs**
+- The "Wrong type passed" error suggests a data type mismatch in getblocktemplate response processing
+- Without valid jobs, the Stratum server cannot function properly (explains why port appears unresponsive)
+- This is a **pool integration error** with the daemon's getblocktemplate RPC call
+
+**Gap Identification**:
+- Pool is NOT functioning correctly (JobManager errors preventing mining)
+- Miner is not configured
+- Validation has not been performed
+
+**Delegation Decision**:
+This is a **pool-specific error** related to job creation from getblocktemplate. The pool daemon integration is broken. This requires specialized pool error handling, not generic recovery.
+
+DECISION: handle_pool_errors
+
+REASONING:
+Infrastructure partially operational with critical pool malfunction detected:
+
+**Current State**:
+- Dependencies: INSTALLED ✅
+- Configs: EXIST ✅  
+- Daemon: RUNNING ✅ (RPC accessible, blocks at height 2693, wallets loaded)
+- Pool: RUNNING BUT BROKEN ⚠️ (process alive but JobManager failing)
+- Miner: NOT CONFIGURED ❌
+
+**Critical Issue Identified**:
+Pool server (CoiniumServ) is running but experiencing repeated "New job creation failed: Wrong type passed" errors in JobManager. This prevents:
+- Mining jobs from being created from getblocktemplate
+- Stratum server from functioning properly (port 3333 not actually listening despite log claim)
+- Any miners from connecting and receiving work
+
+**Why handle_pool_errors (not generic recovery)**:
+- This is a **pool-specific integration error** between CoiniumServ and bitcoind's getblocktemplate
+- Requires specialized diagnosis of pool logs, getblocktemplate response format, and pool configuration
+- The pool_error_handler agent has expertise in:
+  - CoiniumServ-specific errors
+  - getblocktemplate response parsing issues  
+  - Daemon-pool integration problems
+  - Pool configuration validation
+
+**Dependencies Satisfied**:
+- Daemon is healthy and operational
+- RPC communication is working (pool can reach daemon)
+- The issue is in the pool's processing of daemon responses
+
+**Next Step**:
+Delegate to pool error handler to diagnose and fix the JobManager error, restore Stratum functionality, then proceed to miner setup and validation.
+
+DECISION: handle_pool_errors

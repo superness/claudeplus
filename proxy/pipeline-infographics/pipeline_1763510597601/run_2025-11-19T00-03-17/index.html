@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mission Control: Development Cycle Meta-Router V1</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #00ff88;
+            --secondary: #00d4ff;
+            --accent: #ff00ff;
+            --warning: #ffaa00;
+            --error: #ff3366;
+            --bg-dark: #0a0e27;
+            --bg-darker: #050811;
+            --text: #e0e6ff;
+            --text-dim: #8892b0;
+            --glow: rgba(0, 255, 136, 0.4);
+        }
+
+        body {
+            font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-darker);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Animated Background */
+        .space-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: radial-gradient(ellipse at top, #1a1f3a 0%, var(--bg-darker) 50%, #000000 100%);
+        }
+
+        .stars {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        .grid-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            z-index: -1;
+            animation: grid-flow 20s linear infinite;
+        }
+
+        @keyframes grid-flow {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(50px); }
+        }
+
+        /* Mission Control Header */
+        .mission-header {
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 212, 255, 0.1) 100%);
+            border-bottom: 2px solid var(--primary);
+            padding: 3rem 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 50px rgba(0, 255, 136, 0.2);
+        }
+
+        .mission-header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(0, 255, 136, 0.1) 0%, transparent 70%);
+            animation: pulse-glow 4s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.2); opacity: 0.8; }
+        }
+
+        .mission-title {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+            position: relative;
+            z-index: 1;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .mission-id {
+            font-family: 'Courier New', monospace;
+            color: var(--text-dim);
+            font-size: 1rem;
+            letter-spacing: 1px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            margin-top: 1rem;
+            padding: 0.5rem 1.5rem;
+            background: linear-gradient(135deg, var(--primary), #00cc6a);
+            color: var(--bg-darker);
+            font-weight: 700;
+            border-radius: 50px;
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+            box-shadow: 0 0 30px var(--glow);
+            animation: status-pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes status-pulse {
+            0%, 100% { box-shadow: 0 0 30px var(--glow); }
+            50% { box-shadow: 0 0 50px var(--glow), 0 0 80px var(--glow); }
+        }
+
+        /* Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Control Panel Grid */
+        .control-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .metric-card {
+            background: linear-gradient(135deg, rgba(10, 14, 39, 0.8) 0%, rgba(5, 8, 17, 0.9) 100%);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--primary);
+            box-shadow: 0 10px 40px rgba(0, 255, 136, 0.3);
+        }
+
+        .metric-label {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.2;
+        }
+
+        .metric-unit {
+            font-size: 1rem;
+            color: var(--text-dim);
+            margin-left: 0.3rem;
+        }
+
+        /* Router Visualization */
+        .router-section {
+            margin: 3rem 0;
+            background: linear-gradient(135deg, rgba(10, 14, 39, 0.6) 0%, rgba(5, 8, 17, 0.8) 100%);
+            border: 2px solid rgba(0, 212, 255, 0.3);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            position: relative;
+        }
+
+        .router-section::before {
+            content: '⚡';
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 2rem;
+            background: var(--bg-darker);
+            padding: 0 1rem;
+            color: var(--secondary);
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-align: center;
+        }
+
+        .router-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .route-card {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .route-card:hover {
+            border-color: var(--secondary);
+            box-shadow: 0 5px 30px rgba(0, 212, 255, 0.2);
+            transform: translateY(-3px);
+        }
+
+        .route-number {
+            position: absolute;
+            top: -15px;
+            right: 15px;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--secondary), var(--accent));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 1.2rem;
+            box-shadow: 0 5px 20px rgba(0, 212, 255, 0.4);
+        }
+
+        .route-name {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--secondary);
+            margin-bottom: 0.8rem;
+        }
+
+        .route-agent {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            background: rgba(0, 255, 136, 0.1);
+            padding: 0.3rem 0.8rem;
+            border-radius: 6px;
+            display: inline-block;
+            margin-bottom: 0.8rem;
+        }
+
+        .route-status {
+            display: inline-block;
+            padding: 0.3rem 1rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-pending {
+            background: rgba(255, 170, 0, 0.2);
+            color: var(--warning);
+            border: 1px solid var(--warning);
+        }
+
+        /* Execution Details */
+        .execution-section {
+            margin: 3rem 0;
+        }
+
+        .execution-card {
+            background: linear-gradient(135deg, rgba(10, 14, 39, 0.8) 0%, rgba(5, 8, 17, 0.9) 100%);
+            border-left: 4px solid var(--primary);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 5px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .execution-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .execution-name {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .execution-badge {
+            background: rgba(0, 212, 255, 0.2);
+            color: var(--secondary);
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid var(--secondary);
+        }
+
+        .code-block {
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 8px;
+            padding: 1.5rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: #e0e6ff;
+            overflow-x: auto;
+            line-height: 1.6;
+            margin-top: 1rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .code-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .code-label::before {
+            content: '▶';
+            color: var(--primary);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .stat-item {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--secondary);
+            margin-top: 0.3rem;
+        }
+
+        /* Decision Highlight */
+        .decision-box {
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 212, 255, 0.1) 100%);
+            border: 2px solid var(--primary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .decision-box::before {
+            content: '⚡ ROUTING DECISION';
+            position: absolute;
+            top: -12px;
+            left: 20px;
+            background: var(--bg-darker);
+            padding: 0 1rem;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: 1px;
+        }
+
+        .decision-text {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--primary);
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        /* Footer */
+        .mission-footer {
+            margin-top: 4rem;
+            padding: 2rem;
+            text-align: center;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.05) 0%, rgba(0, 255, 136, 0.05) 100%);
+            border-top: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 12px;
+        }
+
+        .footer-text {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        .footer-highlight {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .mission-title {
+                font-size: 2rem;
+            }
+
+            .metric-value {
+                font-size: 2rem;
+            }
+
+            .control-panel {
+                grid-template-columns: 1fr;
+            }
+
+            .router-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Scroll Animation */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.8s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="space-background">
+        <div class="stars"></div>
+        <div class="grid-overlay"></div>
+    </div>
+
+    <div class="mission-header">
+        <h1 class="mission-title">Development Cycle Meta-Router V1</h1>
+        <p class="mission-id">MISSION ID: pipeline_1763510597601</p>
+        <div class="status-badge">✓ MISSION COMPLETE</div>
+    </div>
+
+    <div class="container">
+        <!-- Control Panel -->
+        <div class="control-panel animate-in">
+            <div class="metric-card">
+                <div class="metric-label">Total Duration</div>
+                <div class="metric-value">1694.6<span class="metric-unit">s</span></div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Total Routes</div>
+                <div class="metric-value">6</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Routes Executed</div>
+                <div class="metric-value">2</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Error Count</div>
+                <div class="metric-value">0</div>
+            </div>
+        </div>
+
+        <!-- Working Directory -->
+        <div class="router-section animate-in">
+            <h2 class="section-title">Command Center</h2>
+            <div class="code-block">
+                <div class="code-label">Working Directory</div>
+                /mnt/c/github/superstarships
+            </div>
+        </div>
+
+        <!-- Router Visualization -->
+        <div class="router-section animate-in">
+            <h2 class="section-title">🛰️ Route Network</h2>
+            <div class="router-grid">
+                <div class="route-card">
+                    <div class="route-number">1</div>
+                    <div class="route-name">Request Classification</div>
+                    <div class="route-agent">request_classifier</div>
+                    <div class="route-status status-pending">Awaiting Data</div>
+                </div>
+
+                <div class="route-card">
+                    <div class="route-number">2</div>
+                    <div class="route-name">Bug Fix Pipeline</div>
+                    <div class="route-agent">pipeline_executor</div>
+                    <div class="route-status status-pending">Awaiting Data</div>
+                </div>
+
+                <div class="route-card">
+                    <div class="route-number">3</div>
+                    <div class="route-name">Quick Code Change</div>
+                    <div class="route-agent">code_implementer</div>
+                    <div class="route-status status-pending">Awaiting Data</div>
+                </div>
+
+                <div class="route-card">
+                    <div class="route-number">4</div>
+                    <div class="route-name">Feature Development Pipeline</div>
+                    <div class="route-agent">pipeline_executor</div>
+                    <div class="route-status status-pending">Awaiting Data</div>
+                </div>
+
+                <div class="route-card">
+                    <div class="route-number">5</div>
+                    <div class="route-name">Handle Refactor Request</div>
+                    <div class="route-agent">task_executor</div>
+                    <div class="route-status status-pending">Awaiting Data</div>
+                </div>
+
+                <div class="route-card">
+                    <div class="route-number">6</div>
+                    <div class="route-name">Handle Question</div>
+                    <div class="route-agent">task_executor</div>
+                    <div class="route-status status-pending">Awaiting Data</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Execution Details -->
+        <div class="execution-section animate-in">
+            <h2 class="section-title">📡 Execution Log</h2>
+
+            <!-- Execution 1: Classification -->
+            <div class="execution-card">
+                <div class="execution-header">
+                    <div class="execution-name">Execution #1: classify_request</div>
+                    <div class="execution-badge">request_classifier</div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Prompt Size</div>
+                        <div class="stat-value">2.7k</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Output Size</div>
+                        <div class="stat-value">2.4k</div>
+                    </div>
+                </div>
+
+                <div class="code-label" style="margin-top: 1.5rem;">Agent Prompt</div>
+                <div class="code-block">You are a Request Classifier that analyzes user requests and determines what type of development work is needed.
+
+Your job is to classify requests into these categories:
+
+**BUG_FIX** - Something is broken or not working correctly:
+- "The ship doesn't move when I press W"
+- "Game crashes when I dock at station"
+- "Health bar shows wrong value"
+- "Clicking buy button does nothing"
+- Keywords: broken, bug, crash, error, doesn't work, not working, issue, problem, fail
+
+**QUICK_CHANGE** - Simple, direct code modifications (1-5 line changes):
+- "Change this color to red"
+- "Update the text to say 'Welcome'"
+- "Set max speed to 500"
+- "Make this button bigger"
+- "Rename this function to calculateScore"
+- Keywords: change, update, set, make, adjust, rename (+ simple/specific target)
+- Must be: specific target, simple modification, no new logic/features
+
+**FEATURE_REQUEST** - New functionality or enhancement:
+- "Add a tutorial for new players"
+- "I want to see a minimap"
+- "Add sound effects for weapons"
+- "Implement a trading system"
+- Keywords: add, implement, create, new, I want, feature, enhancement, improve
+
+**REFACTOR** - Code improvement without changing behavior:
+- "Clean up the combat system code"
+- "Refactor ship rendering logic"
+- "Improve performance of collision detection"
+- Keywords: refactor, clean up, optimize, improve performance, restructure
+
+**QUESTION** - User needs information:
+- "How does the upgrade system work?"
+- "What does this code do?"
+- "Explain the game loop"
+- Keywords: how, what, why, explain, question
+
+Analysis process:
+1. Read the user's request carefully
+2. Identify key indicators (keywords, tone, specificity)
+3. Determine primary intent
+4. Extract relevant context for the next pipeline
+5. Provide confidence score
+
+Output format:
+```json
+{
+  "classification": "BUG_FIX|QUICK_CHANGE|FEATURE_REQUEST|REFACTOR|QUESTION",
+  "confidence": 0.95,
+  "reasoning": "Explanation of why this classification was chosen",
+  "context": {
+    "originalRequest": "User's full request",
+    "keyIndicators": ["broken", "doesn't work"],
+    "affectedArea": "combat system, ship movement, UI, etc.",
+    "priority": "high|medium|low"
+  }
+}
+```
+
+IMPORTANT: End your response with one of these decisions:
+- DECISION: BUG_FIX
+- DECISION: QUICK_CHANGE
+- DECISION: FEATURE_REQUEST
+- DECISION: REFACTOR
+- DECISION: QUESTION
+
+IMPORTANT: End your response with exactly one of these decisions:
+- DECISION: BUG_FIX (Request is a bug fix)
+- DECISION: QUICK_CHANGE (Request is a simple code modification)
+- DECISION: FEATURE_REQUEST (Request is a new feature)
+- DECISION: REFACTOR (Request is code refactoring)
+- DECISION: QUESTION (Request is a question)
+
+Format: End with "DECISION: [YOUR_CHOICE]" on the last line.</div>
+
+                <div class="code-label">Agent Output</div>
+                <div class="code-block">Looking at this request, I can identify the following:
+
+**Key Indicators:**
+- "BUG REPORT" - explicitly stated
+- "not completing properly" - broken functionality
+- "doesn't mark as complete" - system failure
+- "blocking tutorial progression" - critical broken state
+- "fix the bug" - explicitly asking for bug fix
+
+**Analysis:**
+
+This is clearly a **BUG_FIX** request. The user is reporting that an existing feature (quest objective completion) is not working as intended. The quest system should detect when a player crafts and equips an afterburner, but it's failing to do so, which blocks game progression.
+
+This is NOT:
+- **QUICK_CHANGE**: Not a simple parameter adjustment; requires investigation and logic fixes
+- **FEATURE_REQUEST**: The quest system exists; it's just broken
+- **REFACTOR**: Not about code improvement; about fixing broken functionality
+- **QUESTION**: User is reporting a problem, not asking how something works
+
+```json
+{
+  "classification": "BUG_FIX",
+  "confidence": 0.99,
+  "reasoning": "User explicitly reports a bug where quest completion logic fails to detect equipped items. Uses clear bug indicators: 'not completing properly', 'doesn't mark as complete', 'blocking progression', and explicitly asks to 'fix the bug'. This is broken functionality, not a feature request or simple change.",
+  "context": {
+    "originalRequest": "BUG REPORT: The first mission has a quest objective to craft and equip an item, but it's not completing properly. The player successfully crafts an afterburner and equips it to their ship, but the quest objective doesn't mark as complete. This is blocking tutorial progression. Investigate the quest completion logic for the craft-and-fit objective, identify why it's not detecting the equipped afterburner, and fix the bug so the quest progresses correctly when the player equips the crafted item.",
+    "keyIndicators": ["BUG REPORT", "not completing properly", "doesn't mark as complete", "blocking progression", "fix the bug"],
+    "affectedArea": "quest system, mission progression, craft-and-fit objectives, tutorial flow",
+    "priority": "high",
+    "specificIssue": "Quest objective completion detection for equipped items (afterburner) not working",
+    "reproSteps": "1. Start first mission 2. Craft afterburner 3. Equip afterburner 4. Quest doesn't complete"
+  }
+}
+```
+
+DECISION: BUG_FIX</div>
+
+                <div class="decision-box">
+                    <div class="decision-text">⚡ ROUTED TO: BUG_FIX</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mission-footer">
+            <p class="footer-text">
+                Mission completed in <span class="footer-highlight">28 minutes 14 seconds</span>
+                | Processed <span class="footer-highlight">2 executions</span>
+                | <span class="footer-highlight">100% success rate</span>
+            </p>
+            <p class="footer-text" style="margin-top: 0.5rem; font-size: 0.8rem;">
+                Generated by Pipeline Infographic System | Claude Code
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Generate stars
+        const starsContainer = document.querySelector('.stars');
+        for (let i = 0; i < 100; i++) {
+            const star = document.createElement('div');
+            star.className = 'star';
+            star.style.left = Math.random() * 100 + '%';
+            star.style.top = Math.random() * 100 + '%';
+            star.style.animationDelay = Math.random() * 3 + 's';
+            starsContainer.appendChild(star);
+        }
+
+        // Animate elements on scroll
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.animate-in').forEach(el => {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(30px)';
+            el.style.transition = 'all 0.8s ease-out';
+            observer.observe(el);
+        });
+    </script>
+</body>
+</html>

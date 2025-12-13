@@ -1,0 +1,58 @@
+Perfect! Now I have all the context I need. Let me analyze this critical bug:
+
+```json
+{
+  "bugSummary": "Afterburner module causes instant direction/speed changes bypassing EVE-style physics acceleration",
+  "expectedBehavior": "When afterburner is fitted, it should multiply maxVelocity by 1.5x (basic) or higher (improved/advanced), allowing the ship to reach higher speeds while STILL respecting EVE-style exponential acceleration curves and ship rotation-based movement direction",
+  "actualBehavior": "Ship instantly changes movement direction even while still rotating, and throttle changes instantly affect speed without proper acceleration/deceleration curves. This suggests the afterburner effect is either overriding physics or the stat sync is corrupting velocity calculations",
+  "affectedSystems": [
+    "ship_fitting",
+    "physics_engine",
+    "stat_synchronization",
+    "ship_movement"
+  ],
+  "severity": "HIGH",
+  "reproductionSteps": [
+    "Step 1: Launch the game and undock from station",
+    "Step 2: Verify normal ship movement works (gradual acceleration, direction follows ship rotation)",
+    "Step 3: Open ship fitting interface and fit a 'basic_afterburner' to a mid slot",
+    "Step 4: Close fitting interface and attempt to move the ship",
+    "Step 5: Observe instant direction changes and instant speed changes (physics broken)",
+    "Step 6: Unfit the afterburner module",
+    "Step 7: Observe that physics returns to normal (confirms afterburner is the cause)"
+  ],
+  "likelyFiles": [
+    "/mnt/c/github/superstarships/js/entities/Ship.js",
+    "/mnt/c/github/superstarships/js/physics/ShipPhysics.js",
+    "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+    "/mnt/c/github/superstarships/js/systems/ContentManager.js"
+  ],
+  "hypothesis": "Root cause analysis:\n\n1. **Afterburner Effect Definition** (ContentManager.js:88-90):\n   - `maxSpeed: { type: 'multiply', value: 1.5 }` - This is CORRECT\n   - `agility: { type: 'multiply', value: 0.9 }` - This is CORRECT (0.9 = 10% better agility)\n\n2. **Stat Application** (ShipFittingManager.js:315-342):\n   - The `applyItemEffects()` method applies multiply effects correctly for maxSpeed\n   - However, it maps 'maxSpeed' to 'maxVelocity' (line 321-324) - this is expected\n\n3. **Stat Synchronization** (Ship.js:59-106):\n   - `syncStatsFromFitting()` is called EVERY FRAME in `updateWithNavigation()` (line 203)\n   - This reads `fitting.currentStats.maxSpeed` or falls back to `maxVelocity`\n   - Updates `this.physics.maxVelocity` and recalculates `timeConstant`\n\n4. **CRITICAL ISSUE IDENTIFIED**:\n   - Line 203 in Ship.js: `this.syncStatsFromFitting()` is called EVERY FRAME\n   - Line 82 in Ship.js: When agility changes, timeConstant is recalculated: `this.physics.timeConstant = stats.agility / 500000`\n   - **BUG**: When agility gets multiplied by the afterburner effect (0.9x), this ALSO changes the timeConstant\n   - The multiply effect in applyItemEffects (line 336-340) is applied EVERY TIME recalculateShipStats() is called\n   - If agility multiply is applied multiple times, it compounds: agility * 0.9 * 0.9 * 0.9...\n   - This would cause timeConstant to approach zero, making acceleration INSTANT\n\n5. **Additional Physics Corruption**:\n   - ShipPhysics.js line 156-163: Exponential acceleration formula\n   - If timeConstant becomes very small, `k = 1/timeConstant` becomes very large\n   - `factor = 1 - Math.exp(-k * deltaTime)` approaches 1.0\n   - This makes acceleration instant instead of gradual\n\n**Root Cause**: ShipFittingManager.recalculateShipStats() (line 348-374) resets to base stats and re-applies ALL effects, but the multiply effects in applyItemEffects() might be compounding if called multiple times, OR the stat sync is being called too frequently causing physics corruption.",
+  "additionalContext": {
+    "keyCodeLocations": {
+      "afterburner_definition": "ContentManager.js:77-106",
+      "stat_application": "ShipFittingManager.js:315-342 (applyItemEffects)",
+      "stat_recalculation": "ShipFittingManager.js:348-374 (recalculateShipStats)",
+      "stat_sync": "Ship.js:59-106 (syncStatsFromFitting)",
+      "stat_sync_called_every_frame": "Ship.js:203 (in updateWithNavigation)",
+      "physics_acceleration": "ShipPhysics.js:156-163 (applyExponentialAcceleration)",
+      "timeConstant_calculation": "ShipPhysics.js:32 and Ship.js:82"
+    },
+    "suspectedIssues": [
+      "Multiply effects compounding on repeated recalculation",
+      "syncStatsFromFitting() called every frame causing repeated stat changes",
+      "timeConstant corruption from agility multiply effect",
+      "Possible velocity object corruption from stat changes mid-physics-update"
+    ],
+    "debuggingSteps": [
+      "Add console logging to applyItemEffects to track multiply operations",
+      "Log timeConstant value before and after syncStatsFromFitting",
+      "Verify recalculateShipStats truly resets to base before applying effects",
+      "Check if multiply effects are being applied cumulatively",
+      "Test if removing syncStatsFromFitting from every-frame call fixes issue"
+    ]
+  }
+}
+```
+
+DECISION: analysis_complete

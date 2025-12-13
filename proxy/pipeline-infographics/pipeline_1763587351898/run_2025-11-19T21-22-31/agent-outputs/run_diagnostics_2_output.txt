@@ -1,0 +1,267 @@
+## Root Cause Analysis
+
+Based on comprehensive diagnostics, I've identified the following issues:
+
+### Primary Issue: CoiniumServ Pool Server Not Running
+
+**Evidence:**
+- No CoiniumServ process found in `ps aux` output
+- Logs stopped at 11/18/2025 20:47:50 (~20 hours ago)
+- Stratum port 3333 not listening
+- Mono runtime not installed or not in PATH (required to run CoiniumServ.exe)
+- Pool server last ran approximately 20 hours before current diagnostics
+
+**Impact:**
+- Mining pool is completely offline
+- Miners cannot connect to stratum endpoint
+- No block templates being generated or distributed
+- Statistics collection stopped (explaining the recurring error messages)
+
+**Root Cause:** The CoiniumServ pool server stopped running approximately 20 hours ago. The application requires the Mono runtime to execute (it's a .NET executable), and Mono is not currently installed or configured on the system.
+
+### Secondary Issue: Statistics Module Implementation Error
+
+**Evidence from logs:**
+```
+11/18/2025 20:47:50 [Error] [PoolManager] [global] Error recaching statistics; The method or operation is not implemented.
+```
+- Error repeats every 7 seconds (matching `statistics.updateInterval: 7` in config.json:13)
+- NotImplementedException indicates incomplete code implementation
+- This was happening even when pool was running
+
+**Impact:**
+- Statistics cannot be cached or displayed properly
+- Web interface metrics likely incomplete
+- Does not prevent core mining functionality but degrades monitoring
+
+**Root Cause:** Code in PoolManager statistics recaching contains unimplemented methods. This is a development/implementation issue in the CoiniumServ codebase at build/bin/Debug/config/config.json:13.
+
+### Non-Issue: Zero Peer Connections (Expected Behavior)
+
+**Evidence:**
+- Bitcoin daemon running in `-regtest` mode
+- Peer count: 0
+- `getnetworkinfo` shows `connections: 0, connections_in: 0, connections_out: 0`
+- No peer connection errors in debug.log
+
+**Analysis:**
+- **This is EXPECTED and CORRECT for regtest mode**
+- Regtest is designed for isolated testing without network peers
+- The daemon is configured to run in complete isolation (`-regtest` flag)
+- No peer discovery or connection attempts are made in regtest
+- This is not a defect or degradation - it's the intended operational mode
+
+**Impact:**
+- None for testing purposes
+- Would be critical if this were mainnet/testnet, but it's not
+
+**Classification:** Not an issue requiring remediation for current testing environment
+
+### System Health: Excellent
+
+**Evidence:**
+- CPU usage: 0.1% (bitcoind), system idle 100%
+- Memory: 1.3 GB used / 15.8 GB total (8.2% utilization)
+- Swap: 0 GB used / 4 GB available
+- Disk: 14 GB used / 1007 GB total (2% utilization)
+- Bitcoin daemon uptime: 6.5 hours stable
+- Network latency: 0.027ms average (excellent)
+- RPC response time: <50ms (from network health check)
+
+**Analysis:** System resources are abundant and not contributing to any degradation.
+
+## Remediation Plan
+
+### Immediate Actions
+
+#### Action 1: Install Mono Runtime
+**Command:**
+```bash
+sudo apt update
+sudo apt install -y mono-complete
+```
+
+**Expected Result:** Mono runtime will be installed, enabling execution of CoiniumServ.exe
+
+**Validation:**
+```bash
+mono --version  # Should show Mono JIT compiler version
+```
+
+#### Action 2: Start CoiniumServ Pool Server
+**Command:**
+```bash
+cd /mnt/c/github/private-SuperCoinServ/build/bin/Debug
+mono CoiniumServ.exe &
+```
+
+**Expected Result:** 
+- Pool server starts and begins logging activity
+- Stratum port 3333 opens and begins listening
+- Statistics errors will still appear (needs code fix) but pool will be functional
+
+**Validation:**
+```bash
+# Check process is running
+ps aux | grep CoiniumServ
+
+# Check stratum port is listening
+ss -tuln | grep 3333
+
+# Monitor logs for activity
+tail -f build/bin/Debug/logs/server.log
+
+# Verify RPC connectivity to Bitcoin daemon
+grep 'daemon' build/bin/Debug/logs/server.log | tail -5
+```
+
+#### Action 3: Verify Pool Connectivity
+**Command:**
+```bash
+# Test stratum port
+echo '{"id":1,"method":"mining.subscribe","params":[]}' | nc localhost 3333
+
+# Check pool responds to RPC
+curl -s --user bitcoinrpc:SuperSecurePassword123 --data-binary '{"jsonrpc":"1.0","id":"test","method":"getblockcount","params":[]}' -H 'content-type: text/plain;' http://172.22.45.9:18443/
+```
+
+**Expected Result:** 
+- Stratum connection responds with mining.subscribe confirmation
+- RPC returns current block count (102)
+
+**Validation:** Look for JSON-RPC response from stratum server
+
+### Long-term Recommendations
+
+#### 1. Fix Statistics Implementation Error
+**Issue:** NotImplementedException in PoolManager statistics recaching
+
+**Location:** Likely in `src/CoiniumServ/Pools/PoolManager.cs` based on log traces
+
+**Recommendation:**
+- Search codebase for `NotImplementedException` throws in statistics-related code
+- Implement missing statistics aggregation methods
+- This requires development work, not just configuration
+
+**Priority:** Medium (does not affect core mining, but degrades monitoring)
+
+#### 2. Create Systemd Service for CoiniumServ
+**Why:** Ensure pool server automatically starts on boot and restarts on failure
+
+**Create file:** `/etc/systemd/system/coiniumserv.service`
+```ini
+[Unit]
+Description=CoiniumServ Mining Pool
+After=network.target
+
+[Service]
+Type=simple
+User=super
+WorkingDirectory=/mnt/c/github/private-SuperCoinServ/build/bin/Debug
+ExecStart=/usr/bin/mono CoiniumServ.exe
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Enable:**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable coiniumserv
+sudo systemctl start coiniumserv
+```
+
+#### 3. Implement Health Check Monitoring
+**Recommendation:**
+- Schedule automated health checks every 5-10 minutes
+- Monitor pool server process existence
+- Alert if stratum port becomes unreachable
+- Track statistics error frequency
+
+#### 4. Production Migration Planning
+**When ready to move from regtest to testnet/mainnet:**
+
+1. **Update Bitcoin daemon configuration:**
+   - Change from `-regtest` to `-testnet` or remove for mainnet
+   - Add seed nodes for peer discovery
+   - Configure firewall for port 8333 (mainnet) or 18333 (testnet)
+   - Enable port forwarding if behind NAT
+
+2. **Update pool configuration:**
+   - Change `build/bin/Debug/config/pools/default.json` coin reference
+   - Update daemon port (8332 mainnet, 18332 testnet)
+   - Update wallet address to appropriate network
+   - Enable payments module after testing
+   - Enable vardiff for production miners
+
+3. **Target metrics for healthy production:**
+   - Peer connections: 8-125 (healthy range)
+   - Peer latency: <500ms average
+   - RPC latency: <100ms
+   - Block sync lag: <2 blocks
+
+## Additional Observations
+
+### Bitcoin Daemon: Healthy
+The Bitcoin daemon is operating flawlessly:
+- Fully synchronized (blocks 102 == headers 102)
+- RPC responsive (36ms from health check)
+- No errors in debug.log (except expected regtest warnings)
+- Stable uptime (6.5 hours)
+- Minimal resource usage
+
+### Expected Regtest Warnings
+The following are **normal and expected** in regtest mode:
+```
+Failed to read fee estimates from /home/super/.bitcoin-regtest/regtest/fee_estimates.dat. Continue anyway.
+Failed to open mempool file from disk. Continuing anyway.
+WARNING: the RPC server is not safe to expose to untrusted networks such as the public internet
+```
+
+These do not indicate problems - regtest starts with a clean state.
+
+### RPC Security Warning
+The RPC warning about untrusted networks is valid:
+- Current config binds to `0.0.0.0` (all interfaces)
+- Uses `rpcallowip=0.0.0.0/0` (allows all IPs)
+- For production, restrict to trusted IPs only
+
+### Configuration Quality
+Pool and daemon configurations are well-structured:
+- Appropriate settings for regtest testing
+- Stratum configured correctly (port 3333, low difficulty for testing)
+- Payments disabled for testing (correct)
+- Banning disabled for testing (correct)
+
+## Next Steps
+
+1. **Install Mono runtime** (prerequisite for CoiniumServ)
+2. **Start CoiniumServ pool server** 
+3. **Verify stratum port 3333 is listening**
+4. **Test with a mining client** (cpuminer or similar)
+5. **Monitor logs** for successful block template generation
+6. **Address statistics error** (requires code development)
+7. **Run follow-up health check** to confirm degraded status resolves to healthy
+
+## Test Results Summary
+
+| Test | Result | Status |
+|------|--------|--------|
+| Bitcoin Daemon Running | ✓ PASS | Healthy |
+| RPC Connectivity | ✓ PASS | 36ms latency, responsive |
+| Blockchain Sync | ✓ PASS | Fully synchronized (102/102) |
+| Peer Connections | ⚠ EXPECTED | 0 peers (normal for regtest) |
+| System Resources | ✓ PASS | Abundant (92% memory free, CPU idle) |
+| Disk Space | ✓ PASS | 98% available (943 GB free) |
+| Network Latency | ✓ PASS | 0.027ms to daemon |
+| CoiniumServ Running | ✗ FAIL | Not running (no process found) |
+| Stratum Port 3333 | ✗ FAIL | Not listening |
+| Mono Runtime | ✗ FAIL | Not installed |
+| Pool Logs | ⚠ WARNING | Stale (20 hours old) |
+| Statistics Module | ✗ FAIL | NotImplementedException |
+
+---
+
+**DECISION: issues_identified**

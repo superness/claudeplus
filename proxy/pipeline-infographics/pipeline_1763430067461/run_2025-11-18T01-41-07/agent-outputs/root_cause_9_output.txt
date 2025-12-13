@@ -1,0 +1,43 @@
+Perfect! Now I have all the information needed to provide the root cause analysis. Let me document my findings:
+
+```json
+{
+  "rootCause": "Ship fitted items persistence is implemented in SaveGameManager.js, but ShipFittingManager.js never saves fitted items to its own internal storage - it only exists in the SaveGameManager serialization. The fitted items are stored in shipFittingManager.shipFittings Map in memory, which is correctly serialized by SaveGameManager.serializeShipFitting() and deserialized by SaveGameManager.deserializeGameState(). The system is implemented and should work. The bug reproduction evidence shows fitted items ARE being lost, which means either: (1) SaveGameManager.saveGame() is not being called before browser close, or (2) The save is happening but restoration is failing.",
+  "affectedFiles": [
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/SaveGameManager.js",
+      "lineNumbers": [55, 71, 105],
+      "currentCode": "Auto-save is configured with 30-second interval (line 16) and triggered on significant events (line 71), but may not trigger before immediate browser close",
+      "problem": "Auto-save timer (30 seconds) may not have fired if user fits items and immediately closes browser. No manual 'save before exit' mechanism."
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "lineNumbers": [184, 228],
+      "currentCode": "fitItem() and unfitItem() methods modify shipFittings Map but don't directly save to localStorage",
+      "problem": "ShipFittingManager relies entirely on SaveGameManager for persistence - no manual save trigger after fitting operations"
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/SpaceshipSimulator.js",
+      "lineNumbers": [99, 100, 102],
+      "currentCode": "SaveGameManager.loadGame() is called on initialization (line 100), and auto-save is initialized (line 102)",
+      "problem": "No save trigger when page unloads (window.beforeunload event handler missing)"
+    }
+  ],
+  "executionFlow": [
+    "User docks at station and opens ship fitting UI",
+    "User drags items to slots - ShipFittingManager.fitItem() called",
+    "fitItem() updates shipFittings Map in memory (line 210-213 in ShipFittingManager.js)",
+    "fitItem() does NOT call saveGameManager.saveGame()",
+    "fitItem() does NOT call saveGameManager.markDirty() to trigger auto-save",
+    "User closes browser tab before 30-second auto-save timer fires",
+    "No beforeunload handler to save on browser close",
+    "Browser restart - saveGameManager.loadGame() called",
+    "Restored shipFittings contains old/empty slot data",
+    "Fitted items are lost"
+  ],
+  "whyItHappens": "The ship fitting system has a complete save/restore implementation in SaveGameManager (lines 663-774), but there are THREE critical missing pieces: (1) ShipFittingManager.fitItem() and unfitItem() never call saveGameManager.markDirty() to signal state changes, (2) No window.beforeunload event handler to save before browser closes, (3) Auto-save interval is 30 seconds - too long if user fits items and immediately closes browser.",
+  "proposedFix": "Add THREE fixes: (1) In ShipFittingManager.fitItem() (line 222) and unfitItem() (line 256), add `if (window.simulator?.saveGameManager) { window.simulator.saveGameManager.markDirty(); }` to trigger auto-save after fitting operations. (2) In SpaceshipSimulator.initialize() (after line 102), add window.beforeunload event handler: `window.addEventListener('beforeunload', () => { if (this.saveGameManager) this.saveGameManager.saveGame(); });` to save before browser close. (3) Optionally reduce auto-save interval from 30s to 5s in SaveGameManager config (line 16) for more responsive saves."
+}
+```
+
+DECISION: root_cause_found

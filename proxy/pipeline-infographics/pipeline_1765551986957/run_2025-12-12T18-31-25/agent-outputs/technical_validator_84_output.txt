@@ -1,0 +1,135 @@
+I have now reviewed the complete implementation. Here is my technical validation:
+
+---
+
+# Technical Validation Report: Warhammer 40K MMO
+
+## 1. CODE QUALITY: Design Patterns, Readability, Maintainability
+
+### Strengths
+- **Clean Architecture**: Good separation of concerns with clear layers (models, data/repositories, services, API)
+- **TypeScript Best Practices**: Strong typing throughout with interfaces, enums, and const assertions
+- **Repository Pattern**: Well-implemented data access layer with proper entity mapping
+- **Transaction Support**: Database layer includes transaction wrapper for atomic operations
+- **Dependency Injection**: Auth service accepts injected repositories enabling testability
+
+### Issues Found
+- **Incomplete Implementation**: Multiple API endpoints contain TODO placeholders and return mock data (character.api.ts:35-46, 63-104, 116-129)
+- **Inconsistent Model Files**: Both `account.model.ts` and `account.ts` exist; multiple duplicate model files cause confusion
+- **Magic Strings**: Some hardcoded strings like zone IDs (`'terra_hive_primus'` in character.repository.ts:108)
+
+---
+
+## 2. SECURITY ISSUES: Vulnerabilities Found
+
+### Resolved Issues (Documented in Code)
+✅ SQL injection prevention via parameterized queries and table/column whitelists
+✅ Refresh tokens stored as hashes (SHA-256)
+✅ WebSocket authentication via first-message (not URL query params)
+✅ JWT secret validation in production config
+✅ bcrypt rounds validation (minimum 10 in production)
+
+### Remaining Concerns
+⚠️ **IP Spoofing via X-Forwarded-For** (auth.api.ts:22-33): While handled correctly for proxied environments, there's no validation that the request is actually coming through a trusted proxy. In production, `trust proxy` should be configured in Express.
+
+⚠️ **Character Ownership Check Inconsistency**: The character.api.ts endpoints use `(req as any).accountId` which assumes auth middleware is always present, but no middleware attachment is shown in the router setup.
+
+⚠️ **Missing Rate Limiting on WebSocket**: Combat service has auth timeout but no message rate limiting after authentication.
+
+---
+
+## 3. PERFORMANCE CONCERNS: Bottlenecks or Inefficiencies
+
+### Good Practices
+✅ N+1 query fixed in `findByAccountId()` using JOIN (character.repository.ts:254-277)
+✅ Connection pooling properly configured
+✅ Slow query logging (>1000ms)
+✅ Pagination helper with max 100 per page limit
+
+### Concerns
+⚠️ **Map in CombatParticipant** (combat.model.ts:55): `skillCooldowns: Map<string, number>` - Maps don't serialize to JSON; will cause issues when sending to clients.
+
+⚠️ **Missing Indexes**: The schema has good indexes but missing index on `characters.status` combined with `current_zone_id` for zone queries.
+
+⚠️ **Combat Instance Memory**: Combat instances stored only in-memory (`Map<string, CombatInstance>`); no persistence means lost state on server restart.
+
+---
+
+## 4. BUGS AND ISSUES: Correctness Problems
+
+### Critical Bugs Fixed (Per Documentation)
+✅ SQL parameter bug in `updateStatus()` - fixed
+✅ SQL injection in `cleanup()` - fixed
+✅ Missing `await` on `generateTokenPair` - fixed
+✅ Position update parameter ordering - fixed
+
+### Remaining Bugs Found
+
+**Bug 1: Type Mismatch in Auth Service** (auth.service.ts:101-108)
+```typescript
+generateAccessToken(account: Account): string {
+  const payload: Omit<JWTPayload, 'iat' | 'exp'> = {
+    sub: account.id,          // Account uses 'id'
+    // ...
+```
+But in tests and some API code, `account.accountId` is used. The model unification claims to fix this but interfaces differ between files.
+
+**Bug 2: Combat Service Position Update** (combat.service.ts:380)
+```typescript
+participant.position = payload.destination;
+```
+Direct assignment doesn't validate position bounds or apply server-side movement validation.
+
+**Bug 3: Missing Query Function** (character.repository.ts:280-281)
+```typescript
+await query(
+```
+Uses `query` but `queryOne` was likely intended for position updates since no rows are returned.
+
+**Bug 4: Auth API Response Type Mismatch** (auth.api.ts:85-98)
+```typescript
+const response: RegisterResponse = {
+  accountId: account.accountId,  // Uses 'accountId' but Account model has 'id'
+```
+
+---
+
+## 5. RECOMMENDATIONS: Required Fixes and Improvements
+
+### Must Fix Before Production
+1. **Complete API Implementation**: Replace all TODO placeholders with actual service calls
+2. **Consolidate Model Files**: Remove duplicate `account.ts`, `character.ts`, etc. - keep only `.model.ts` versions
+3. **Add Auth Middleware to Router**: Explicitly attach authentication middleware in router definitions
+4. **Fix Account ID Field Consistency**: Standardize on either `id` or `accountId` throughout
+5. **Add WebSocket Rate Limiting**: Prevent message flooding from authenticated clients
+6. **Configure Express Trust Proxy**: Add proper proxy configuration for production
+
+### Should Improve
+1. Add combat instance persistence (Redis or database)
+2. Serialize Map to Object/Array for WebSocket transmission
+3. Add request validation middleware using a schema validator (Zod/Joi)
+4. Add structured logging (Winston/Pino)
+5. Add health check endpoint
+
+### Test Coverage Gaps
+- Integration tests marked as `.todo()` - need implementation
+- No API endpoint tests with actual HTTP requests
+- No WebSocket message flow tests
+
+---
+
+## 6. VERDICT
+
+**NEEDS_REVISION**
+
+### Rationale
+While the codebase demonstrates solid architectural patterns and addresses several security concerns, there are critical issues that prevent approval:
+
+1. **Incomplete Implementation**: Multiple API endpoints return placeholder data
+2. **Data Model Inconsistencies**: Duplicate model files and inconsistent field naming (`id` vs `accountId`)
+3. **Type Mismatches**: Several places use incorrect property names that would cause runtime errors
+4. **Missing Core Functionality**: Character API endpoints are stubs
+
+The foundational architecture is sound, but the implementation needs completion and consistency fixes before it can be considered production-ready.
+
+DECISION: needs_revision

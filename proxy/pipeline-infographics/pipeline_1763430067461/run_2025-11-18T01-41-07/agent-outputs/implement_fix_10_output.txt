@@ -1,0 +1,67 @@
+Excellent! All syntax is valid. Now let me create the fix summary:
+
+```json
+{
+  "filesModified": [
+    {
+      "path": "/mnt/c/github/superstarships/js/systems/ShipFittingManager.js",
+      "changes": [
+        {
+          "lineNumber": 222,
+          "oldCode": "        return { success: true };",
+          "newCode": "        // Bug fix: Trigger save after fitting item to persist changes\n        // Mark game state as dirty to trigger auto-save\n        if (window.simulator?.saveGameManager) {\n            window.simulator.saveGameManager.markDirty();\n        }\n\n        return { success: true };",
+          "reason": "Trigger auto-save after fitting item to ship slot"
+        },
+        {
+          "lineNumber": 262,
+          "oldCode": "        return { success: true, item: fittedItem.itemId };",
+          "newCode": "        // Bug fix: Trigger save after unfitting item to persist changes\n        // Mark game state as dirty to trigger auto-save\n        if (window.simulator?.saveGameManager) {\n            window.simulator.saveGameManager.markDirty();\n        }\n\n        return { success: true, item: fittedItem.itemId };",
+          "reason": "Trigger auto-save after removing item from ship slot"
+        }
+      ]
+    },
+    {
+      "path": "/mnt/c/github/superstarships/js/SpaceshipSimulator.js",
+      "changes": [
+        {
+          "lineNumber": 104,
+          "oldCode": "                this.saveGameManager.initialize();",
+          "newCode": "                this.saveGameManager.initialize();\n\n                // Bug fix: Save game before browser closes to prevent data loss\n                // This ensures fitted items and other state changes are persisted\n                window.addEventListener('beforeunload', () => {\n                    if (this.saveGameManager) {\n                        this.saveGameManager.saveGame();\n                    }\n                });",
+          "reason": "Add beforeunload handler to save game state when browser closes"
+        }
+      ]
+    }
+  ],
+  "fixSummary": "Implemented ship fitting persistence with three-part fix: (1) Added markDirty() calls after fitItem() and unfitItem() operations to trigger auto-save, (2) Added window.beforeunload event handler to save game before browser closes, (3) All changes use safe null-check patterns (window.simulator?.saveGameManager)",
+  "expectedImpact": "Ship fitted items will now persist across browser restarts. Changes are saved in three scenarios: (1) Auto-save timer triggers after markDirty() call (within 30 seconds), (2) User closes browser tab/window (beforeunload saves immediately), (3) Existing periodic auto-save every 30 seconds",
+  "riskAssessment": "Low risk. Changes are minimal and defensive:\n- Uses optional chaining (?.) to prevent errors if saveGameManager not initialized\n- markDirty() is non-invasive - only signals state change\n- beforeunload handler is standard pattern for save-on-exit\n- No changes to existing save/restore logic in SaveGameManager\n- Syntax validated successfully",
+  "additionalNotes": "The SaveGameManager already had complete serialize/deserialize logic for ship fittings (lines 663-774 in SaveGameManager.js). The bug was NOT in the save/restore implementation - it was that saves were never triggered after fitting operations. This fix adds the missing trigger points. For even better UX, could optionally reduce auto-save interval from 30s to 5s in SaveGameManager config (line 16), but current fix is sufficient."
+}
+```
+
+## Summary
+
+I've successfully implemented the fix for ship fitting persistence. The issue was that while the save/restore system was fully implemented in `SaveGameManager.js`, it was never being triggered after fitting operations.
+
+### Changes Made:
+
+1. **ShipFittingManager.js (Line 222-226)**: Added `markDirty()` call after `fitItem()` to trigger auto-save when items are fitted to ship
+2. **ShipFittingManager.js (Line 262-266)**: Added `markDirty()` call after `unfitItem()` to trigger auto-save when items are removed from ship
+3. **SpaceshipSimulator.js (Line 104-110)**: Added `window.beforeunload` event handler to force save when browser closes
+
+### How It Works:
+
+- **Immediate marking**: When user fits/unfits items, the game state is marked as "dirty"
+- **Auto-save triggers**: The existing 30-second auto-save timer will save dirty state
+- **Browser close safety**: `beforeunload` handler ensures save happens even if user closes browser before auto-save timer fires
+- **Safe implementation**: Uses optional chaining (`?.`) to prevent errors if systems not initialized
+
+### Testing Recommendation:
+
+To verify the fix:
+1. Fit items to ship
+2. Close browser immediately (before 30 seconds)
+3. Reopen browser and load game
+4. Verify fitted items are still equipped
+
+DECISION: fix_implemented

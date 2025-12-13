@@ -1,0 +1,86 @@
+All integration chains are wired up. Let me create a summary of the test findings:
+
+## Test Results
+
+### Syntax Check
+**Pass** - TypeScript build completes successfully with no errors (37 modules transformed).
+
+### Integration Path Verification
+
+#### 1. Companion AI → Combat System Chain
+- **Entry point**: `PartyManager.update()` → `companion.updateAI(deltaTime, context)`
+- **Calls**: `CompanionAI.update()` → returns `AIDecision`
+- **Notification**: `PartyManager.notifyCompanionDecision()` → calls all registered callbacks
+- **Execution**: `CombatManager.onCompanionDecisionCallback()` → filters for SKILL actions → calls `executeCompanionSkill()`
+- **Damage Applied**: `CombatManager.applyCompanionDamageToTarget()` → `target.takeDamage()`
+- **CONNECTED: YES**
+
+#### 2. Enemy AI → Combat System Chain
+- **Entry point**: `EntityManager.update()` → `enemy.updateAI(deltaTime, aiContext)`
+- **Calls**: `EnemyAI.update()` → returns `EnemyAIDecision`
+- **Execution**: `EntityManager.executeEnemyAIDecision()` → calls `onEnemyAttack` callback
+- **Damage Applied**: `CombatManager.handleEnemyAttack()` → applies damage to player or companion
+- **CONNECTED: YES**
+
+#### 3. Companion Skill Loading Chain
+- **Entry point**: `CompanionAI.loadSkills()` 
+- **Source**: `template.skill_bar` → maps skill IDs to `SKILLS_BY_ID`
+- **Verification**: Template IDs (e.g., `IMP_GD_PRECISE_SHOT`) match Skills.ts definitions
+- **CONNECTED: YES**
+
+#### 4. Companion Template → Party Manager Chain
+- **Entry point**: `Game.spawnDemoCompanions()` → `partyManager.addCompanion('IMP_HENCH_MEDIC_JONAS')`
+- **Lookup**: `ALL_COMPANION_TEMPLATES.get(templateCode)` 
+- **Verification**: `IMP_HENCH_MEDIC_JONAS` exists in CompanionTemplates.ts
+- **CONNECTED: YES**
+
+#### 5. Combat Feedback (Damage Numbers) Chain
+- **Entry point**: `CombatManager.fireCombatEvent()`
+- **Registered**: `Game.setupCombatFeedback()` → `combatManager.onCombatEventCallback()`
+- **Display**: `combatFeedback.showDamageNumber()` / `showHealNumber()` etc.
+- **CONNECTED: YES**
+
+#### 6. Skill Visual Effects Chain
+- **Entry point**: `CombatManager.executeCompanionSkill()` 
+- **Calls**: `this.skillEffects.playSkillEffect(skill, sourcePos, targetPos)`
+- **Display**: SkillEffectSystem creates particle effects
+- **CONNECTED: YES**
+
+### Disconnected Systems Found
+**None** - All major combat systems are properly wired together.
+
+### Placeholder Code Found
+- `CombatManager.ts:300-301`: `// TODO: Apply actual buff effects via CombatSystem`
+- `CombatManager.ts:313`: `// TODO: Apply actual debuff effects via CombatSystem`
+- `PartyManager.ts:577`: `// TODO: Track marked targets`
+- `PartyManager.ts:595`: `// TODO: Check for cleansable conditions`
+
+These TODOs are for buff/debuff application which is secondary functionality; core damage dealing works.
+
+### Issues Found
+**Minor Issues Only** - No critical integration failures detected.
+
+1. The buff/debuff status effect application is not fully implemented (fires events but doesn't apply actual mechanical effects)
+2. Marked targets feature not implemented (always returns `isMarked: false`)
+3. Condition cleansing detection not implemented
+
+These are secondary features that don't block core combat functionality.
+
+### Data Reference Validation
+- ✅ `IMP_HENCH_MEDIC_JONAS` exists in CompanionTemplates.ts
+- ✅ `IMP_HENCH_CRUSADER_MARCUS` exists in CompanionTemplates.ts
+- ✅ `IMP_HENCH_ENGINSEER_COG` exists in CompanionTemplates.ts
+- ✅ All skill IDs in companion templates (e.g., `IMP_GD_PRECISE_SHOT`, `IMP_GD_FIRST_AID`) exist in Skills.ts
+
+### Test Conclusion
+The companion combat system integration is fully wired up and functional:
+- Companions make AI decisions every 0.5 seconds
+- Skill decisions are passed to CombatManager for execution
+- Damage is calculated with effectiveness modifier (70% for henchmen)
+- Damage is applied to enemies via `target.takeDamage()`
+- Combat events fire for UI feedback (damage numbers)
+- Skill visual effects play when companions use skills
+- Enemies fight back with their own AI system
+- Enemy attacks deal damage to players and companions
+
+DECISION: working
