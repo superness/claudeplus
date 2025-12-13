@@ -62,6 +62,16 @@ class DatabaseService {
         completed_at DATETIME,
         FOREIGN KEY (project_id) REFERENCES projects(id)
       );
+
+      CREATE TABLE IF NOT EXISTS chat_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
     `);
 
     // Migration: Add design_complexity column if it doesn't exist
@@ -361,6 +371,60 @@ class DatabaseService {
       'SELECT id, server_pid FROM projects WHERE server_pid IS NOT NULL'
     );
     return stmt.all();
+  }
+
+  // ============================================
+  // Chat History Methods
+  // ============================================
+
+  /**
+   * Add a chat message to history
+   * @param {string} projectId - Project ID
+   * @param {string} messageType - Type: 'user', 'system', 'agent', 'stage', 'commentary'
+   * @param {string} content - Message content (can be stringified JSON for complex messages)
+   * @param {object} metadata - Optional metadata (agent name, stage info, etc.)
+   */
+  addChatMessage(projectId, messageType, content, metadata = null) {
+    const stmt = this.db.prepare(
+      'INSERT INTO chat_history (project_id, message_type, content, metadata) VALUES (?, ?, ?, ?)'
+    );
+    const metadataStr = metadata ? JSON.stringify(metadata) : null;
+    const result = stmt.run(projectId, messageType, content, metadataStr);
+    return result.lastInsertRowid;
+  }
+
+  /**
+   * Get chat history for a project
+   * @param {string} projectId - Project ID
+   * @param {number} limit - Maximum messages to return (0 = all)
+   */
+  getChatHistory(projectId, limit = 100) {
+    let stmt;
+    if (limit > 0) {
+      stmt = this.db.prepare(
+        'SELECT * FROM chat_history WHERE project_id = ? ORDER BY created_at ASC LIMIT ?'
+      );
+      return stmt.all(projectId, limit).map(row => ({
+        ...row,
+        metadata: row.metadata ? JSON.parse(row.metadata) : null
+      }));
+    } else {
+      stmt = this.db.prepare(
+        'SELECT * FROM chat_history WHERE project_id = ? ORDER BY created_at ASC'
+      );
+      return stmt.all(projectId).map(row => ({
+        ...row,
+        metadata: row.metadata ? JSON.parse(row.metadata) : null
+      }));
+    }
+  }
+
+  /**
+   * Clear chat history for a project
+   */
+  clearChatHistory(projectId) {
+    const stmt = this.db.prepare('DELETE FROM chat_history WHERE project_id = ?');
+    return stmt.run(projectId);
   }
 }
 

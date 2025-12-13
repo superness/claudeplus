@@ -507,10 +507,17 @@ function openStudio(project) {
   // Connect WebSocket
   connectWebSocket();
 
-  // Add initial system message
+  // Clear chat and load history
   const messagesEl = document.getElementById('chat-messages');
   messagesEl.innerHTML = '';
-  addSystemMessage(getWelcomeMessage(project));
+
+  // Load chat history from database
+  loadChatHistory(project.id).then(hasHistory => {
+    if (!hasHistory) {
+      // Only show welcome message if no history exists
+      addSystemMessage(getWelcomeMessage(project));
+    }
+  });
 
   showScreen('studio');
 
@@ -611,7 +618,7 @@ function showPipelineProgress(progress) {
 }
 
 // Add a stage completion message with styling
-function addStageMessage(agent, description, completed) {
+function addStageMessage(agent, description, completed, skipSave = false) {
   const messagesEl = document.getElementById('chat-messages');
   const div = document.createElement('div');
   div.className = 'chat-message stage-message';
@@ -627,6 +634,11 @@ function addStageMessage(agent, description, completed) {
 
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Save to database (unless restoring from history)
+  if (!skipSave) {
+    saveChatMessage('stage', description, { agent, completed });
+  }
 }
 
 function getWelcomeMessage(project) {
@@ -696,6 +708,114 @@ document.getElementById('chat-form').addEventListener('submit', async (e) => {
   }
 });
 
+// Save a chat message to the database (async, fire-and-forget)
+function saveChatMessage(messageType, content, metadata = null) {
+  if (!currentProject) return;
+
+  fetch(`/api/projects/${currentProject.id}/chat-history`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${localStorage.getItem('token')}`
+    },
+    body: JSON.stringify({ messageType, content, metadata })
+  }).catch(err => console.error('Failed to save chat message:', err));
+}
+
+// Load chat history from database and restore messages
+async function loadChatHistory(projectId) {
+  try {
+    const response = await fetch(`/api/projects/${projectId}/chat-history`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    });
+
+    if (!response.ok) {
+      console.error('Failed to load chat history');
+      return false;
+    }
+
+    const data = await response.json();
+    const history = data.history || [];
+
+    if (history.length === 0) {
+      return false;
+    }
+
+    // Restore each message based on type
+    history.forEach(msg => {
+      switch (msg.message_type) {
+        case 'user':
+          // Restore user message without saving again
+          restoreUserMessage(msg.content);
+          break;
+
+        case 'system':
+          // Restore system message without saving again
+          restoreSystemMessage(msg.content);
+          break;
+
+        case 'agent':
+          // Restore agent message with metadata
+          const agentMeta = msg.metadata || {};
+          addAgentMessage(
+            agentMeta.agentName || 'Agent',
+            msg.content,
+            agentMeta.completed || 0,
+            agentMeta.total || 0,
+            true // skipSave
+          );
+          break;
+
+        case 'stage':
+          // Restore stage message
+          const stageMeta = msg.metadata || {};
+          addStageMessage(
+            stageMeta.agent || 'Agent',
+            msg.content,
+            stageMeta.completed !== false,
+            true // skipSave
+          );
+          break;
+
+        case 'commentary':
+          // Restore commentary message
+          const commentaryMeta = msg.metadata || {};
+          handlePipelineCommentary({
+            message: msg.content,
+            style: commentaryMeta.style
+          }, true); // skipSave
+          break;
+      }
+    });
+
+    console.log(`Restored ${history.length} chat messages`);
+    return true;
+  } catch (err) {
+    console.error('Error loading chat history:', err);
+    return false;
+  }
+}
+
+// Helper to restore user message without saving
+function restoreUserMessage(text) {
+  const messagesEl = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-message user';
+  div.textContent = text;
+  messagesEl.appendChild(div);
+}
+
+// Helper to restore system message without saving
+function restoreSystemMessage(text) {
+  const messagesEl = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-message system';
+  div.textContent = text;
+  messagesEl.appendChild(div);
+}
+
 function addUserMessage(text) {
   const messagesEl = document.getElementById('chat-messages');
   const div = document.createElement('div');
@@ -703,6 +823,9 @@ function addUserMessage(text) {
   div.textContent = text;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Save to database
+  saveChatMessage('user', text);
 }
 
 function addSystemMessage(text) {
@@ -712,6 +835,9 @@ function addSystemMessage(text) {
   div.textContent = text;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Save to database
+  saveChatMessage('system', text);
 }
 
 // Preview controls
@@ -1342,7 +1468,7 @@ function handleAgentOutput(msg) {
 }
 
 // Add an agent commentator message to chat
-function addAgentMessage(agentName, output, completed, total) {
+function addAgentMessage(agentName, output, completed, total, skipSave = false) {
   const messagesEl = document.getElementById('chat-messages');
   const div = document.createElement('div');
   div.className = 'chat-message agent-message';
@@ -1377,10 +1503,15 @@ function addAgentMessage(agentName, output, completed, total) {
 
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Save to database (unless restoring from history)
+  if (!skipSave) {
+    saveChatMessage('agent', output, { agentName, completed, total });
+  }
 }
 
 // Handle pipeline commentary (high-level AI updates)
-function handlePipelineCommentary(msg) {
+function handlePipelineCommentary(msg, skipSave = false) {
   if (!msg.message) return;
 
   const messagesEl = document.getElementById('chat-messages');
@@ -1407,6 +1538,11 @@ function handlePipelineCommentary(msg) {
 
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // Save to database (unless restoring from history)
+  if (!skipSave) {
+    saveChatMessage('commentary', msg.message, { style: msg.style });
+  }
 }
 
 // Handle real-time pipeline progress updates

@@ -487,6 +487,64 @@ app.post('/api/pipelines/:pipelineId/resume', authMiddleware, async (req, res) =
 });
 
 // ============================================
+// Chat History Routes
+// ============================================
+
+// Get chat history for a project
+app.get('/api/projects/:id/chat-history', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const history = db.getChatHistory(req.params.id, limit);
+    res.json({ history });
+  } catch (err) {
+    console.error('[API] Error getting chat history:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a chat message
+app.post('/api/projects/:id/chat-history', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const { messageType, content, metadata } = req.body;
+    if (!messageType || !content) {
+      return res.status(400).json({ error: 'messageType and content are required' });
+    }
+
+    const id = db.addChatMessage(req.params.id, messageType, content, metadata);
+    res.json({ success: true, id });
+  } catch (err) {
+    console.error('[API] Error adding chat message:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clear chat history for a project
+app.delete('/api/projects/:id/chat-history', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    db.clearChatHistory(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] Error clearing chat history:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // Server Management Routes
 // ============================================
 
@@ -782,9 +840,14 @@ pipelineBridge.onEvent((msg) => {
     // Broadcast commentary to all connected clients that are subscribed to a project
     wss.clients.forEach(client => {
       if (client.readyState === 1 && clientProjects.has(client)) { // WebSocket.OPEN
+        // Extract fields from content but preserve our message type
+        // (content has its own 'type' field that would overwrite ours)
         client.send(JSON.stringify({
           type: 'pipeline-commentary',
-          ...content
+          message: content.message,
+          style: content.style,
+          agent: content.agent,
+          timestamp: content.timestamp
         }));
       }
     });
