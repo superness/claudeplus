@@ -16,6 +16,7 @@ const bcrypt = require('bcrypt');
 const db = require('./services/db');
 const pipelineBridge = require('./services/pipeline-bridge');
 const queueService = require('./services/queue-service');
+const serverManager = require('./services/server-manager');
 
 const PORT = 3008;
 
@@ -257,12 +258,16 @@ app.post('/api/projects/:id/queue', authMiddleware, (req, res) => {
     return res.status(404).json({ error: 'Project not found' });
   }
 
-  const { description } = req.body;
+  const { description, pipelineType } = req.body;
   if (!description) {
     return res.status(400).json({ error: 'Description required' });
   }
 
-  const item = queueService.addToQueue(req.params.id, description);
+  // Validate pipeline type: 'feature' or 'bugfix'
+  const validTypes = ['feature', 'bugfix'];
+  const type = validTypes.includes(pipelineType) ? pipelineType : 'feature';
+
+  const item = queueService.addToQueue(req.params.id, description, type);
   res.json({ item });
 });
 
@@ -290,9 +295,14 @@ app.post('/api/projects/:id/queue/:itemId/complete', authMiddleware, (req, res) 
     db.updateWorkStatus(req.params.itemId, newStatus);
     queueService.emit('work-completed', { projectId: project.id, itemId: req.params.itemId });
 
-    // Check if project should go live
+    // Check if there are more queued items to process
     const queueStatus = queueService.getQueueStatus(project.id);
-    if (queueStatus.queued.length === 0 && !queueStatus.currentWork) {
+    if (queueStatus.queued.length > 0) {
+      // Process the next item in the queue
+      console.log(`[API] Processing next queued item for ${project.id}`);
+      queueService.processNextInQueue(project.id);
+    } else if (!queueStatus.currentWork) {
+      // No more work, mark project as live
       db.updateProjectStatus(project.id, 'live');
       queueService.emit('project-live', { projectId: project.id });
     }
@@ -477,6 +487,182 @@ app.post('/api/pipelines/:pipelineId/resume', authMiddleware, async (req, res) =
 });
 
 // ============================================
+// Server Management Routes
+// ============================================
+
+// Helper to get project path
+function getProjectPath(project) {
+  if (project.custom_path) {
+    return project.custom_path;
+  }
+  return path.join(__dirname, 'games', project.user_id, project.id, 'output');
+}
+
+// Analyze project for server configuration
+app.post('/api/projects/:id/server/analyze', authMiddleware, async (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const projectPath = getProjectPath(project);
+    const config = await serverManager.analyzeProject(projectPath);
+
+    // Save config to database
+    db.updateServerConfig(req.params.id, config);
+
+    console.log(`[API] Analyzed server config for ${project.id}:`, config.detected);
+    res.json({ config });
+  } catch (err) {
+    console.error('[API] Analyze server error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Start game server
+app.post('/api/projects/:id/server/start', authMiddleware, async (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const projectPath = getProjectPath(project);
+
+    // Get config from database or analyze
+    let config = db.getProjectServerConfig(req.params.id);
+    if (!config) {
+      config = await serverManager.analyzeProject(projectPath);
+      db.updateServerConfig(req.params.id, config);
+    }
+
+    // Apply any overrides from request
+    const startConfig = {
+      startCommand: req.body.startCommand || config.overrides?.startCommand || config.detected?.startCommand,
+      port: req.body.port || config.overrides?.port || config.detected?.port,
+      nodeEnv: req.body.nodeEnv || 'development'
+    };
+
+    const result = await serverManager.startServer(req.params.id, projectPath, startConfig);
+
+    // Update database status
+    db.updateServerStatus(req.params.id, 'running', result.pid);
+
+    console.log(`[API] Started server for ${project.id} on port ${result.port}`);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Start server error:', err);
+    db.updateServerStatus(req.params.id, 'error', null);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stop game server
+app.post('/api/projects/:id/server/stop', authMiddleware, async (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const result = await serverManager.stopServer(req.params.id);
+
+    // Update database status
+    db.updateServerStatus(req.params.id, 'stopped', null);
+
+    console.log(`[API] Stopped server for ${project.id}`);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Stop server error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restart game server
+app.post('/api/projects/:id/server/restart', authMiddleware, async (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const projectPath = getProjectPath(project);
+
+    // Get config
+    let config = db.getProjectServerConfig(req.params.id);
+    if (!config) {
+      config = await serverManager.analyzeProject(projectPath);
+      db.updateServerConfig(req.params.id, config);
+    }
+
+    const startConfig = {
+      startCommand: req.body.startCommand || config.overrides?.startCommand || config.detected?.startCommand,
+      port: req.body.port || config.overrides?.port || config.detected?.port,
+      nodeEnv: req.body.nodeEnv || 'development'
+    };
+
+    const result = await serverManager.restartServer(req.params.id, projectPath, startConfig);
+
+    // Update database status
+    db.updateServerStatus(req.params.id, 'running', result.pid);
+
+    console.log(`[API] Restarted server for ${project.id}`);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Restart server error:', err);
+    db.updateServerStatus(req.params.id, 'error', null);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get server status
+app.get('/api/projects/:id/server/status', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const status = serverManager.getServerStatus(req.params.id);
+    const config = db.getProjectServerConfig(req.params.id);
+
+    res.json({
+      ...status,
+      config
+    });
+  } catch (err) {
+    console.error('[API] Get server status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run npm script
+app.post('/api/projects/:id/server/run-script', authMiddleware, async (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const { script } = req.body;
+  if (!script) {
+    return res.status(400).json({ error: 'Script name required' });
+  }
+
+  try {
+    const projectPath = getProjectPath(project);
+
+    console.log(`[API] Running script '${script}' for ${project.id}`);
+    const result = await serverManager.runScript(req.params.id, projectPath, script);
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Run script error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // WebSocket Handling
 // ============================================
 
@@ -575,6 +761,25 @@ queueService.on('project-live', (data) => {
 
 // Forward pipeline bridge events
 pipelineBridge.onEvent((msg) => {
+  // Handle commentary messages specially
+  if (msg.type === 'pipeline-commentary') {
+    // Try to find which project this is for from active pipelines
+    // Commentary is broadcast to all clients by the proxy, so forward to all projects
+    const content = msg.content || {};
+    console.log(`[Server] Received commentary: ${content.message?.substring(0, 50)}...`);
+
+    // Broadcast commentary to all connected clients
+    wss.clients.forEach(client => {
+      if (client.readyState === 1 && client.projectId) { // WebSocket.OPEN
+        client.send(JSON.stringify({
+          type: 'pipeline-commentary',
+          ...content
+        }));
+      }
+    });
+    return;
+  }
+
   // Extract projectId from pipeline messages
   if (msg.pipelineId) {
     const match = msg.pipelineId.match(/_(proj_\w+)_/);
@@ -588,10 +793,42 @@ pipelineBridge.onEvent((msg) => {
 });
 
 // ============================================
+// Server Manager Events -> WebSocket
+// ============================================
+
+serverManager.on('server-started', (data) => {
+  broadcastToProject(data.projectId, { type: 'server-started', ...data });
+});
+
+serverManager.on('server-stopped', (data) => {
+  broadcastToProject(data.projectId, { type: 'server-stopped', ...data });
+});
+
+serverManager.on('server-output', (data) => {
+  broadcastToProject(data.projectId, { type: 'server-output', ...data });
+});
+
+serverManager.on('server-error', (data) => {
+  broadcastToProject(data.projectId, { type: 'server-error', ...data });
+});
+
+serverManager.on('script-output', (data) => {
+  broadcastToProject(data.projectId, { type: 'script-output', ...data });
+});
+
+// ============================================
 // Start Server
 // ============================================
 
 async function start() {
+  // Clean up any orphaned server processes from previous runs
+  try {
+    await serverManager.cleanupOrphanedServers(db);
+    console.log('[Server] Cleaned up orphaned server processes');
+  } catch (err) {
+    console.warn('[Server] Error cleaning up orphaned servers:', err.message);
+  }
+
   try {
     // Connect to proxy server
     await pipelineBridge.connect();
@@ -612,5 +849,18 @@ async function start() {
 `);
   });
 }
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('[Server] SIGTERM received, shutting down...');
+  await serverManager.stopAllServers();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('[Server] SIGINT received, shutting down...');
+  await serverManager.stopAllServers();
+  process.exit(0);
+});
 
 start();

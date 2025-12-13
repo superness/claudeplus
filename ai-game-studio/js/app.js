@@ -12,6 +12,11 @@ let projects = [];
 let ws = null;
 let lastShownStage = null;
 
+// Server management state
+let serverStatus = null;
+let serverConfig = null;
+let serverLogs = [];
+
 // DOM Elements
 const authScreen = document.getElementById('auth-screen');
 const dashboardScreen = document.getElementById('dashboard-screen');
@@ -509,11 +514,21 @@ function openStudio(project) {
 
   showScreen('studio');
 
-  // Start tracking for designing or implementing status
-  // This also triggers queue processing for implementing projects
-  if (project.status === 'designing' || project.status === 'implementing') {
-    startTrackingAndShowProgress(project.id);
-  }
+  // Start tracking - this triggers queue processing for any project with queued work
+  // Even 'live' projects may have queued items that need processing
+  startTrackingAndShowProgress(project.id);
+
+  // Load server status and auto-start for full-stack projects
+  serverLogs = []; // Reset logs
+  loadServerStatus().then(async () => {
+    // Auto-start for imported projects with backend detected
+    if (project.custom_path && serverConfig?.detected?.hasBackend) {
+      if (serverStatus?.status !== 'running') {
+        addSystemMessage('Full-stack project detected. Starting server automatically...');
+        await startGameServer();
+      }
+    }
+  });
 }
 
 // Start tracking pipeline progress and show engaging updates
@@ -656,13 +671,25 @@ document.getElementById('chat-form').addEventListener('submit', async (e) => {
   addUserMessage(message);
   input.value = '';
 
-  // Add to queue
+  // Check for server commands first
+  const serverCmd = parseServerCommand(message);
+  if (serverCmd) {
+    const handled = await executeServerCommand(serverCmd);
+    if (handled) return;
+  }
+
+  // Get pipeline type from selector
+  const pipelineTypeSelect = document.getElementById('pipeline-type-select');
+  const pipelineType = pipelineTypeSelect?.value || 'feature';
+
+  // Add to queue with pipeline type
   try {
     await api(`/projects/${currentProject.id}/queue`, {
       method: 'POST',
-      body: JSON.stringify({ description: message })
+      body: JSON.stringify({ description: message, pipelineType })
     });
-    addSystemMessage('Added to work queue!');
+    const typeLabel = pipelineType === 'bugfix' ? 'Bug fix' : 'Feature';
+    addSystemMessage(`${typeLabel} added to work queue!`);
     loadQueue();
   } catch (err) {
     addSystemMessage('Failed to queue request: ' + err.message);
@@ -823,6 +850,318 @@ function renderStories(stories) {
 }
 
 // ============================================
+// Server Management
+// ============================================
+
+async function loadServerStatus() {
+  if (!currentProject) return;
+
+  try {
+    const status = await api(`/projects/${currentProject.id}/server/status`);
+    serverStatus = status;
+    serverConfig = status.config;
+
+    // Show or hide server panel based on backend detection
+    const hasBackend = serverConfig?.detected?.hasBackend;
+    const serverPanel = document.getElementById('server-panel');
+
+    if (hasBackend || currentProject.custom_path) {
+      serverPanel.classList.remove('hidden');
+      renderServerPanel();
+    } else {
+      serverPanel.classList.add('hidden');
+    }
+
+    return status;
+  } catch (err) {
+    console.error('Failed to load server status:', err);
+  }
+}
+
+async function analyzeServerConfig() {
+  if (!currentProject) return;
+
+  try {
+    addSystemMessage('Analyzing project configuration...');
+    const { config } = await api(`/projects/${currentProject.id}/server/analyze`, {
+      method: 'POST'
+    });
+    serverConfig = config;
+    renderServerPanel();
+
+    if (config.detected?.hasBackend) {
+      addSystemMessage(`Detected: ${config.detected.framework || 'Node.js'} server, port ${config.detected.port}`);
+    } else {
+      addSystemMessage('No backend server detected in this project.');
+    }
+  } catch (err) {
+    addSystemMessage('Failed to analyze project: ' + err.message);
+  }
+}
+
+async function startGameServer() {
+  if (!currentProject) return;
+
+  try {
+    updateServerUI('starting');
+    addSystemMessage('Starting server...');
+
+    const result = await api(`/projects/${currentProject.id}/server/start`, {
+      method: 'POST'
+    });
+
+    serverStatus = { ...serverStatus, ...result, status: 'running' };
+    renderServerPanel();
+    addSystemMessage(`Server started on ${result.url}`);
+  } catch (err) {
+    updateServerUI('error');
+    addSystemMessage('Failed to start server: ' + err.message);
+  }
+}
+
+async function stopGameServer() {
+  if (!currentProject) return;
+
+  try {
+    updateServerUI('stopping');
+    addSystemMessage('Stopping server...');
+
+    await api(`/projects/${currentProject.id}/server/stop`, {
+      method: 'POST'
+    });
+
+    serverStatus = { ...serverStatus, status: 'stopped', pid: null, url: null };
+    renderServerPanel();
+    addSystemMessage('Server stopped.');
+  } catch (err) {
+    addSystemMessage('Failed to stop server: ' + err.message);
+  }
+}
+
+async function restartGameServer() {
+  if (!currentProject) return;
+
+  try {
+    updateServerUI('stopping');
+    addSystemMessage('Restarting server...');
+
+    const result = await api(`/projects/${currentProject.id}/server/restart`, {
+      method: 'POST'
+    });
+
+    serverStatus = { ...serverStatus, ...result, status: 'running' };
+    renderServerPanel();
+    addSystemMessage(`Server restarted on ${result.url}`);
+  } catch (err) {
+    updateServerUI('error');
+    addSystemMessage('Failed to restart server: ' + err.message);
+  }
+}
+
+async function runNpmScript(scriptName) {
+  if (!currentProject || !scriptName) return;
+
+  try {
+    addSystemMessage(`Running npm run ${scriptName}...`);
+    const result = await api(`/projects/${currentProject.id}/server/run-script`, {
+      method: 'POST',
+      body: JSON.stringify({ script: scriptName })
+    });
+
+    if (result.success) {
+      addSystemMessage(`Script '${scriptName}' completed successfully.`);
+    }
+  } catch (err) {
+    addSystemMessage(`Script '${scriptName}' failed: ${err.message}`);
+  }
+}
+
+function renderServerPanel() {
+  // Update status display
+  const statusDot = document.getElementById('server-status-dot');
+  const statusText = document.getElementById('server-status-text');
+  const uptimeEl = document.getElementById('server-uptime');
+  const urlContainer = document.getElementById('server-url-container');
+  const urlEl = document.getElementById('server-url');
+  const startBtn = document.getElementById('server-start-btn');
+  const stopBtn = document.getElementById('server-stop-btn');
+  const restartBtn = document.getElementById('server-restart-btn');
+  const scriptsContainer = document.getElementById('server-scripts-container');
+  const scriptSelect = document.getElementById('server-script-select');
+  const runScriptBtn = document.getElementById('run-script-btn');
+
+  const status = serverStatus?.status || 'stopped';
+
+  // Update status dot
+  statusDot.className = 'status-dot ' + status;
+
+  // Update status text
+  const statusLabels = {
+    'running': 'Running',
+    'starting': 'Starting...',
+    'stopping': 'Stopping...',
+    'stopped': 'Stopped',
+    'error': 'Error'
+  };
+  statusText.textContent = statusLabels[status] || status;
+
+  // Update uptime
+  if (serverStatus?.uptime && status === 'running') {
+    const mins = Math.floor(serverStatus.uptime / 60);
+    const secs = serverStatus.uptime % 60;
+    uptimeEl.textContent = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  } else {
+    uptimeEl.textContent = '';
+  }
+
+  // Update URL
+  if (serverStatus?.url && status === 'running') {
+    urlContainer.classList.remove('hidden');
+    urlEl.href = serverStatus.url;
+    urlEl.textContent = serverStatus.url;
+  } else {
+    urlContainer.classList.add('hidden');
+  }
+
+  // Update buttons
+  const isRunning = status === 'running';
+  const isTransitioning = status === 'starting' || status === 'stopping';
+
+  startBtn.disabled = isRunning || isTransitioning;
+  stopBtn.disabled = !isRunning || isTransitioning;
+  restartBtn.disabled = !isRunning || isTransitioning;
+
+  // Update scripts dropdown
+  if (serverConfig?.detected?.scripts && serverConfig.detected.scripts.length > 0) {
+    scriptsContainer.classList.remove('hidden');
+    scriptSelect.innerHTML = '<option value="">Run script...</option>' +
+      serverConfig.detected.scripts.map(s => `<option value="${s}">${s}</option>`).join('');
+    runScriptBtn.disabled = false;
+  } else {
+    scriptsContainer.classList.add('hidden');
+  }
+
+  // Update logs display
+  renderServerLogs();
+}
+
+function updateServerUI(status) {
+  if (serverStatus) {
+    serverStatus.status = status;
+  } else {
+    serverStatus = { status };
+  }
+  renderServerPanel();
+}
+
+function renderServerLogs() {
+  const logsContent = document.getElementById('server-logs-content');
+
+  if (serverLogs.length === 0) {
+    logsContent.innerHTML = '<div class="log-placeholder">Server logs will appear here...</div>';
+    return;
+  }
+
+  logsContent.innerHTML = serverLogs.slice(-100).map(log => {
+    const stream = log.stream || 'stdout';
+    return `<div class="log-line ${stream}">${escapeHtml(log.data)}</div>`;
+  }).join('');
+
+  // Auto-scroll to bottom
+  logsContent.scrollTop = logsContent.scrollHeight;
+}
+
+function appendServerLog(stream, data) {
+  serverLogs.push({ stream, data, timestamp: new Date().toISOString() });
+  // Keep only last 500 logs
+  if (serverLogs.length > 500) {
+    serverLogs = serverLogs.slice(-500);
+  }
+  renderServerLogs();
+}
+
+function clearServerLogs() {
+  serverLogs = [];
+  renderServerLogs();
+}
+
+// Server control event listeners
+document.getElementById('server-start-btn')?.addEventListener('click', startGameServer);
+document.getElementById('server-stop-btn')?.addEventListener('click', stopGameServer);
+document.getElementById('server-restart-btn')?.addEventListener('click', restartGameServer);
+document.getElementById('analyze-server-btn')?.addEventListener('click', analyzeServerConfig);
+document.getElementById('clear-logs-btn')?.addEventListener('click', clearServerLogs);
+
+document.getElementById('server-script-select')?.addEventListener('change', (e) => {
+  const runBtn = document.getElementById('run-script-btn');
+  runBtn.disabled = !e.target.value;
+});
+
+document.getElementById('run-script-btn')?.addEventListener('click', () => {
+  const script = document.getElementById('server-script-select').value;
+  if (script) {
+    runNpmScript(script);
+    document.getElementById('server-script-select').value = '';
+    document.getElementById('run-script-btn').disabled = true;
+  }
+});
+
+// Parse AI chat commands for server management
+function parseServerCommand(message) {
+  const lowerMsg = message.toLowerCase().trim();
+
+  if (lowerMsg.includes('start') && (lowerMsg.includes('server') || lowerMsg.includes('backend'))) {
+    return { action: 'start' };
+  }
+  if (lowerMsg.includes('stop') && (lowerMsg.includes('server') || lowerMsg.includes('backend'))) {
+    return { action: 'stop' };
+  }
+  if (lowerMsg.includes('restart') && (lowerMsg.includes('server') || lowerMsg.includes('backend'))) {
+    return { action: 'restart' };
+  }
+  if (lowerMsg.includes('run') && lowerMsg.includes('migration')) {
+    return { action: 'script', script: 'migrate' };
+  }
+  if (lowerMsg.includes('run') && lowerMsg.includes('seed')) {
+    return { action: 'script', script: 'seed' };
+  }
+  if (lowerMsg.match(/run\s+([\w:-]+)/)) {
+    const match = lowerMsg.match(/run\s+([\w:-]+)/);
+    return { action: 'script', script: match[1] };
+  }
+  if (lowerMsg.includes('check') && lowerMsg.includes('log')) {
+    return { action: 'logs' };
+  }
+
+  return null;
+}
+
+// Execute a parsed server command
+async function executeServerCommand(cmd) {
+  switch (cmd.action) {
+    case 'start':
+      await startGameServer();
+      return true;
+    case 'stop':
+      await stopGameServer();
+      return true;
+    case 'restart':
+      await restartGameServer();
+      return true;
+    case 'script':
+      await runNpmScript(cmd.script);
+      return true;
+    case 'logs':
+      // Scroll to logs panel
+      document.getElementById('server-logs-content')?.scrollIntoView({ behavior: 'smooth' });
+      addSystemMessage('Showing server logs...');
+      return true;
+    default:
+      return false;
+  }
+}
+
+// ============================================
 // WebSocket
 // ============================================
 
@@ -915,6 +1254,11 @@ function handleWebSocketMessage(msg) {
       handleAgentOutput(msg);
       break;
 
+    case 'pipeline-commentary':
+      // High-level AI commentary about what's happening
+      handlePipelineCommentary(msg);
+      break;
+
     case 'queue-updated':
       loadQueue();
       break;
@@ -924,6 +1268,40 @@ function handleWebSocketMessage(msg) {
       hideProgress();
       addSystemMessage(`Error: ${msg.error || 'Something went wrong'}`);
       updateProjectStatus('error');
+      break;
+
+    // Server management events
+    case 'server-started':
+      serverStatus = { ...serverStatus, status: 'running', pid: msg.pid, port: msg.port, url: msg.url };
+      renderServerPanel();
+      addSystemMessage(`Server started on ${msg.url}`);
+      clearServerLogs();
+      break;
+
+    case 'server-stopped':
+      serverStatus = { ...serverStatus, status: 'stopped', pid: null, url: null };
+      renderServerPanel();
+      addSystemMessage(`Server stopped (exit code: ${msg.exitCode})`);
+      break;
+
+    case 'server-output':
+      appendServerLog(msg.stream, msg.data);
+      break;
+
+    case 'server-error':
+      serverStatus = { ...serverStatus, status: 'error' };
+      renderServerPanel();
+      addSystemMessage(`Server error: ${msg.error}`);
+      break;
+
+    case 'script-output':
+      if (msg.status === 'running') {
+        appendServerLog('info', msg.output);
+      } else if (msg.status === 'completed') {
+        addSystemMessage(`Script completed successfully.`);
+      } else if (msg.status === 'failed') {
+        addSystemMessage(`Script failed with exit code ${msg.exitCode}`);
+      }
       break;
   }
 }
@@ -979,6 +1357,36 @@ function addAgentMessage(agentName, output, completed, total) {
       btn.textContent = expanded ? 'Show less' : 'Show full output';
     });
   }
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Handle pipeline commentary (high-level AI updates)
+function handlePipelineCommentary(msg) {
+  if (!msg.message) return;
+
+  const messagesEl = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+
+  // Map style to CSS class and emoji
+  const styleMap = {
+    'EXCITED': { class: 'commentary-excited', emoji: '✨' },
+    'FOCUSED': { class: 'commentary-focused', emoji: '🔍' },
+    'CONCERNED': { class: 'commentary-concerned', emoji: '⚠️' },
+    'TRIUMPHANT': { class: 'commentary-triumphant', emoji: '🎉' },
+    'CRITICAL': { class: 'commentary-critical', emoji: '❌' }
+  };
+
+  const styleInfo = styleMap[msg.style] || { class: 'commentary-focused', emoji: '💭' };
+
+  div.className = `chat-message commentary-message ${styleInfo.class}`;
+  div.innerHTML = `
+    <div class="commentary-content">
+      <span class="commentary-emoji">${styleInfo.emoji}</span>
+      <span class="commentary-text">${escapeHtml(msg.message)}</span>
+    </div>
+  `;
 
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;

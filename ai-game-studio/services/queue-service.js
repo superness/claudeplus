@@ -333,10 +333,14 @@ class QueueService {
       if (progress.lastCompletedOutput && outputKey !== lastOutputKey) {
         lastOutputKey = outputKey;
 
+        // Generate a high-level summary for the UI
+        const summary = this.generateAgentSummary(progress.lastCompletedAgent, progress.lastCompletedOutput);
+
         this.emit('agent-output', {
           projectId,
           phase,
           agent: progress.lastCompletedAgent,
+          summary: summary,
           output: progress.lastCompletedOutput,
           completedCount: progress.completedCount,
           totalStages: progress.totalStages
@@ -401,10 +405,13 @@ class QueueService {
   }
 
   /**
-   * Add a feature request to the queue
+   * Add a work item to the queue
+   * @param {string} projectId - Project ID
+   * @param {string} description - Description of the work
+   * @param {string} pipelineType - 'feature' or 'bugfix'
    */
-  addToQueue(projectId, description) {
-    const workItem = db.addToQueue(projectId, description);
+  addToQueue(projectId, description, pipelineType = 'feature') {
+    const workItem = db.addToQueue(projectId, description, pipelineType);
     this.emit('queue-updated', { projectId, item: workItem });
 
     // Try to process if nothing is running
@@ -453,20 +460,33 @@ class QueueService {
     this.processingProjects.add(projectId);
 
     try {
-      // Update status to in_progress
-      const pipelineId = `feature_${projectId}_${Date.now()}`;
+      // Determine pipeline type and ID prefix
+      const pipelineType = nextItem.pipeline_type || 'feature';
+      const pipelinePrefix = pipelineType === 'bugfix' ? 'bugfix' : 'feature';
+      const pipelineId = `${pipelinePrefix}_${projectId}_${Date.now()}`;
+
       db.updateWorkStatus(nextItem.id, 'in_progress', pipelineId);
-      this.emit('work-started', { projectId, item: nextItem });
+      this.emit('work-started', { projectId, item: nextItem, pipelineType });
 
-      // Start progress polling for feature pipeline
-      this.startProgressPolling(projectId, 'feature');
+      // Start progress polling
+      this.startProgressPolling(projectId, pipelineType);
 
-      // Execute feature pipeline
-      await pipelineBridge.executeFeaturePipeline(
-        projectId,
-        nextItem.description,
-        projectDir
-      );
+      // Execute the appropriate pipeline based on type
+      if (pipelineType === 'bugfix') {
+        console.log(`[QueueService] Executing bug fix pipeline for ${projectId}`);
+        await pipelineBridge.executeBugFixPipeline(
+          projectId,
+          nextItem.description,
+          projectDir
+        );
+      } else {
+        console.log(`[QueueService] Executing feature pipeline for ${projectId}`);
+        await pipelineBridge.executeFeaturePipeline(
+          projectId,
+          nextItem.description,
+          projectDir
+        );
+      }
 
       // Stop polling and mark as completed
       this.stopProgressPolling(projectId);
@@ -699,6 +719,17 @@ class QueueService {
         return { tracking: true, status: 'processing_queued_work' };
       } else {
         console.log(`[QueueService] Project ${projectId} not starting processing: queued=${refreshedStatus.queued.length}, isProcessing=${refreshedStatus.isProcessing}, currentWork=${refreshedStatus.currentWork?.id}`);
+      }
+    }
+
+    // If project is 'live' but has queued items, start processing them
+    if (project.status === 'live') {
+      const queueStatus = this.getQueueStatus(projectId);
+      if (queueStatus.queued.length > 0 && !queueStatus.isProcessing && !queueStatus.currentWork) {
+        console.log(`[QueueService] Live project ${projectId} has ${queueStatus.queued.length} queued items, starting processing`);
+        db.updateProjectStatus(projectId, 'implementing');
+        this.processNextInQueue(projectId);
+        return { tracking: true, status: 'implementing' };
       }
     }
 

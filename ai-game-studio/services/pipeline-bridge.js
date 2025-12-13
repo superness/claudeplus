@@ -179,6 +179,35 @@ class PipelineBridge {
     });
   }
 
+  async executeBugFixPipeline(projectId, bugReport, workingDir) {
+    if (!this.connected) {
+      await this.connect();
+    }
+
+    const template = this.loadTemplate('game-bug-fix-v1');
+    const pipelineId = `bugfix_${projectId}_${Date.now()}`;
+
+    return new Promise((resolve, reject) => {
+      this.messageHandlers.set(pipelineId, (msg) => {
+        if (msg.type === 'pipeline-completed') {
+          this.messageHandlers.delete(pipelineId);
+          resolve({ success: true, pipelineId });
+        } else if (msg.type === 'pipeline-error') {
+          this.messageHandlers.delete(pipelineId);
+          reject(new Error(msg.error || 'Pipeline failed'));
+        }
+      });
+
+      this.ws.send(JSON.stringify({
+        type: 'execute-pipeline',
+        pipelineId,
+        pipeline: template,
+        userContext: `Bug Report:\n\n${bugReport}`,
+        workingDirectory: workingDir
+      }));
+    });
+  }
+
   send(message) {
     if (this.connected && this.ws) {
       this.ws.send(JSON.stringify(message));

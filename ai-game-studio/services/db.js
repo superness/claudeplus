@@ -56,6 +56,7 @@ class DatabaseService {
         status TEXT DEFAULT 'queued',
         priority INTEGER DEFAULT 0,
         pipeline_id TEXT,
+        pipeline_type TEXT DEFAULT 'feature',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         started_at DATETIME,
         completed_at DATETIME,
@@ -75,6 +76,38 @@ class DatabaseService {
     try {
       this.db.exec('ALTER TABLE projects ADD COLUMN custom_path TEXT');
       console.log('[DB] Added custom_path column');
+    } catch (err) {
+      // Column already exists, ignore error
+    }
+
+    // Migration: Add server_config column for server settings (JSON)
+    try {
+      this.db.exec('ALTER TABLE projects ADD COLUMN server_config TEXT');
+      console.log('[DB] Added server_config column');
+    } catch (err) {
+      // Column already exists, ignore error
+    }
+
+    // Migration: Add server_status column
+    try {
+      this.db.exec("ALTER TABLE projects ADD COLUMN server_status TEXT DEFAULT 'stopped'");
+      console.log('[DB] Added server_status column');
+    } catch (err) {
+      // Column already exists, ignore error
+    }
+
+    // Migration: Add server_pid column
+    try {
+      this.db.exec('ALTER TABLE projects ADD COLUMN server_pid INTEGER');
+      console.log('[DB] Added server_pid column');
+    } catch (err) {
+      // Column already exists, ignore error
+    }
+
+    // Migration: Add pipeline_type column to work_queue
+    try {
+      this.db.exec("ALTER TABLE work_queue ADD COLUMN pipeline_type TEXT DEFAULT 'feature'");
+      console.log('[DB] Added pipeline_type column to work_queue');
     } catch (err) {
       // Column already exists, ignore error
     }
@@ -179,13 +212,13 @@ class DatabaseService {
   }
 
   // Work queue methods
-  addToQueue(projectId, description) {
+  addToQueue(projectId, description, pipelineType = 'feature') {
     const id = 'work_' + uuidv4().slice(0, 8);
     const priority = this.getNextPriority(projectId);
     const stmt = this.db.prepare(
-      'INSERT INTO work_queue (id, project_id, description, priority) VALUES (?, ?, ?, ?)'
+      'INSERT INTO work_queue (id, project_id, description, priority, pipeline_type) VALUES (?, ?, ?, ?, ?)'
     );
-    stmt.run(id, projectId, description, priority);
+    stmt.run(id, projectId, description, priority, pipelineType);
     return this.getWorkItem(id);
   }
 
@@ -275,6 +308,59 @@ class DatabaseService {
     );
     stmt.run(pipelineId, now, projectId);
     return this.getProject(projectId);
+  }
+
+  // ============================================
+  // Server Management Methods
+  // ============================================
+
+  /**
+   * Update server configuration for a project
+   */
+  updateServerConfig(projectId, config) {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      'UPDATE projects SET server_config = ?, updated_at = ? WHERE id = ?'
+    );
+    stmt.run(JSON.stringify(config), now, projectId);
+    return this.getProject(projectId);
+  }
+
+  /**
+   * Update server status and PID for a project
+   */
+  updateServerStatus(projectId, status, pid = null) {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      'UPDATE projects SET server_status = ?, server_pid = ?, updated_at = ? WHERE id = ?'
+    );
+    stmt.run(status, pid, now, projectId);
+    return this.getProject(projectId);
+  }
+
+  /**
+   * Get server configuration for a project
+   */
+  getProjectServerConfig(projectId) {
+    const project = this.getProject(projectId);
+    if (project && project.server_config) {
+      try {
+        return JSON.parse(project.server_config);
+      } catch (err) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get all projects with non-null server PID (for cleanup on startup)
+   */
+  getProjectsWithRunningServers() {
+    const stmt = this.db.prepare(
+      'SELECT id, server_pid FROM projects WHERE server_pid IS NOT NULL'
+    );
+    return stmt.all();
   }
 }
 
