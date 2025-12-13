@@ -1,0 +1,161 @@
+{
+  "id": "miner-integration",
+  "name": "miner-integration",
+  "version": "2.0.0",
+  "description": "Test miner→pool stratum integration - validates connection, authentication, and job delivery",
+  "category": "integration",
+  "stages": [
+    {
+      "id": "ensure_pool_running",
+      "name": "Ensure Pool Running",
+      "agent": "pool_server_manager",
+      "description": "Verify pool server is up and accepting connections on stratum port",
+      "inputs": [],
+      "decisions": [
+        {"choice": "pool_running", "description": "Pool running and stratum port listening"},
+        {"choice": "pool_not_running", "description": "Pool server not running or not accessible"}
+      ]
+    },
+    {
+      "id": "configure_miner",
+      "name": "Configure Miner",
+      "agent": "config_generator",
+      "description": "Generate miner configuration with pool URL, port, and worker credentials",
+      "inputs": ["ensure_pool_running"],
+      "decisions": [
+        {"choice": "config_generated", "description": "Miner config generated with pool credentials"},
+        {"choice": "config_failed", "description": "Failed to generate miner configuration"}
+      ]
+    },
+    {
+      "id": "start_miner",
+      "name": "Start Miner",
+      "agent": "miner_manager",
+      "description": "Launch mining software with generated configuration connecting to pool",
+      "inputs": ["configure_miner"],
+      "decisions": [
+        {"choice": "miner_started", "description": "Miner process started and running"},
+        {"choice": "miner_failed", "description": "Miner failed to start"}
+      ]
+    },
+    {
+      "id": "wait_for_connection",
+      "name": "Wait for Connection",
+      "agent": "network_monitor",
+      "description": "Wait 5 seconds for miner to establish stratum connection with pool",
+      "inputs": ["start_miner"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete, proceed to verify subscription"}
+      ]
+    },
+    {
+      "id": "verify_stratum_subscribe",
+      "name": "Verify Stratum Subscribe",
+      "agent": "stratum_monitor",
+      "description": "Verify miner successfully subscribed to stratum protocol and received extranonce",
+      "inputs": ["wait_for_connection"],
+      "decisions": [
+        {"choice": "subscription_verified", "description": "Subscription received with extranonce assigned"},
+        {"choice": "subscription_failed", "description": "Subscription not received or invalid"}
+      ]
+    },
+    {
+      "id": "verify_authorization",
+      "name": "Verify Authorization",
+      "agent": "miner_pool_connector",
+      "description": "Verify worker authorization succeeds and difficulty is set",
+      "inputs": ["verify_stratum_subscribe"],
+      "decisions": [
+        {"choice": "worker_authorized", "description": "Worker authorized and difficulty set"},
+        {"choice": "authorization_failed", "description": "Worker authorization failed"}
+      ]
+    },
+    {
+      "id": "wait_for_job",
+      "name": "Wait for Job",
+      "agent": "network_monitor",
+      "description": "Wait 3 seconds for pool to send initial mining job",
+      "inputs": ["verify_authorization"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete, proceed to validate job"}
+      ]
+    },
+    {
+      "id": "verify_job_delivery",
+      "name": "Verify Job Delivery",
+      "agent": "job_validator",
+      "description": "Confirm miner receives valid mining job with all required fields",
+      "inputs": ["wait_for_job"],
+      "decisions": [
+        {"choice": "job_received", "description": "Valid job received with all required fields"},
+        {"choice": "job_invalid", "description": "Job not received or missing fields"}
+      ]
+    },
+    {
+      "id": "check_connection_status",
+      "name": "Check Connection Status",
+      "agent": "stratum_monitor",
+      "description": "Verify stratum connection is stable and active",
+      "inputs": ["verify_job_delivery"],
+      "decisions": [
+        {"choice": "connection_stable", "description": "Connection stable and healthy"},
+        {"choice": "connection_unstable", "description": "Connection issues detected"}
+      ]
+    },
+    {
+      "id": "check_miner_status",
+      "name": "Check Miner Status",
+      "agent": "miner_manager",
+      "description": "Verify miner process is healthy and mining actively",
+      "inputs": ["check_connection_status"],
+      "decisions": [
+        {"choice": "miner_healthy", "description": "Miner healthy and mining"},
+        {"choice": "miner_issues", "description": "Miner experiencing issues"}
+      ]
+    },
+    {
+      "id": "miner_integration_verified",
+      "name": "Miner Integration Verified",
+      "agent": "miner_pool_connector",
+      "description": "Final validation - miner connected, authorized, and receiving jobs successfully",
+      "inputs": ["check_miner_status"],
+      "decisions": [
+        {"choice": "complete", "description": "Miner integration verified and working"},
+        {"choice": "verification_failed", "description": "Integration issues detected"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "sequential",
+    "connections": [
+      {"from": "ensure_pool_running", "to": "configure_miner", "condition": "pool_running"},
+      {"from": "ensure_pool_running", "to": null, "condition": "pool_not_running", "description": "Pool not running - END"},
+      {"from": "configure_miner", "to": "start_miner", "condition": "config_generated"},
+      {"from": "configure_miner", "to": null, "condition": "config_failed", "description": "Config generation failed - END"},
+      {"from": "start_miner", "to": "wait_for_connection", "condition": "miner_started"},
+      {"from": "start_miner", "to": null, "condition": "miner_failed", "description": "Miner failed to start - END"},
+      {"from": "wait_for_connection", "to": "verify_stratum_subscribe", "condition": "wait_complete"},
+      {"from": "verify_stratum_subscribe", "to": "verify_authorization", "condition": "subscription_verified"},
+      {"from": "verify_stratum_subscribe", "to": null, "condition": "subscription_failed", "description": "Subscription failed - END"},
+      {"from": "verify_authorization", "to": "wait_for_job", "condition": "worker_authorized"},
+      {"from": "verify_authorization", "to": null, "condition": "authorization_failed", "description": "Authorization failed - END"},
+      {"from": "wait_for_job", "to": "verify_job_delivery", "condition": "wait_complete"},
+      {"from": "verify_job_delivery", "to": "check_connection_status", "condition": "job_received"},
+      {"from": "verify_job_delivery", "to": null, "condition": "job_invalid", "description": "Job delivery failed - END"},
+      {"from": "check_connection_status", "to": "check_miner_status", "condition": "connection_stable"},
+      {"from": "check_connection_status", "to": null, "condition": "connection_unstable", "description": "Connection unstable - END"},
+      {"from": "check_miner_status", "to": "miner_integration_verified", "condition": "miner_healthy"},
+      {"from": "check_miner_status", "to": null, "condition": "miner_issues", "description": "Miner issues detected - END"},
+      {"from": "miner_integration_verified", "to": null, "condition": "complete", "description": "Miner integration complete - END"},
+      {"from": "miner_integration_verified", "to": null, "condition": "verification_failed", "description": "Verification failed - END"}
+    ]
+  },
+  "metadata": {
+    "tags": ["integration", "miner", "stratum", "connection", "mining-cycle"],
+    "author": "Mining Cycle Automation System",
+    "estimatedTime": "2 minutes",
+    "requiresWSL": true,
+    "basedOn": "Section 3.1 of MINING_CYCLE_AUTOMATION_PLAN.md",
+    "refactored": "2025-01-22 - Converted from 7 actions-based stages to 11 atomic stages"
+  }
+}

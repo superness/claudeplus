@@ -149,90 +149,16 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    - Orange/gold color scheme distinct from other studios
    - Access via `./start-supercoin-dev-studio.sh` on http://localhost:3007/supercoin-dev-studio.html
 
-   **SuperCoin Dev Studio Tools & Capabilities:**
-
-   The studio provides conversational AI development assistance with access to all Claude Code CLI tools:
-
-   - **Code Exploration**: Read files, search patterns with grep, list files with glob, understand codebase structure
-   - **Pipeline Execution**: Trigger automated development pipelines via [PIPELINE-EXECUTE] format
-   - **Development Assistance**: Code review, debugging, testing, implementation guidance
-   - **Direct Tool Access**: All Claude Code tools (Read, Edit, Write, Bash, Grep, Glob, etc.)
-
-   **How to Use in Conversations:**
-
-   1. **Ask Questions & Explore**: Ask about the codebase, how features work, where bugs might be, etc.
-      - "How does the stratum server handle share submissions?"
-      - "Where is the wallet address validation logic?"
-      - "Show me the RPC endpoint definitions"
-
-   2. **Request Code Changes**: Ask for bug fixes, feature implementations, refactoring
-      - "Fix the share validation error in the pool server"
-      - "Add a new RPC endpoint for checking miner status"
-      - "Refactor the configuration loader to use JSON"
-
-   3. **Trigger Pipelines**: For complex tasks, the studio can execute full development pipelines
-      - Bug fixes: "Run a bug-fix pipeline to solve the stratum authentication issue"
-      - Features: "Run a feature-development pipeline to add worker statistics tracking"
-      - Testing: "Run the full mining cycle test to verify the pool is working"
-
    **Pipeline Execution Format:**
-
-   When appropriate, the studio will output this format to trigger pipeline execution:
-
    ```
    [PIPELINE-EXECUTE]
    {
-     "pipelineName": "bug-fix-v1" | "feature-development-v1" | "pool-bug-fix" | "pool-feature-development" | "full-mining-cycle",
-     "userPrompt": "Detailed description of the task",
+     "pipelineName": "pool-bug-fix" | "pool-feature-development" | "full-mining-cycle",
+     "userPrompt": "Description of task",
      "workingDirectory": "/mnt/c/github/private-SuperCoinServ"
    }
    [/PIPELINE-EXECUTE]
    ```
-
-   **Available Pipelines:**
-
-   - **bug-fix-v1**: General bug fixing workflow (analyze → reproduce → fix → validate → collect tests)
-   - **feature-development-v1**: General feature development (define → plan tests → implement → validate → collect tests)
-   - **pool-bug-fix**: SuperCoinServ-specific bug fixing with mining cycle reproduction
-   - **pool-feature-development**: SuperCoinServ-specific feature development with mining cycle validation
-   - **full-mining-cycle**: End-to-end mining stack validation (daemon → pool → miner → block discovery)
-   - **mining-infrastructure-setup**: Complete mining infrastructure setup and verification
-   - **daemon-pool-integration**: Daemon↔Pool RPC integration testing
-   - **miner-integration**: Miner↔Pool stratum integration testing
-
-   **Example Conversations:**
-
-   User: "Why aren't miners receiving jobs from the pool?"
-   Assistant: Let me search the stratum server code to understand how jobs are distributed...
-   [Uses Grep/Read tools to explore code]
-   Assistant: I found the issue in the job distributor. It's checking for block template updates but the RPC connection isn't being refreshed. Would you like me to:
-   1. Fix this directly, or
-   2. Run a bug-fix pipeline with full reproduction and validation?
-
-   User: "Add support for variable difficulty per miner"
-   Assistant: This is a significant feature that will require changes to multiple components. I recommend running a feature-development pipeline to ensure proper testing. Here's what it will do:
-   [PIPELINE-EXECUTE]
-   {
-     "pipelineName": "pool-feature-development",
-     "userPrompt": "Add variable difficulty support per miner with automatic difficulty adjustment based on hashrate",
-     "workingDirectory": "/mnt/c/github/private-SuperCoinServ"
-   }
-   [/PIPELINE-EXECUTE]
-
-   **Key Differences from Other Studios:**
-
-   - **Pre-configured for SuperCoinServ**: All paths, context, and recommendations are specific to the pool server project
-   - **Mining-aware**: Understands cryptocurrency mining concepts, stratum protocol, RPC communication
-   - **Specialized Pipelines**: Access to mining-specific testing pipelines with real daemon/pool/miner components
-   - **Persistent Working Directory**: Always operates in `/mnt/c/github/private-SuperCoinServ`
-
-   **Tips for Best Results:**
-
-   - Be specific about what you want to achieve or understand
-   - Ask clarifying questions before running pipelines for complex tasks
-   - Use pipelines for multi-step tasks that require validation
-   - Use direct tool access for quick exploration and simple changes
-   - Review pipeline progress in real-time via the studio interface
 
 8. **MCP Browser Automation** (`mcp-servers/browser-automation/`): Playwright-based browser automation
    - Provides web scraping and browser testing capabilities
@@ -282,32 +208,11 @@ The system uses 38+ JSON-defined agents organized by category:
 - **Domain Experts**: world_historian, sociologist_reviewer, market_simulator, resource_designer, progression_designer
 
 ### Mining Automation Agents (SuperCoinServ)
-A complete set of 17 specialized agents for cryptocurrency mining pool development:
-
-**Core Infrastructure Agents:**
-- **bitcoin_daemon_manager**: Manages bitcoind in regtest mode (start, fund wallets, generate blocks)
-- **pool_server_manager**: Launches and manages CoiniumServ pool server
-- **miner_manager**: Configures and runs mining software (cpuminer, cgminer)
-- **wallet_manager**: Creates and manages mining wallet addresses
-
-**Integration Testing Agents:**
-- **daemon_pool_connector**: Validates daemon↔pool RPC connection
-- **miner_pool_connector**: Validates miner↔pool stratum connection
-- **job_validator**: Verifies miner receives valid mining jobs from pool
-- **share_validator**: Tests share submission from miner to pool
-- **block_validator**: Verifies complete block discovery cycle
-
-**System Testing Agents:**
-- **cycle_integration_tester**: End-to-end full mining cycle validation
-- **performance_analyzer**: Analyzes mining performance and efficiency metrics
-- **stratum_monitor**: Monitors stratum protocol communication and jobs
-- **rpc_tester**: Tests Bitcoin RPC endpoints and responses
-- **network_monitor**: Monitors network connectivity and health
-
-**Support Agents:**
-- **config_generator**: Generates configuration files for daemon, pool, and miner
-- **log_analyzer**: Parses and analyzes logs from all mining components
-- **error_recovery_agent**: Detects and recovers from common mining failures
+17 specialized agents for cryptocurrency mining pool development in `agents/`:
+- **Infrastructure**: bitcoin_daemon_manager, pool_server_manager, miner_manager, wallet_manager
+- **Integration**: daemon_pool_connector, miner_pool_connector, job_validator, share_validator, block_validator
+- **System Testing**: cycle_integration_tester, performance_analyzer, stratum_monitor, rpc_tester, network_monitor
+- **Support**: config_generator, log_analyzer, error_recovery_agent
 
 ### Template System
 Pre-configured pipeline workflows in `templates/`:
@@ -334,62 +239,13 @@ Pre-configured pipeline workflows in `templates/`:
 
 ### Mining Automation System
 
-The mining automation system provides **production-ready cryptocurrency mining pool testing** with real components (no mocks). This is specifically designed for SuperCoinServ development.
+Production-ready cryptocurrency mining pool testing with real components (no mocks) for SuperCoinServ development. Handles: bitcoind regtest mode, funded wallets, CoiniumServ pool, miners (cpuminer/cgminer), job delivery validation, share submission testing, block discovery verification.
 
-**What It Does:**
-✅ Launch bitcoind in regtest mode
-✅ Generate funded wallets for mining rewards
-✅ Start CoiniumServ pool server
-✅ Configure and run miners (cpuminer/cgminer)
-✅ Validate job delivery (daemon→pool→miner)
-✅ Test share submission (miner→pool)
-✅ Verify block discovery (pool→daemon)
-✅ Confirm wallet receives mining rewards
-
-**Key Workflows:**
-
-1. **Infrastructure Setup** (`intelligent-mining-infrastructure-setup` or `mining-infrastructure-setup`):
-   - Verifies all dependencies (bitcoind, CoiniumServ, miner)
-   - Generates all configuration files
-   - Starts daemon, funds wallet, starts pool, configures miner
-   - End-to-end verification
-   - **Intelligent version**: Uses AI orchestrator for dynamic delegation and adaptive error handling
-
-2. **Integration Testing** (`daemon-pool-integration`, `miner-integration`):
-   - Validates RPC communication between daemon and pool
-   - Validates stratum communication between miner and pool
-   - Tests job delivery and share submission
-
-3. **Full Mining Cycle** (`full-mining-cycle`):
-   - Complete end-to-end test of entire mining stack
-   - Verifies all components work together
-   - Validates block discovery and reward delivery
-
-4. **Development Workflows**:
-   - **Bug Fixing** (`pool-bug-fix`): Reproduce bugs using real mining components
-   - **Feature Development** (`pool-feature-development`): Validate features with mining cycle tests
-
-**Usage in SuperCoin Dev Studio:**
-
-When working on SuperCoinServ, you can run these pipelines by using the [PIPELINE-EXECUTE] format:
-
-```
-[PIPELINE-EXECUTE]
-{
-  "pipelineName": "pool-bug-fix" or "pool-feature-development" or "full-mining-cycle",
-  "userPrompt": "Fix stratum share submission error" or "Add new pool payout algorithm",
-  "workingDirectory": "/mnt/c/github/private-SuperCoinServ"
-}
-[/PIPELINE-EXECUTE]
-```
-
-**Component Locations:**
-- Agents: `/mnt/c/github/claudeplus/agents/` (17 mining agent JSON files)
-- Pipelines: `/mnt/c/github/claudeplus/templates/` (8 mining pipeline JSON files)
-- Documentation:
-  - `META_PIPELINE_SYSTEM_DOCUMENTATION.md` - Complete system architecture
-  - `PIPELINE_IMPLEMENTATION_SUMMARY.md` - Implementation details
-  - `PROOF_OF_COMPLETION.md` - Completion proof and metrics
+**Key Pipelines:**
+- `intelligent-mining-infrastructure-setup` / `mining-infrastructure-setup`: Full stack setup with dependency verification
+- `daemon-pool-integration` / `miner-integration`: RPC and stratum communication testing
+- `full-mining-cycle`: End-to-end mining stack validation
+- `pool-bug-fix` / `pool-feature-development`: Development workflows with mining cycle tests
 
 ### Meta-Pipeline Orchestration System
 
@@ -476,39 +332,7 @@ The meta-pipeline created **28 specialized agents** organized by workflow:
 - `diagnostics_agent` - System diagnostics and troubleshooting
 - `emergency_shutdown` - Emergency shutdown and recovery
 
-**Complete File Inventory:**
-
-All files created by the meta-pipeline build process:
-
-**Agent Files (28):** `/mnt/c/github/claudeplus/agents/`
-- Pipeline Builders: `pipeline_architect.json`, `agent_architect.json`, `component_validator.json`, `integration_reviewer.json`
-- Development: `bug_analyzer.json`, `root_cause_analyzer.json`, `fix_implementer.json`, `feature_architect.json`, `implementation_planner.json`, `code_implementer.json`, `refactoring_planner.json`, `code_refactorer.json`
-- Testing: `unit_test_writer.json`, `integration_test_designer.json`, `performance_profiler.json`, `test_executor.json`, `test_validator.json`
-- Deployment: `build_manager.json`, `package_creator.json`, `artifact_validator.json`, `deployment_manager.json`, `smoke_tester.json`, `rollback_manager.json`
-- Monitoring: `health_checker.json`, `performance_monitor.json`, `error_detector.json`, `metrics_analyzer.json`, `alert_manager.json`
-- Support: `agent_router.json`, `diagnostics_agent.json`, `emergency_shutdown.json`
-
-**Pipeline Files (13):** `/mnt/c/github/claudeplus/templates/`
-- Development: `bug-fix-pipeline.json`, `feature-development-pipeline.json`, `refactoring-pipeline.json`
-- Testing: `unit-test-pipeline.json`, `integration-test-pipeline.json`, `performance-test-pipeline.json`
-- Deployment: `build-and-package-pipeline.json`, `deployment-pipeline.json`, `rollback-pipeline.json`
-- Monitoring: `health-check-pipeline.json`, `performance-monitoring-pipeline.json`, `error-detection-pipeline.json`
-- Meta: `meta-pipeline-orchestrator.json`
-
-**Mining-Specific Files (25):** Created by mining automation build
-- Mining Agents (17): `bitcoin_daemon_manager.json`, `pool_server_manager.json`, `miner_manager.json`, `wallet_manager.json`, `daemon_pool_connector.json`, `miner_pool_connector.json`, `job_validator.json`, `share_validator.json`, `block_validator.json`, `cycle_integration_tester.json`, `performance_analyzer.json`, `stratum_monitor.json`, `rpc_tester.json`, `network_monitor.json`, `config_generator.json`, `log_analyzer.json`, `error_recovery_agent.json`
-- Mining Pipelines (8): `mining-infrastructure-setup.json`, `daemon-pool-integration.json`, `miner-integration.json`, `share-submission-test.json`, `block-discovery-test.json`, `full-mining-cycle.json`, `pool-feature-development.json`, `pool-bug-fix.json`
-
-**Documentation Files (3):** `/mnt/c/github/claudeplus/`
-- `META_PIPELINE_SYSTEM_DOCUMENTATION.md` (870 lines) - Complete system architecture, all stages, all agents, all routing decisions
-- `PIPELINE_IMPLEMENTATION_SUMMARY.md` (460 lines) - Implementation details, verification steps, file locations
-- `PROOF_OF_COMPLETION.md` - Completion proof, metrics, file inventory
-
-**Total System Size:**
-- **66 total files** (28 meta agents + 13 meta pipelines + 17 mining agents + 8 mining pipelines)
-- **53 specialized AI agents** across all categories
-- **21 production pipelines** covering complete SDLC
-- **3 comprehensive documentation files**
+**System Size:** 66 files (53 agents, 21 pipelines) in `agents/` and `templates/` directories.
 
 **Using the Meta-Pipeline System:**
 
@@ -540,140 +364,7 @@ The orchestrator will automatically chain:
 6. **Health Monitoring**: Continuous health checks and error detection
 7. **Performance Optimization**: Automated performance profiling and benchmarking
 
-## ChromeManager - Browser Testing Infrastructure
-
-**Location**: `/mnt/c/github/superstarships/lib/ChromeManager.js`
-
-ChromeManager is a JavaScript class that handles all Chrome lifecycle management for automated testing. It provides a simple abstraction over complex Chrome management, eliminating 200+ lines of boilerplate from every test script.
-
-### What ChromeManager Handles Automatically
-
-- ✅ Chrome launch with correct WSL path (`/mnt/c/Program Files/Google/Chrome/Application/chrome.exe`)
-- ✅ All cache-disable flags (`--disable-http-cache`, `--disable-cache`, `--disk-cache-size=1`, `--aggressive-cache-discard`)
-- ✅ Console log capture via `--enable-logging` flag (NO CDP, NO Puppeteer)
-- ✅ Parses `chrome_debug.log` automatically with regex patterns for errors/exceptions
-- ✅ PID tracking via port lookup (`netstat.exe`)
-- ✅ Process cleanup (kills by PID and port)
-- ✅ Profile directory management with Windows path format
-- ✅ Auto-detection of log file location (searches temp directories)
-- ✅ Evidence collection with structured console data
-
-### Basic Usage
-
-```javascript
-const ChromeManager = require('./lib/ChromeManager');
-
-const chrome = new ChromeManager();
-
-// Launch Chrome
-await chrome.launch({ url: '/index.html', testMode: true });
-await chrome.waitForReady(10);
-
-// ... run tests ...
-
-// Get console logs
-const summary = chrome.getConsoleSummary();
-console.log(`Errors: ${summary.consoleErrorCount}`);
-console.log(`Exceptions: ${summary.consoleExceptionCount}`);
-
-// Cleanup
-await chrome.kill();
-```
-
-### Agent Integration Pattern
-
-Agents that create test scripts should use the ChromeManager template pattern:
-
-1. **reproduction_creator**: Creates bug reproduction scripts with `defineScenario()` function
-2. **test_planner**: Creates feature test scripts with `defineScenario()` function
-3. **game_runner**: Executes reproduction scripts (ChromeManager built-in)
-4. **feature_validator**: Executes feature test scripts (ChromeManager built-in)
-
-### Example defineScenario() Pattern
-
-Agents only write the test logic (10-20 lines):
-
-```javascript
-function defineScenario() {
-  return [
-    {
-      command: 'setThrottle',
-      params: {value: 100},
-      verify: (r) => r.throttle === 100,
-      desc: 'Set full throttle'
-    },
-    {
-      command: 'wait',
-      params: {duration: 5000},
-      verify: () => true,
-      desc: 'Wait 5 seconds'
-    },
-    {
-      command: 'getShipState',
-      params: {},
-      verify: (r) => {
-        const speed = Math.sqrt(r.velocity.x**2 + r.velocity.y**2 + r.velocity.z**2);
-        return speed === 0;  // Bug reproduced if ship not moving
-      },
-      desc: 'Verify bug: ship not moving'
-    }
-  ];
-}
-```
-
-### Why Not CDP or Puppeteer?
-
-ChromeManager uses Chrome's built-in `--enable-logging` flag which writes all console output to `chrome_debug.log` automatically. This approach:
-
-- ✅ **No network dependencies**: Doesn't require CDP endpoint or Puppeteer connection
-- ✅ **No WSL-Windows networking**: Avoids port forwarding issues between WSL and Windows
-- ✅ **Simple and reliable**: Just spawn Chrome and read a log file
-- ✅ **Complete console data**: Captures all console.log, errors, and exceptions
-- ✅ **No timing issues**: Log file persists after Chrome closes
-
-### Console Log Format
-
-ChromeManager parses `chrome_debug.log` into structured data:
-
-```json
-{
-  "logFile": "/mnt/c/Users/user/AppData/Local/Temp/ChromeTest_1763400000000/chrome_debug.log",
-  "windowsPath": "C:\\Users\\user\\AppData\\Local\\Temp\\ChromeTest_1763400000000\\chrome_debug.log",
-  "totalLines": 4823,
-  "consoleLogs": [
-    {
-      "type": "CONSOLE.LOG",
-      "level": "1",
-      "message": "Game initialized",
-      "source": "http://localhost:8080/js/main.js",
-      "line": "42"
-    },
-    {
-      "type": "CONSOLE.ERROR",
-      "message": "TypeError: Cannot read property 'position' of undefined"
-    },
-    {
-      "type": "EXCEPTION",
-      "message": "Uncaught ReferenceError: foo is not defined"
-    }
-  ],
-  "consoleErrorCount": 5,
-  "consoleExceptionCount": 2
-}
-```
-
-### Key Methods
-
-- `launch(options)` - Launch Chrome with test URL
-- `waitForReady(seconds)` - Wait for Chrome to initialize
-- `kill()` - Kill Chrome process and cleanup
-- `killAllChrome()` - Nuclear option - kill ALL Chrome processes
-- `parseConsoleLogs()` - Parse chrome_debug.log into structured data
-- `getConsoleSummary()` - Print and return console log summary
-- `getChromeLogPath()` - Get WSL path to chrome_debug.log
-- `getChromeLogPathWindows()` - Get Windows path to chrome_debug.log
-
-### Debugging and Logs
+## Debugging and Logs
 
 **IMPORTANT**: When debugging pipeline failures or execution issues, ALWAYS check the structured execution logs FIRST before reading the plain text proxy.log file.
 

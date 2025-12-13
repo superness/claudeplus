@@ -1,0 +1,298 @@
+{
+  "id": "block-discovery-test",
+  "name": "block-discovery-test",
+  "version": "2.0.0",
+  "description": "End-to-end block discovery workflow: infrastructure setup → difficulty configuration → mining → block validation → daemon acceptance → maturity → wallet verification",
+  "category": "testing",
+  "stages": [
+    {
+      "id": "validate_pool_config",
+      "name": "Validate Pool Config",
+      "agent": "config_generator",
+      "description": "Validate pool server configuration file exists and is valid",
+      "inputs": [],
+      "decisions": [
+        {"choice": "config_valid", "description": "Pool config validated"},
+        {"choice": "config_invalid", "description": "Pool config invalid or missing"}
+      ]
+    },
+    {
+      "id": "validate_daemon_config",
+      "name": "Validate Daemon Config",
+      "agent": "config_generator",
+      "description": "Validate daemon configuration file exists and is valid",
+      "inputs": ["validate_pool_config"],
+      "decisions": [
+        {"choice": "config_valid", "description": "Daemon config validated"},
+        {"choice": "config_invalid", "description": "Daemon config invalid or missing"}
+      ]
+    },
+    {
+      "id": "set_minimal_difficulty",
+      "name": "Set Minimal Difficulty",
+      "agent": "config_generator",
+      "description": "Configure minimal difficulty (0.0001) for rapid block discovery, disable vardiff",
+      "inputs": ["validate_daemon_config"],
+      "decisions": [
+        {"choice": "difficulty_configured", "description": "Difficulty set to minimal"},
+        {"choice": "config_failed", "description": "Failed to set difficulty"}
+      ]
+    },
+    {
+      "id": "register_miner_account",
+      "name": "Register Miner Account",
+      "agent": "miner_manager",
+      "description": "Register test miner account with username and payout address",
+      "inputs": ["set_minimal_difficulty"],
+      "decisions": [
+        {"choice": "miner_registered", "description": "Miner account registered"},
+        {"choice": "registration_failed", "description": "Miner registration failed"}
+      ]
+    },
+    {
+      "id": "register_worker",
+      "name": "Register Worker",
+      "agent": "miner_manager",
+      "description": "Register worker for test miner with initial difficulty 0.0001",
+      "inputs": ["register_miner_account"],
+      "decisions": [
+        {"choice": "worker_registered", "description": "Worker registered"},
+        {"choice": "registration_failed", "description": "Worker registration failed"}
+      ]
+    },
+    {
+      "id": "wait_for_mining_start",
+      "name": "Wait for Mining Start",
+      "agent": "network_monitor",
+      "description": "Wait 10 seconds for mining to start and stabilize",
+      "inputs": ["register_worker"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Mining started"}
+      ]
+    },
+    {
+      "id": "monitor_for_block",
+      "name": "Monitor for Block Discovery",
+      "agent": "block_validator",
+      "description": "Monitor for block discovery (max 5 minutes)",
+      "inputs": ["wait_for_mining_start"],
+      "decisions": [
+        {"choice": "block_discovered", "description": "Block discovered"},
+        {"choice": "timeout", "description": "No block found within timeout"}
+      ]
+    },
+    {
+      "id": "validate_block_structure",
+      "name": "Validate Block Structure",
+      "agent": "block_validator",
+      "description": "Verify merkle root, coinbase, proof-of-work correctness",
+      "inputs": ["monitor_for_block"],
+      "decisions": [
+        {"choice": "block_valid", "description": "Block structure valid"},
+        {"choice": "block_invalid", "description": "Block structure invalid"}
+      ]
+    },
+    {
+      "id": "wait_for_pool_database",
+      "name": "Wait for Pool Database Update",
+      "agent": "network_monitor",
+      "description": "Wait 3 seconds for pool to write block to database",
+      "inputs": ["validate_block_structure"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete"}
+      ]
+    },
+    {
+      "id": "verify_pool_submission",
+      "name": "Verify Pool Block Submission",
+      "agent": "block_validator",
+      "description": "Check block is in pool database with correct attribution",
+      "inputs": ["wait_for_pool_database"],
+      "decisions": [
+        {"choice": "block_in_pool_db", "description": "Block in pool database"},
+        {"choice": "block_not_found", "description": "Block not in pool database"}
+      ]
+    },
+    {
+      "id": "wait_for_daemon_processing",
+      "name": "Wait for Daemon Processing",
+      "agent": "network_monitor",
+      "description": "Wait 5 seconds for daemon to process block submission",
+      "inputs": ["verify_pool_submission"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete"}
+      ]
+    },
+    {
+      "id": "get_block_count",
+      "name": "Get Daemon Block Count",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Query daemon for current block count",
+      "inputs": ["wait_for_daemon_processing"],
+      "decisions": [
+        {"choice": "count_retrieved", "description": "Block count retrieved"},
+        {"choice": "rpc_failed", "description": "RPC call failed"}
+      ]
+    },
+    {
+      "id": "get_blockchain_info",
+      "name": "Get Blockchain Info",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Verify block is in best chain and not orphaned",
+      "inputs": ["get_block_count"],
+      "decisions": [
+        {"choice": "block_accepted", "description": "Block accepted by daemon"},
+        {"choice": "block_rejected", "description": "Block rejected or orphaned"}
+      ]
+    },
+    {
+      "id": "generate_maturity_blocks",
+      "name": "Generate 101 Maturity Blocks",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Generate 101 blocks to mature coinbase transaction",
+      "inputs": ["get_blockchain_info"],
+      "decisions": [
+        {"choice": "blocks_generated", "description": "101 blocks generated"},
+        {"choice": "generation_failed", "description": "Block generation failed"}
+      ]
+    },
+    {
+      "id": "wait_for_wallet_scan",
+      "name": "Wait for Wallet Scan",
+      "agent": "network_monitor",
+      "description": "Wait 10 seconds for wallet to scan new blocks",
+      "inputs": ["generate_maturity_blocks"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete"}
+      ]
+    },
+    {
+      "id": "verify_block_count_increase",
+      "name": "Verify Block Count Increase",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Confirm block count increased by exactly 101",
+      "inputs": ["wait_for_wallet_scan"],
+      "decisions": [
+        {"choice": "count_correct", "description": "Block count increased by 101"},
+        {"choice": "count_incorrect", "description": "Block count mismatch"}
+      ]
+    },
+    {
+      "id": "wait_for_wallet_sync",
+      "name": "Wait for Wallet Synchronization",
+      "agent": "network_monitor",
+      "description": "Wait 5 seconds for wallet to synchronize balance",
+      "inputs": ["verify_block_count_increase"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete"}
+      ]
+    },
+    {
+      "id": "get_wallet_balance",
+      "name": "Get Wallet Balance",
+      "agent": "wallet_manager",
+      "description": "Query wallet balance to verify block reward received",
+      "inputs": ["wait_for_wallet_sync"],
+      "decisions": [
+        {"choice": "balance_retrieved", "description": "Balance retrieved"},
+        {"choice": "balance_query_failed", "description": "Failed to query balance"}
+      ]
+    },
+    {
+      "id": "list_transactions",
+      "name": "List Wallet Transactions",
+      "agent": "wallet_manager",
+      "description": "List recent transactions to find coinbase transaction",
+      "inputs": ["get_wallet_balance"],
+      "decisions": [
+        {"choice": "transactions_retrieved", "description": "Transactions listed"},
+        {"choice": "query_failed", "description": "Failed to list transactions"}
+      ]
+    },
+    {
+      "id": "verify_wallet_credit",
+      "name": "Verify Wallet Credit",
+      "agent": "wallet_manager",
+      "description": "Confirm wallet received exactly 50 BTC block reward",
+      "inputs": ["list_transactions"],
+      "decisions": [
+        {"choice": "reward_verified", "description": "Wallet credited with 50 BTC"},
+        {"choice": "reward_incorrect", "description": "Incorrect reward amount or not found"}
+      ]
+    },
+    {
+      "id": "credit_miner",
+      "name": "Credit Miner",
+      "agent": "miner_manager",
+      "description": "Credit block discovery to miner and worker accounts",
+      "inputs": ["verify_wallet_credit"],
+      "decisions": [
+        {"choice": "miner_credited", "description": "Miner credited for block"},
+        {"choice": "credit_failed", "description": "Failed to credit miner"}
+      ]
+    },
+    {
+      "id": "block_discovery_verified",
+      "name": "Block Discovery Verified",
+      "agent": "cycle_integration_tester",
+      "description": "Final validation - block discovered, accepted, matured, and wallet credited",
+      "inputs": ["credit_miner"],
+      "decisions": [
+        {"choice": "complete", "description": "Block discovery test complete"},
+        {"choice": "verification_failed", "description": "Final verification failed"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "sequential",
+    "connections": [
+      {"from": "validate_pool_config", "to": "validate_daemon_config", "condition": "config_valid"},
+      {"from": "validate_pool_config", "to": null, "condition": "config_invalid", "description": "Pool config invalid - END"},
+      {"from": "validate_daemon_config", "to": "set_minimal_difficulty", "condition": "config_valid"},
+      {"from": "validate_daemon_config", "to": null, "condition": "config_invalid", "description": "Daemon config invalid - END"},
+      {"from": "set_minimal_difficulty", "to": "register_miner_account", "condition": "difficulty_configured"},
+      {"from": "set_minimal_difficulty", "to": null, "condition": "config_failed", "description": "Difficulty config failed - END"},
+      {"from": "register_miner_account", "to": "register_worker", "condition": "miner_registered"},
+      {"from": "register_miner_account", "to": null, "condition": "registration_failed", "description": "Miner registration failed - END"},
+      {"from": "register_worker", "to": "wait_for_mining_start", "condition": "worker_registered"},
+      {"from": "register_worker", "to": null, "condition": "registration_failed", "description": "Worker registration failed - END"},
+      {"from": "wait_for_mining_start", "to": "monitor_for_block", "condition": "wait_complete"},
+      {"from": "monitor_for_block", "to": "validate_block_structure", "condition": "block_discovered"},
+      {"from": "monitor_for_block", "to": null, "condition": "timeout", "description": "Block discovery timeout - END"},
+      {"from": "validate_block_structure", "to": "wait_for_pool_database", "condition": "block_valid"},
+      {"from": "validate_block_structure", "to": null, "condition": "block_invalid", "description": "Block invalid - END"},
+      {"from": "wait_for_pool_database", "to": "verify_pool_submission", "condition": "wait_complete"},
+      {"from": "verify_pool_submission", "to": "wait_for_daemon_processing", "condition": "block_in_pool_db"},
+      {"from": "verify_pool_submission", "to": null, "condition": "block_not_found", "description": "Block not in pool DB - END"},
+      {"from": "wait_for_daemon_processing", "to": "get_block_count", "condition": "wait_complete"},
+      {"from": "get_block_count", "to": "get_blockchain_info", "condition": "count_retrieved"},
+      {"from": "get_block_count", "to": null, "condition": "rpc_failed", "description": "RPC failed - END"},
+      {"from": "get_blockchain_info", "to": "generate_maturity_blocks", "condition": "block_accepted"},
+      {"from": "get_blockchain_info", "to": null, "condition": "block_rejected", "description": "Block rejected - END"},
+      {"from": "generate_maturity_blocks", "to": "wait_for_wallet_scan", "condition": "blocks_generated"},
+      {"from": "generate_maturity_blocks", "to": null, "condition": "generation_failed", "description": "Maturity generation failed - END"},
+      {"from": "wait_for_wallet_scan", "to": "verify_block_count_increase", "condition": "wait_complete"},
+      {"from": "verify_block_count_increase", "to": "wait_for_wallet_sync", "condition": "count_correct"},
+      {"from": "verify_block_count_increase", "to": null, "condition": "count_incorrect", "description": "Block count mismatch - END"},
+      {"from": "wait_for_wallet_sync", "to": "get_wallet_balance", "condition": "wait_complete"},
+      {"from": "get_wallet_balance", "to": "list_transactions", "condition": "balance_retrieved"},
+      {"from": "get_wallet_balance", "to": null, "condition": "balance_query_failed", "description": "Balance query failed - END"},
+      {"from": "list_transactions", "to": "verify_wallet_credit", "condition": "transactions_retrieved"},
+      {"from": "list_transactions", "to": null, "condition": "query_failed", "description": "Transaction query failed - END"},
+      {"from": "verify_wallet_credit", "to": "credit_miner", "condition": "reward_verified"},
+      {"from": "verify_wallet_credit", "to": null, "condition": "reward_incorrect", "description": "Reward verification failed - END"},
+      {"from": "credit_miner", "to": "block_discovery_verified", "condition": "miner_credited"},
+      {"from": "credit_miner", "to": null, "condition": "credit_failed", "description": "Miner credit failed - END"},
+      {"from": "block_discovery_verified", "to": null, "condition": "complete", "description": "Block discovery complete - END"},
+      {"from": "block_discovery_verified", "to": null, "condition": "verification_failed", "description": "Verification failed - END"}
+    ]
+  },
+  "metadata": {
+    "tags": ["testing", "block-discovery", "mining", "validation", "wallet", "mining-cycle"],
+    "author": "Mining Cycle Automation System",
+    "estimatedTime": "10-15 minutes",
+    "requiresWSL": true,
+    "basedOn": "Section 3.2 of MINING_CYCLE_AUTOMATION_PLAN.md",
+    "refactored": "2025-01-22 - Converted from 9 actions-based stages to 22 atomic stages"
+  }
+}

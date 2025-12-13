@@ -1,0 +1,446 @@
+{
+  "id": "rollback-pipeline",
+  "name": "Rollback Pipeline",
+  "version": "2.0.0",
+  "description": "Rollback to previous version in case of deployment failure",
+  "author": "SuperCoinServ Meta-Pipeline System",
+  "category": "deployment",
+  "stages": [
+    {
+      "id": "assess_rollback_need_assessCurrentState",
+      "name": "Assess Rollback Need - Assesscurrentstate",
+      "agent": "proof_validator",
+      "description": "assess_system_state: Assess current state and validate rollback necessity",
+      "inputs": [],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "assessCurrentState completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "assessCurrentState failed"
+        }
+      ]
+    },
+    {
+      "id": "assess_rollback_need_validateBackupAvailability",
+      "name": "Assess Rollback Need - Validatebackupavailability",
+      "agent": "proof_validator",
+      "description": "validate_backup: Assess current state and validate rollback necessity",
+      "inputs": [
+        "assess_rollback_need_assessCurrentState"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "validateBackupAvailability completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "validateBackupAvailability failed"
+        }
+      ]
+    },
+    {
+      "id": "assess_rollback_need_confirmRollback",
+      "name": "Assess Rollback Need - Confirmrollback",
+      "agent": "proof_validator",
+      "description": "confirm_rollback_decision: Assess current state and validate rollback necessity",
+      "inputs": [
+        "assess_rollback_need_validateBackupAvailability"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "confirmRollback completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "confirmRollback failed"
+        }
+      ]
+    },
+    {
+      "id": "stop_failing_version_stopServices",
+      "name": "Stop Failing Version - Stopservices",
+      "agent": "task_executor",
+      "description": "stop_service: Stop current failing version",
+      "inputs": [
+        "assess_rollback_need_confirmRollback"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "stopServices completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "stopServices failed"
+        }
+      ]
+    },
+    {
+      "id": "stop_failing_version_captureFailureLogs",
+      "name": "Stop Failing Version - Capturefailurelogs",
+      "agent": "task_executor",
+      "description": "capture_logs: Stop current failing version",
+      "inputs": [
+        "stop_failing_version_stopServices"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "captureFailureLogs completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "captureFailureLogs failed"
+        }
+      ]
+    },
+    {
+      "id": "restore_backup_removeFailedVersion",
+      "name": "Restore Backup - Removefailedversion",
+      "agent": "task_executor",
+      "description": "remove_files: Restore previous working version from backup",
+      "inputs": [
+        "stop_failing_version_captureFailureLogs"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "removeFailedVersion completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "removeFailedVersion failed"
+        }
+      ]
+    },
+    {
+      "id": "restore_backup_restoreBackup",
+      "name": "Restore Backup - Restorebackup",
+      "agent": "task_executor",
+      "description": "restore_backup: Restore previous working version from backup",
+      "inputs": [
+        "restore_backup_removeFailedVersion"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "restoreBackup completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "restoreBackup failed"
+        }
+      ]
+    },
+    {
+      "id": "restore_backup_setPermissions",
+      "name": "Restore Backup - Setpermissions",
+      "agent": "task_executor",
+      "description": "set_file_permissions: Restore previous working version from backup",
+      "inputs": [
+        "restore_backup_restoreBackup"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "setPermissions completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "setPermissions failed"
+        }
+      ]
+    },
+    {
+      "id": "restart_and_verify_startServices",
+      "name": "Restart And Verify - Startservices",
+      "agent": "task_executor",
+      "description": "start_service: Restart services and verify rollback success",
+      "inputs": [
+        "restore_backup_setPermissions"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "startServices completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "startServices failed"
+        }
+      ]
+    },
+    {
+      "id": "restart_and_verify_runHealthChecks",
+      "name": "Restart And Verify - Runhealthchecks",
+      "agent": "cycle_integration_tester",
+      "description": "run_health_checks: Restart services and verify rollback success",
+      "inputs": [
+        "restart_and_verify_startServices"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "runHealthChecks completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "runHealthChecks failed"
+        }
+      ]
+    },
+    {
+      "id": "restart_and_verify_verifyNormalOperation",
+      "name": "Restart And Verify - Verifynormaloperation",
+      "agent": "cycle_integration_tester",
+      "description": "run_smoke_tests: Restart services and verify rollback success",
+      "inputs": [
+        "restart_and_verify_runHealthChecks"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "verifyNormalOperation completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "verifyNormalOperation failed"
+        }
+      ]
+    },
+    {
+      "id": "finalize_rollback_validateRollbackSuccess",
+      "name": "Finalize Rollback - Validaterollbacksuccess",
+      "agent": "proof_validator",
+      "description": "validate_rollback_success: Finalize rollback and create incident report",
+      "inputs": [
+        "restart_and_verify_verifyNormalOperation"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "validateRollbackSuccess completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "validateRollbackSuccess failed"
+        }
+      ]
+    },
+    {
+      "id": "finalize_rollback_createIncidentReport",
+      "name": "Finalize Rollback - Createincidentreport",
+      "agent": "task_executor",
+      "description": "create_incident_report: Finalize rollback and create incident report",
+      "inputs": [
+        "finalize_rollback_validateRollbackSuccess"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "createIncidentReport completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "createIncidentReport failed"
+        }
+      ]
+    },
+    {
+      "id": "finalize_rollback_notifyRollbackComplete",
+      "name": "Finalize Rollback - Notifyrollbackcomplete",
+      "agent": "task_executor",
+      "description": "send_notification: Finalize rollback and create incident report",
+      "inputs": [
+        "finalize_rollback_createIncidentReport"
+      ],
+      "decisions": [
+        {
+          "choice": "success",
+          "description": "notifyRollbackComplete completed successfully"
+        },
+        {
+          "choice": "failed",
+          "description": "notifyRollbackComplete failed"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "pipeline_type": "deployment",
+    "complexity": "high",
+    "tags": [
+      "rollback",
+      "disaster-recovery",
+      "incident"
+    ],
+    "refactored": "2025-01-22 - Converted from actions-based to atomic stages",
+    "originalStages": 5,
+    "atomicStages": 14
+  },
+  "flow": {
+    "type": "sequential",
+    "connections": [
+      {
+        "from": "assess_rollback_need_assessCurrentState",
+        "to": "assess_rollback_need_validateBackupAvailability",
+        "condition": "success"
+      },
+      {
+        "from": "assess_rollback_need_assessCurrentState",
+        "to": null,
+        "condition": "failed",
+        "description": "Assess Rollback Need - Assesscurrentstate failed - END"
+      },
+      {
+        "from": "assess_rollback_need_validateBackupAvailability",
+        "to": "assess_rollback_need_confirmRollback",
+        "condition": "success"
+      },
+      {
+        "from": "assess_rollback_need_validateBackupAvailability",
+        "to": null,
+        "condition": "failed",
+        "description": "Assess Rollback Need - Validatebackupavailability failed - END"
+      },
+      {
+        "from": "assess_rollback_need_confirmRollback",
+        "to": "stop_failing_version_stopServices",
+        "condition": "success"
+      },
+      {
+        "from": "assess_rollback_need_confirmRollback",
+        "to": null,
+        "condition": "failed",
+        "description": "Assess Rollback Need - Confirmrollback failed - END"
+      },
+      {
+        "from": "stop_failing_version_stopServices",
+        "to": "stop_failing_version_captureFailureLogs",
+        "condition": "success"
+      },
+      {
+        "from": "stop_failing_version_stopServices",
+        "to": null,
+        "condition": "failed",
+        "description": "Stop Failing Version - Stopservices failed - END"
+      },
+      {
+        "from": "stop_failing_version_captureFailureLogs",
+        "to": "restore_backup_removeFailedVersion",
+        "condition": "success"
+      },
+      {
+        "from": "stop_failing_version_captureFailureLogs",
+        "to": null,
+        "condition": "failed",
+        "description": "Stop Failing Version - Capturefailurelogs failed - END"
+      },
+      {
+        "from": "restore_backup_removeFailedVersion",
+        "to": "restore_backup_restoreBackup",
+        "condition": "success"
+      },
+      {
+        "from": "restore_backup_removeFailedVersion",
+        "to": null,
+        "condition": "failed",
+        "description": "Restore Backup - Removefailedversion failed - END"
+      },
+      {
+        "from": "restore_backup_restoreBackup",
+        "to": "restore_backup_setPermissions",
+        "condition": "success"
+      },
+      {
+        "from": "restore_backup_restoreBackup",
+        "to": null,
+        "condition": "failed",
+        "description": "Restore Backup - Restorebackup failed - END"
+      },
+      {
+        "from": "restore_backup_setPermissions",
+        "to": "restart_and_verify_startServices",
+        "condition": "success"
+      },
+      {
+        "from": "restore_backup_setPermissions",
+        "to": null,
+        "condition": "failed",
+        "description": "Restore Backup - Setpermissions failed - END"
+      },
+      {
+        "from": "restart_and_verify_startServices",
+        "to": "restart_and_verify_runHealthChecks",
+        "condition": "success"
+      },
+      {
+        "from": "restart_and_verify_startServices",
+        "to": null,
+        "condition": "failed",
+        "description": "Restart And Verify - Startservices failed - END"
+      },
+      {
+        "from": "restart_and_verify_runHealthChecks",
+        "to": "restart_and_verify_verifyNormalOperation",
+        "condition": "success"
+      },
+      {
+        "from": "restart_and_verify_runHealthChecks",
+        "to": null,
+        "condition": "failed",
+        "description": "Restart And Verify - Runhealthchecks failed - END"
+      },
+      {
+        "from": "restart_and_verify_verifyNormalOperation",
+        "to": "finalize_rollback_validateRollbackSuccess",
+        "condition": "success"
+      },
+      {
+        "from": "restart_and_verify_verifyNormalOperation",
+        "to": null,
+        "condition": "failed",
+        "description": "Restart And Verify - Verifynormaloperation failed - END"
+      },
+      {
+        "from": "finalize_rollback_validateRollbackSuccess",
+        "to": "finalize_rollback_createIncidentReport",
+        "condition": "success"
+      },
+      {
+        "from": "finalize_rollback_validateRollbackSuccess",
+        "to": null,
+        "condition": "failed",
+        "description": "Finalize Rollback - Validaterollbacksuccess failed - END"
+      },
+      {
+        "from": "finalize_rollback_createIncidentReport",
+        "to": "finalize_rollback_notifyRollbackComplete",
+        "condition": "success"
+      },
+      {
+        "from": "finalize_rollback_createIncidentReport",
+        "to": null,
+        "condition": "failed",
+        "description": "Finalize Rollback - Createincidentreport failed - END"
+      },
+      {
+        "from": "finalize_rollback_notifyRollbackComplete",
+        "to": null,
+        "condition": "success",
+        "description": "Pipeline complete - END"
+      },
+      {
+        "from": "finalize_rollback_notifyRollbackComplete",
+        "to": null,
+        "condition": "failed",
+        "description": "Final stage failed - END"
+      }
+    ]
+  }
+}

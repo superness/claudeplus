@@ -1,0 +1,411 @@
+{
+  "id": "full-mining-cycle",
+  "name": "full-mining-cycle",
+  "version": "2.0.0",
+  "description": "Complete end-to-end mining cycle test: infrastructure setup → minimal difficulty configuration → active mining → block discovery → pool submission → daemon acceptance → coinbase maturation → wallet credit verification → comprehensive reporting",
+  "category": "testing",
+  "basedOn": "Section 3.2 of MINING_CYCLE_AUTOMATION_PLAN.md - Refactored to proper one-agent-per-stage architecture",
+  "stages": [
+    {
+      "id": "validate_daemon_config",
+      "name": "Validate Daemon Config",
+      "agent": "config_generator",
+      "description": "Validate bitcoind configuration file exists and has correct RPC settings for regtest mode",
+      "inputs": [],
+      "decisions": [
+        {"choice": "config_valid", "description": "Daemon config validated, proceed to pool config validation"}
+      ]
+    },
+    {
+      "id": "validate_pool_config",
+      "name": "Validate Pool Config",
+      "agent": "config_generator",
+      "description": "Validate CoiniumServ pool configuration file exists and has correct daemon connection settings",
+      "inputs": ["validate_daemon_config"],
+      "decisions": [
+        {"choice": "config_valid", "description": "Pool config validated, proceed to start daemon"}
+      ]
+    },
+    {
+      "id": "start_daemon",
+      "name": "Start Bitcoin Daemon",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Launch bitcoind in regtest mode with RPC port 18443 and test credentials",
+      "inputs": ["validate_pool_config"],
+      "decisions": [
+        {"choice": "daemon_started", "description": "Daemon running, proceed to create wallet"}
+      ]
+    },
+    {
+      "id": "create_wallet",
+      "name": "Create Mining Wallet",
+      "agent": "wallet_manager",
+      "description": "Create test wallet and generate 101 initial blocks for funding",
+      "inputs": ["start_daemon"],
+      "decisions": [
+        {"choice": "wallet_created", "description": "Wallet created and funded, proceed to start pool"}
+      ]
+    },
+    {
+      "id": "start_pool",
+      "name": "Start Pool Server",
+      "agent": "pool_server_manager",
+      "description": "Launch CoiniumServ pool server with daemon RPC connection on stratum port 3333",
+      "inputs": ["create_wallet"],
+      "decisions": [
+        {"choice": "pool_started", "description": "Pool running, proceed to verify RPC"}
+      ]
+    },
+    {
+      "id": "verify_rpc_connection",
+      "name": "Verify Pool-Daemon RPC",
+      "agent": "daemon_pool_connector",
+      "description": "Test RPC connection between pool and daemon, verify getblocktemplate works",
+      "inputs": ["start_pool"],
+      "decisions": [
+        {"choice": "rpc_verified", "description": "RPC working, infrastructure ready - proceed to configure difficulty"}
+      ]
+    },
+    {
+      "id": "configure_minimal_difficulty",
+      "name": "Configure Minimal Difficulty",
+      "agent": "config_generator",
+      "description": "Set pool difficulty to 0.0001 for rapid block discovery, disable vardiff",
+      "inputs": ["verify_rpc_connection"],
+      "decisions": [
+        {"choice": "difficulty_configured", "description": "Difficulty configured, proceed to restart pool"}
+      ]
+    },
+    {
+      "id": "restart_pool",
+      "name": "Restart Pool with New Config",
+      "agent": "pool_server_manager",
+      "description": "Gracefully restart pool server to apply minimal difficulty configuration",
+      "inputs": ["configure_minimal_difficulty"],
+      "decisions": [
+        {"choice": "pool_restarted", "description": "Pool restarted with new config, proceed to register miner"}
+      ]
+    },
+    {
+      "id": "register_miner",
+      "name": "Register Test Miner",
+      "agent": "miner_manager",
+      "description": "Register test miner account with username and payout address",
+      "inputs": ["restart_pool"],
+      "decisions": [
+        {"choice": "miner_registered", "description": "Miner registered, proceed to register worker"}
+      ]
+    },
+    {
+      "id": "register_worker",
+      "name": "Register Worker",
+      "agent": "miner_manager",
+      "description": "Register worker for test miner with initial difficulty 0.0001",
+      "inputs": ["register_miner"],
+      "decisions": [
+        {"choice": "worker_registered", "description": "Worker registered, proceed to start mining"}
+      ]
+    },
+    {
+      "id": "start_mining",
+      "name": "Start Mining Process",
+      "agent": "miner_manager",
+      "description": "Start mining software connecting to pool via stratum with 2 threads",
+      "inputs": ["register_worker"],
+      "decisions": [
+        {"choice": "mining_started", "description": "Mining started, proceed to wait for stabilization"}
+      ]
+    },
+    {
+      "id": "wait_for_mining_stabilization",
+      "name": "Wait for Mining Stabilization",
+      "agent": "network_monitor",
+      "description": "Wait 15 seconds for mining to stabilize and shares to start flowing",
+      "inputs": ["start_mining"],
+      "decisions": [
+        {"choice": "mining_stable", "description": "Mining stabilized, proceed to monitor for block"}
+      ]
+    },
+    {
+      "id": "monitor_for_block_discovery",
+      "name": "Monitor for Block Discovery",
+      "agent": "block_validator",
+      "description": "Monitor pool and daemon logs for block discovery (max 600 seconds)",
+      "inputs": ["wait_for_mining_stabilization"],
+      "decisions": [
+        {"choice": "block_discovered", "description": "Block discovered, proceed to validate structure"}
+      ]
+    },
+    {
+      "id": "validate_block_structure",
+      "name": "Validate Block Structure",
+      "agent": "block_validator",
+      "description": "Verify merkle root, coinbase, proof-of-work, block header, and difficulty target",
+      "inputs": ["monitor_for_block_discovery"],
+      "decisions": [
+        {"choice": "block_valid", "description": "Block structure valid, proceed to verify pool submission"}
+      ]
+    },
+    {
+      "id": "wait_for_pool_database_update",
+      "name": "Wait for Pool Database Update",
+      "agent": "network_monitor",
+      "description": "Wait 3 seconds for pool to write block to database",
+      "inputs": ["validate_block_structure"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete, proceed to check pool database"}
+      ]
+    },
+    {
+      "id": "verify_pool_block_submission",
+      "name": "Verify Pool Block Submission",
+      "agent": "block_validator",
+      "description": "Check block is in pool database with correct miner and worker attribution",
+      "inputs": ["wait_for_pool_database_update"],
+      "decisions": [
+        {"choice": "pool_submission_verified", "description": "Pool recorded block, proceed to validate block data"}
+      ]
+    },
+    {
+      "id": "validate_block_data_completeness",
+      "name": "Validate Block Data Completeness",
+      "agent": "block_validator",
+      "description": "Verify block data is complete with valid coinbase outputs and pool address",
+      "inputs": ["verify_pool_block_submission"],
+      "decisions": [
+        {"choice": "data_complete", "description": "Block data complete, proceed to verify daemon acceptance"}
+      ]
+    },
+    {
+      "id": "wait_for_daemon_processing",
+      "name": "Wait for Daemon Block Processing",
+      "agent": "network_monitor",
+      "description": "Wait 5 seconds for daemon to process submitted block",
+      "inputs": ["validate_block_data_completeness"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete, proceed to get block count"}
+      ]
+    },
+    {
+      "id": "get_daemon_block_count",
+      "name": "Get Daemon Block Count",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Query daemon for current block count to verify increment",
+      "inputs": ["wait_for_daemon_processing"],
+      "decisions": [
+        {"choice": "count_retrieved", "description": "Block count retrieved, proceed to get block hash"}
+      ]
+    },
+    {
+      "id": "get_block_hash",
+      "name": "Get Block Hash at Height",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Get block hash at discovered block height from daemon",
+      "inputs": ["get_daemon_block_count"],
+      "decisions": [
+        {"choice": "hash_retrieved", "description": "Hash matches, proceed to get full block"}
+      ]
+    },
+    {
+      "id": "get_full_block_data",
+      "name": "Get Full Block Data",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Retrieve complete block data from daemon with verbosity=2",
+      "inputs": ["get_block_hash"],
+      "decisions": [
+        {"choice": "block_data_retrieved", "description": "Block data retrieved, proceed to get blockchain info"}
+      ]
+    },
+    {
+      "id": "get_blockchain_info",
+      "name": "Get Blockchain Info",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Verify block is in best chain and not orphaned",
+      "inputs": ["get_full_block_data"],
+      "decisions": [
+        {"choice": "block_in_best_chain", "description": "Block accepted by daemon, proceed to mature coinbase"}
+      ]
+    },
+    {
+      "id": "generate_maturity_blocks",
+      "name": "Generate 101 Maturity Blocks",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Generate 101 blocks to mature the coinbase transaction (regtest requirement)",
+      "inputs": ["get_blockchain_info"],
+      "decisions": [
+        {"choice": "blocks_generated", "description": "Maturity blocks generated, proceed to wait for wallet sync"}
+      ]
+    },
+    {
+      "id": "wait_for_wallet_processing",
+      "name": "Wait for Wallet to Process Blocks",
+      "agent": "network_monitor",
+      "description": "Wait 10 seconds for wallet to scan new blocks",
+      "inputs": ["generate_maturity_blocks"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete, proceed to verify block count increase"}
+      ]
+    },
+    {
+      "id": "verify_block_count_increase",
+      "name": "Verify Block Count Increased",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Confirm block count increased by exactly 101 blocks",
+      "inputs": ["wait_for_wallet_processing"],
+      "decisions": [
+        {"choice": "count_verified", "description": "Block count correct, proceed to verify maturity"}
+      ]
+    },
+    {
+      "id": "verify_block_maturity",
+      "name": "Verify Block Maturity",
+      "agent": "bitcoin_daemon_manager",
+      "description": "Confirm discovered block now has 101 confirmations",
+      "inputs": ["verify_block_count_increase"],
+      "decisions": [
+        {"choice": "maturity_verified", "description": "Coinbase matured, proceed to check wallet"}
+      ]
+    },
+    {
+      "id": "wait_for_wallet_sync",
+      "name": "Wait for Wallet Synchronization",
+      "agent": "network_monitor",
+      "description": "Wait 5 seconds for wallet to synchronize with new balance",
+      "inputs": ["verify_block_maturity"],
+      "decisions": [
+        {"choice": "wait_complete", "description": "Wait complete, proceed to get balance"}
+      ]
+    },
+    {
+      "id": "get_wallet_balance",
+      "name": "Get Wallet Balance",
+      "agent": "wallet_manager",
+      "description": "Query wallet balance to verify block reward received",
+      "inputs": ["wait_for_wallet_sync"],
+      "decisions": [
+        {"choice": "balance_retrieved", "description": "Balance retrieved, proceed to list transactions"}
+      ]
+    },
+    {
+      "id": "list_wallet_transactions",
+      "name": "List Recent Wallet Transactions",
+      "agent": "wallet_manager",
+      "description": "List recent transactions to find coinbase transaction",
+      "inputs": ["get_wallet_balance"],
+      "decisions": [
+        {"choice": "transactions_retrieved", "description": "Transactions listed, proceed to verify reward"}
+      ]
+    },
+    {
+      "id": "verify_block_reward",
+      "name": "Verify Block Reward Amount",
+      "agent": "wallet_manager",
+      "description": "Confirm wallet received exactly 50 BTC block reward",
+      "inputs": ["list_wallet_transactions"],
+      "decisions": [
+        {"choice": "reward_verified", "description": "Wallet credited correctly, proceed to collect metrics"}
+      ]
+    },
+    {
+      "id": "collect_test_metrics",
+      "name": "Collect Test Metrics",
+      "agent": "cycle_integration_tester",
+      "description": "Collect timing, performance, and validation metrics from test execution",
+      "inputs": ["verify_block_reward"],
+      "decisions": [
+        {"choice": "metrics_collected", "description": "Metrics collected, proceed to generate report"}
+      ]
+    },
+    {
+      "id": "generate_comprehensive_report",
+      "name": "Generate Comprehensive Report",
+      "agent": "cycle_integration_tester",
+      "description": "Generate JSON report with block details, wallet details, performance metrics, validation results",
+      "inputs": ["collect_test_metrics"],
+      "decisions": [
+        {"choice": "report_generated", "description": "Report generated, proceed to validate cycle completion"}
+      ]
+    },
+    {
+      "id": "validate_cycle_completion",
+      "name": "Validate Cycle Completion",
+      "agent": "cycle_integration_tester",
+      "description": "Final validation: all stages passed, block in chain, wallet credited, miner credited",
+      "inputs": ["generate_comprehensive_report"],
+      "decisions": [
+        {"choice": "cycle_validated", "description": "Cycle validated, proceed to stop miner"}
+      ]
+    },
+    {
+      "id": "stop_test_miner",
+      "name": "Stop Test Miner",
+      "agent": "miner_manager",
+      "description": "Gracefully stop the test mining process",
+      "inputs": ["validate_cycle_completion"],
+      "decisions": [
+        {"choice": "miner_stopped", "description": "Miner stopped, proceed to archive logs"}
+      ]
+    },
+    {
+      "id": "archive_test_logs",
+      "name": "Archive Test Logs",
+      "agent": "cycle_integration_tester",
+      "description": "Archive daemon, pool, and miner logs for this test run",
+      "inputs": ["stop_test_miner"],
+      "decisions": [
+        {"choice": "logs_archived", "description": "Logs archived, cycle complete"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "sequential",
+    "connections": [
+      {"from": "validate_daemon_config", "to": "validate_pool_config", "condition": "config_valid"},
+      {"from": "validate_pool_config", "to": "start_daemon", "condition": "config_valid"},
+      {"from": "start_daemon", "to": "create_wallet", "condition": "daemon_started"},
+      {"from": "create_wallet", "to": "start_pool", "condition": "wallet_created"},
+      {"from": "start_pool", "to": "verify_rpc_connection", "condition": "pool_started"},
+      {"from": "verify_rpc_connection", "to": "configure_minimal_difficulty", "condition": "rpc_verified"},
+      {"from": "configure_minimal_difficulty", "to": "restart_pool", "condition": "difficulty_configured"},
+      {"from": "restart_pool", "to": "register_miner", "condition": "pool_restarted"},
+      {"from": "register_miner", "to": "register_worker", "condition": "miner_registered"},
+      {"from": "register_worker", "to": "start_mining", "condition": "worker_registered"},
+      {"from": "start_mining", "to": "wait_for_mining_stabilization", "condition": "mining_started"},
+      {"from": "wait_for_mining_stabilization", "to": "monitor_for_block_discovery", "condition": "mining_stable"},
+      {"from": "monitor_for_block_discovery", "to": "validate_block_structure", "condition": "block_discovered"},
+      {"from": "validate_block_structure", "to": "wait_for_pool_database_update", "condition": "block_valid"},
+      {"from": "wait_for_pool_database_update", "to": "verify_pool_block_submission", "condition": "wait_complete"},
+      {"from": "verify_pool_block_submission", "to": "validate_block_data_completeness", "condition": "pool_submission_verified"},
+      {"from": "validate_block_data_completeness", "to": "wait_for_daemon_processing", "condition": "data_complete"},
+      {"from": "wait_for_daemon_processing", "to": "get_daemon_block_count", "condition": "wait_complete"},
+      {"from": "get_daemon_block_count", "to": "get_block_hash", "condition": "count_retrieved"},
+      {"from": "get_block_hash", "to": "get_full_block_data", "condition": "hash_retrieved"},
+      {"from": "get_full_block_data", "to": "get_blockchain_info", "condition": "block_data_retrieved"},
+      {"from": "get_blockchain_info", "to": "generate_maturity_blocks", "condition": "block_in_best_chain"},
+      {"from": "generate_maturity_blocks", "to": "wait_for_wallet_processing", "condition": "blocks_generated"},
+      {"from": "wait_for_wallet_processing", "to": "verify_block_count_increase", "condition": "wait_complete"},
+      {"from": "verify_block_count_increase", "to": "verify_block_maturity", "condition": "count_verified"},
+      {"from": "verify_block_maturity", "to": "wait_for_wallet_sync", "condition": "maturity_verified"},
+      {"from": "wait_for_wallet_sync", "to": "get_wallet_balance", "condition": "wait_complete"},
+      {"from": "get_wallet_balance", "to": "list_wallet_transactions", "condition": "balance_retrieved"},
+      {"from": "list_wallet_transactions", "to": "verify_block_reward", "condition": "transactions_retrieved"},
+      {"from": "verify_block_reward", "to": "collect_test_metrics", "condition": "reward_verified"},
+      {"from": "collect_test_metrics", "to": "generate_comprehensive_report", "condition": "metrics_collected"},
+      {"from": "generate_comprehensive_report", "to": "validate_cycle_completion", "condition": "report_generated"},
+      {"from": "validate_cycle_completion", "to": "stop_test_miner", "condition": "cycle_validated"},
+      {"from": "stop_test_miner", "to": "archive_test_logs", "condition": "miner_stopped"},
+      {"from": "archive_test_logs", "to": null, "condition": "logs_archived", "description": "Full mining cycle complete - END"}
+    ]
+  },
+  "metadata": {
+    "tags": ["mining", "integration", "end-to-end", "block-discovery", "wallet", "regtest", "testing", "full-cycle"],
+    "author": "Mining Cycle Automation System",
+    "estimatedTime": "15-20 minutes",
+    "requiresWSL": true,
+    "basedOn": "Section 3.2 of MINING_CYCLE_AUTOMATION_PLAN.md",
+    "complexity": "high",
+    "criticality": "high",
+    "test_type": "integration",
+    "refactored": "2025-01-22 - Converted from actions-based to proper stage-based architecture"
+  }
+}

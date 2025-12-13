@@ -1,0 +1,593 @@
+{
+  "agent_name": "config_generator",
+  "agent_type": "support",
+  "group": 2,
+  "version": "1.0.0",
+  "description": "Generates configuration files for all mining cycle components including Bitcoin daemon (regtest), CoiniumServ pool server, and mining software. Provides template-based generation with port conflict detection and cross-component consistency validation.",
+
+  "configuration": {
+    "config_base_path": "build/bin/Debug/config",
+    "template_path": "build/bin/Debug/config/templates",
+    "backup_path": "build/bin/Debug/config/backups",
+    "network_type": "regtest",
+    "auto_generate_on_startup": false,
+    "validate_on_generate": true,
+    "backup_existing_configs": true,
+
+    "default_ports": {
+      "bitcoind_rpc": 18443,
+      "bitcoind_p2p": 18444,
+      "pool_stratum": 3333,
+      "pool_web": 81,
+      "pool_api": 8080
+    },
+
+    "port_conflict_resolution": {
+      "enabled": true,
+      "auto_increment": true,
+      "increment_step": 100,
+      "max_attempts": 10,
+      "check_method": "netstat"
+    },
+
+    "template_engine": {
+      "variable_format": "${VAR_NAME}",
+      "fallback_to_defaults": true,
+      "strict_mode": false
+    },
+
+    "wsl_path_config": {
+      "convert_windows_paths": true,
+      "bitcoin_data_dir": "~/.bitcoin",
+      "pool_data_dir": "build/bin/Debug/data",
+      "miner_config_dir": "build/bin/Debug/config/miners"
+    }
+  },
+
+  "responsibilities": [
+    "Generate Bitcoin daemon regtest configuration (bitcoin.conf)",
+    "Generate CoiniumServ pool configuration from templates",
+    "Create miner configuration files for testing",
+    "Detect and resolve port conflicts across all components",
+    "Validate configuration consistency between daemon and pool",
+    "Apply appropriate regtest defaults for testing",
+    "Convert WSL/Windows paths correctly",
+    "Backup existing configurations before overwrite",
+    "Generate secure random RPC credentials",
+    "Ensure RPC credentials match across daemon and pool configs",
+    "Validate JSON schema compliance for all generated configs",
+    "Create default wallet addresses for regtest",
+    "Configure appropriate mining difficulty for testing",
+    "Set up logging paths and levels"
+  ],
+
+  "inputs": {
+    "commands": [
+      "generateAllConfigs",
+      "generateDaemonConfig",
+      "generatePoolConfig",
+      "generateMinerConfig",
+      "validateConfigs",
+      "checkPortConflicts",
+      "backupConfigs",
+      "restoreBackup",
+      "listTemplates",
+      "previewConfig"
+    ],
+    "parameters": {
+      "rpc_username": "string (optional, auto-generated if not provided)",
+      "rpc_password": "string (optional, auto-generated if not provided)",
+      "pool_wallet_address": "string (optional, generated for regtest)",
+      "pool_name": "string (optional, default: 'Bitcoin Regtest Pool')",
+      "stratum_port": "integer (optional, default: 3333)",
+      "web_port": "integer (optional, default: 81)",
+      "mining_difficulty": "float (optional, default: 0.000244140625)",
+      "custom_template_vars": "object (optional)"
+    }
+  },
+
+  "outputs": {
+    "events": [
+      "configs_generated",
+      "daemon_config_created",
+      "pool_config_created",
+      "miner_config_created",
+      "config_validated",
+      "config_invalid",
+      "config_backed_up",
+      "backup_restored",
+      "port_conflict_detected",
+      "port_conflict_resolved",
+      "template_error",
+      "validation_failed",
+      "credentials_generated"
+    ],
+    "generated_files": [
+      "~/.bitcoin/bitcoin.conf",
+      "build/bin/Debug/config/pools/default.json",
+      "build/bin/Debug/config/miners/miner.conf",
+      "build/bin/Debug/config/backups/*.json"
+    ],
+    "status_fields": [
+      "configs_generated_count",
+      "last_generation_timestamp",
+      "active_ports",
+      "rpc_credentials",
+      "validation_results",
+      "backup_locations"
+    ]
+  },
+
+  "rpc_endpoints": {
+    "base_url": "http://localhost:8080/agent/config_generator",
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/generate/all",
+        "description": "Generate all configuration files (daemon, pool, miner)",
+        "request_schema": {
+          "rpc_username": "string (optional)",
+          "rpc_password": "string (optional)",
+          "pool_wallet_address": "string (optional)",
+          "custom_vars": "object (optional)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "configs_generated": "array of strings",
+          "rpc_credentials": {
+            "username": "string",
+            "password": "string"
+          },
+          "ports": {
+            "bitcoind_rpc": "integer",
+            "bitcoind_p2p": "integer",
+            "pool_stratum": "integer",
+            "pool_web": "integer"
+          },
+          "validation_results": "array",
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/generate/daemon",
+        "description": "Generate Bitcoin daemon configuration",
+        "request_schema": {
+          "rpc_username": "string (optional)",
+          "rpc_password": "string (optional)",
+          "rpc_port": "integer (optional)",
+          "p2p_port": "integer (optional)",
+          "data_dir": "string (optional)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "config_path": "string",
+          "rpc_port": "integer",
+          "p2p_port": "integer",
+          "credentials": {
+            "username": "string",
+            "password": "string"
+          },
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/generate/pool",
+        "description": "Generate CoiniumServ pool configuration",
+        "request_schema": {
+          "daemon_host": "string (optional, default: 127.0.0.1)",
+          "daemon_rpc_port": "integer (optional)",
+          "daemon_rpc_username": "string (required)",
+          "daemon_rpc_password": "string (required)",
+          "pool_wallet_address": "string (optional)",
+          "stratum_port": "integer (optional)",
+          "web_port": "integer (optional)",
+          "pool_name": "string (optional)",
+          "mining_difficulty": "float (optional)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "config_path": "string",
+          "stratum_port": "integer",
+          "web_port": "integer",
+          "wallet_address": "string",
+          "validation_result": "object",
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/generate/miner",
+        "description": "Generate miner configuration",
+        "request_schema": {
+          "pool_host": "string (optional, default: 127.0.0.1)",
+          "pool_port": "integer (optional)",
+          "worker_name": "string (optional, default: worker1)",
+          "worker_password": "string (optional, default: x)",
+          "algorithm": "string (optional, default: sha256d)",
+          "threads": "integer (optional, default: 1)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "config_path": "string",
+          "pool_url": "string",
+          "worker_name": "string",
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/validate",
+        "description": "Validate configuration files",
+        "request_schema": {
+          "config_type": "string (daemon|pool|miner|all)",
+          "config_path": "string (optional)"
+        },
+        "response_schema": {
+          "valid": "boolean",
+          "validation_results": [
+            {
+              "config_type": "string",
+              "config_path": "string",
+              "valid": "boolean",
+              "errors": "array",
+              "warnings": "array"
+            }
+          ]
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/ports/check",
+        "description": "Check for port conflicts",
+        "request_schema": {
+          "ports": "array of integers"
+        },
+        "response_schema": {
+          "conflicts_found": "boolean",
+          "port_status": [
+            {
+              "port": "integer",
+              "in_use": "boolean",
+              "process": "string (optional)"
+            }
+          ],
+          "available_alternatives": "array of integers"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/backup",
+        "description": "Backup existing configuration files",
+        "request_schema": {
+          "config_type": "string (daemon|pool|miner|all)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "backup_paths": "array of strings",
+          "timestamp": "string (ISO 8601)",
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/restore",
+        "description": "Restore configuration from backup",
+        "request_schema": {
+          "backup_timestamp": "string (ISO 8601)",
+          "config_type": "string (daemon|pool|miner|all)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "restored_paths": "array of strings",
+          "message": "string"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/templates/list",
+        "description": "List available configuration templates",
+        "response_schema": {
+          "templates": [
+            {
+              "name": "string",
+              "type": "string",
+              "path": "string",
+              "variables": "array of strings"
+            }
+          ]
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/preview",
+        "description": "Preview configuration without writing to disk",
+        "request_schema": {
+          "config_type": "string (daemon|pool|miner)",
+          "parameters": "object"
+        },
+        "response_schema": {
+          "config_content": "string or object",
+          "validation_result": "object"
+        }
+      }
+    ]
+  },
+
+  "templates": {
+    "bitcoind_conf": {
+      "path": "build/bin/Debug/config/templates/bitcoind.conf.template",
+      "output_path": "~/.bitcoin/bitcoin.conf",
+      "format": "ini",
+      "variables": [
+        "NETWORK_TYPE",
+        "RPC_USER",
+        "RPC_PASSWORD",
+        "RPC_PORT",
+        "P2P_PORT",
+        "DATA_DIR",
+        "FALLBACK_FEE"
+      ],
+      "default_content": "# Bitcoin Daemon Configuration - Regtest Mode\nregtest=1\nserver=1\ndaemon=1\n\n# RPC Settings\nrpcuser=${RPC_USER}\nrpcpassword=${RPC_PASSWORD}\nrpcport=${RPC_PORT}\nrpcbind=127.0.0.1\nrpcallowip=127.0.0.1\n\n# Network Settings\nport=${P2P_PORT}\n\n# Wallet Settings\nfallbackfee=${FALLBACK_FEE}\n\n# Logging\ndebug=0\nprune=0\n\n# Performance\ndbcache=450\nmaxmempool=300\n"
+    },
+    "pool_config": {
+      "path": "build/bin/Debug/config/templates/coiniumserv-config.json.template",
+      "output_path": "build/bin/Debug/config/pools/default.json",
+      "format": "json",
+      "variables": [
+        "DAEMON_HOST",
+        "DAEMON_RPC_PORT",
+        "DAEMON_RPC_USER",
+        "DAEMON_RPC_PASSWORD",
+        "POOL_WALLET_ADDRESS",
+        "POOL_NAME",
+        "STRATUM_PORT",
+        "MINING_DIFFICULTY",
+        "WEB_PORT"
+      ],
+      "default_content": "{\n  \"enabled\": true,\n  \"coin\": \"bitcoin.json\",\n  \"daemon\": {\n    \"host\": \"${DAEMON_HOST}\",\n    \"port\": ${DAEMON_RPC_PORT},\n    \"username\": \"${DAEMON_RPC_USER}\",\n    \"password\": \"${DAEMON_RPC_PASSWORD}\",\n    \"timeout\": 30\n  },\n  \"meta\": {\n    \"motd\": \"Welcome to ${POOL_NAME}!\",\n    \"txMessage\": \"Mined by ${POOL_NAME}\"\n  },\n  \"wallet\": {\n    \"address\": \"${POOL_WALLET_ADDRESS}\"\n  },\n  \"rewards\": [\n    {\n      \"wallet\": \"${POOL_WALLET_ADDRESS}\",\n      \"percent\": 100\n    }\n  ],\n  \"banning\": {\n    \"enabled\": false\n  },\n  \"payments\": {\n    \"enabled\": false,\n    \"interval\": 60,\n    \"minimum\": 0.1\n  },\n  \"miner\": {\n    \"validateUsername\": false,\n    \"timeout\": 300\n  },\n  \"job\": {\n    \"blockRefreshInterval\": 1000,\n    \"revalidateInterval\": 60\n  },\n  \"stratum\": {\n    \"enabled\": true,\n    \"bind\": \"0.0.0.0\",\n    \"port\": ${STRATUM_PORT},\n    \"diff\": ${MINING_DIFFICULTY},\n    \"vardiff\": {\n      \"enabled\": false,\n      \"minDiff\": 0.000244140625,\n      \"maxDiff\": 1,\n      \"targetTime\": 15,\n      \"retargetTime\": 90,\n      \"variancePercent\": 30\n    }\n  }\n}"
+    },
+    "miner_config": {
+      "path": "build/bin/Debug/config/templates/miner.conf.template",
+      "output_path": "build/bin/Debug/config/miners/miner.conf",
+      "format": "json",
+      "variables": [
+        "POOL_HOST",
+        "POOL_PORT",
+        "WORKER_NAME",
+        "WORKER_PASSWORD",
+        "ALGORITHM",
+        "THREADS"
+      ],
+      "default_content": "{\n  \"pools\": [\n    {\n      \"url\": \"stratum+tcp://${POOL_HOST}:${POOL_PORT}\",\n      \"user\": \"${WORKER_NAME}\",\n      \"pass\": \"${WORKER_PASSWORD}\",\n      \"algorithm\": \"${ALGORITHM}\"\n    }\n  ],\n  \"threads\": ${THREADS},\n  \"cpu-priority\": 0,\n  \"retry-pause\": 5,\n  \"api-bind\": false,\n  \"verbose\": true\n}"
+    }
+  },
+
+  "defaults": {
+    "regtest": {
+      "bitcoind": {
+        "network_type": "regtest",
+        "rpc_user": "coiniumtest",
+        "rpc_password": "testpass123",
+        "rpc_port": 18443,
+        "p2p_port": 18444,
+        "data_dir": "~/.bitcoin",
+        "fallback_fee": "0.00001"
+      },
+      "pool": {
+        "daemon_host": "127.0.0.1",
+        "pool_name": "Bitcoin Regtest Pool",
+        "stratum_port": 3333,
+        "web_port": 81,
+        "mining_difficulty": 0.000244140625,
+        "wallet_address": "mxt1ZowPJuYoieX1WiSAPdcKRdN3FAn79N",
+        "coin_config": "bitcoin.json",
+        "validate_username": false,
+        "payments_enabled": false,
+        "banning_enabled": false
+      },
+      "miner": {
+        "pool_host": "127.0.0.1",
+        "worker_name": "worker1",
+        "worker_password": "x",
+        "algorithm": "sha256d",
+        "threads": 1,
+        "cpu_priority": 0,
+        "verbose": true
+      }
+    }
+  },
+
+  "dependencies": {
+    "agents": [],
+    "external_services": [],
+    "required_directories": [
+      "build/bin/Debug/config",
+      "build/bin/Debug/config/pools",
+      "build/bin/Debug/config/miners",
+      "build/bin/Debug/config/templates",
+      "build/bin/Debug/config/backups",
+      "~/.bitcoin"
+    ],
+    "required_files": [
+      "build/bin/Debug/config/coins/bitcoin.json"
+    ]
+  },
+
+  "error_handling": {
+    "template_not_found": {
+      "action": "use_default_template",
+      "fallback": "create_from_embedded_defaults",
+      "decision": "template_error",
+      "notify_agents": ["diagnostics_agent"]
+    },
+    "template_parse_error": {
+      "action": "abort_generation",
+      "preserve_existing_config": true,
+      "decision": "template_error",
+      "log_details": true
+    },
+    "validation_failure": {
+      "action": "abort_generation",
+      "preserve_existing_config": true,
+      "decision": "error",
+      "return_validation_errors": true
+    },
+    "port_conflict": {
+      "action": "auto_increment_port",
+      "max_attempts": 10,
+      "decision": "error_if_unresolvable",
+      "notify_user": true
+    },
+    "backup_failure": {
+      "action": "prompt_user",
+      "allow_overwrite": false,
+      "decision": "error"
+    },
+    "file_write_permission_denied": {
+      "action": "abort_generation",
+      "decision": "error",
+      "suggest_sudo": true
+    },
+    "directory_creation_failed": {
+      "action": "retry_with_mkdir_p",
+      "decision": "error_if_failed",
+      "max_retries": 1
+    },
+    "credential_generation_failed": {
+      "action": "use_defaults",
+      "decision": "configs_generated",
+      "warn_user": true
+    },
+    "rpc_credential_mismatch": {
+      "action": "regenerate_with_same_credentials",
+      "decision": "error",
+      "critical": true
+    }
+  },
+
+  "validation": {
+    "schema_version": "1.0.0",
+    "required_fields": [
+      "config_base_path",
+      "template_path",
+      "network_type"
+    ],
+    "validation_rules": {
+      "network_type": ["regtest", "testnet", "mainnet"],
+      "default_ports.bitcoind_rpc": "integer, range 1024-65535",
+      "default_ports.bitcoind_p2p": "integer, range 1024-65535",
+      "default_ports.pool_stratum": "integer, range 1024-65535",
+      "default_ports.pool_web": "integer, range 1024-65535",
+      "port_conflict_resolution.max_attempts": "integer, min 1, max 100"
+    },
+    "cross_component_validation": {
+      "daemon_pool_rpc_credentials_match": true,
+      "daemon_pool_rpc_port_match": true,
+      "pool_miner_stratum_port_match": true,
+      "wallet_address_format_valid": true,
+      "all_ports_unique": true,
+      "paths_exist_or_creatable": true
+    }
+  },
+
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "logs/agents/config_generator.log",
+    "log_rotation": {
+      "max_size_mb": 50,
+      "max_files": 5
+    },
+    "log_events": [
+      "config_generation_started",
+      "config_generation_completed",
+      "template_loaded",
+      "template_variables_substituted",
+      "port_conflict_detected",
+      "port_conflict_resolved",
+      "backup_created",
+      "validation_performed",
+      "validation_errors",
+      "file_written",
+      "credentials_generated"
+    ]
+  },
+
+  "metrics": {
+    "collect": true,
+    "metrics": [
+      "configs_generated_total",
+      "configs_generation_time_ms",
+      "validation_success_rate",
+      "port_conflicts_detected",
+      "port_conflicts_resolved",
+      "backups_created",
+      "template_errors",
+      "validation_errors"
+    ],
+    "export_to": ["performance_analyzer", "diagnostics_agent"]
+  },
+
+  "decisions": {
+    "configs_generated": {
+      "description": "All configuration files generated successfully and validated",
+      "conditions": [
+        "All templates processed successfully",
+        "All validations passed",
+        "No unresolved port conflicts",
+        "RPC credentials consistent across configs",
+        "All files written successfully"
+      ]
+    },
+    "template_error": {
+      "description": "Template file missing, malformed, or substitution failed",
+      "conditions": [
+        "Template file not found and default unavailable",
+        "Template parsing error",
+        "Variable substitution failed",
+        "Template format invalid"
+      ]
+    },
+    "error": {
+      "description": "General failure during config generation",
+      "conditions": [
+        "File write permission denied",
+        "Validation failure",
+        "Port conflict unresolvable",
+        "Directory creation failed",
+        "RPC credential mismatch",
+        "Any critical error during generation"
+      ]
+    }
+  },
+
+  "success_criteria": {
+    "all_configs_present": "Daemon, pool, and miner configs all created",
+    "no_port_conflicts": "All ports checked and available or resolved",
+    "rpc_credentials_match": "Daemon RPC credentials match pool daemon config",
+    "paths_correct": "All paths correctly formatted for WSL/Windows environment",
+    "validation_passed": "All generated configs pass JSON schema validation",
+    "backup_created": "Existing configs backed up before overwrite",
+    "consistency_verified": "Cross-component settings are consistent"
+  },
+
+  "selfLearning": {
+    "enabled": true,
+    "agentDefinitionPath": "/mnt/c/github/claudeplus/agents/config_generator.json",
+    "learningTypes": [
+      "port_conflict_resolutions",
+      "optimal_configuration_values",
+      "wsl_path_conversions",
+      "rpc_credential_patterns",
+      "template_customizations"
+    ],
+    "updateTriggers": [
+      "after_successful_port_conflict_resolution",
+      "after_discovering_optimal_config_values",
+      "after_resolving_path_conversion_issue"
+    ],
+    "minValidations": 2,
+    "instruction": "Track which port configurations work (e.g., if 3333 fails, 13333 succeeds), optimal difficulty values for different scenarios, WSL path conversion patterns that work, RPC credential formats that succeed. When you discover configurations that work reliably (2+ times), update your defaults and templates in your definition."
+  }
+}

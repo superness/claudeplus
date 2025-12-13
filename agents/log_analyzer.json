@@ -1,0 +1,685 @@
+{
+  "agent_name": "log_analyzer",
+  "agent_type": "monitoring_analysis",
+  "group": 2,
+  "version": "2.0.0",
+  "description": "Parse and analyze logs from all components (bitcoind, CoiniumServ, miners). Identifies errors and warnings, correlates events across logs, generates unified timeline for troubleshooting and root cause analysis.",
+
+  "configuration": {
+    "log_sources": {
+      "bitcoind": {
+        "enabled": true,
+        "log_file": "~/.bitcoin/regtest/debug.log",
+        "format": "timestamp_prefixed",
+        "parser": "bitcoind_parser",
+        "tail_lines": 1000,
+        "real_time_monitoring": true
+      },
+      "coiniumserv": {
+        "enabled": true,
+        "log_directory": "build/bin/Debug/logs",
+        "log_patterns": ["*.log", "pool-*.log", "stratum-*.log"],
+        "format": "structured_log4net",
+        "parser": "coiniumserv_parser",
+        "tail_lines": 1000,
+        "real_time_monitoring": true
+      },
+      "miner": {
+        "enabled": true,
+        "log_directory": "logs/miners",
+        "log_patterns": ["miner-*.log", "cpuminer-*.log", "cgminer-*.log"],
+        "format": "miner_stdout",
+        "parser": "miner_parser",
+        "tail_lines": 500,
+        "real_time_monitoring": true
+      },
+      "agents": {
+        "enabled": true,
+        "log_directory": "logs/agents",
+        "log_patterns": ["*.log"],
+        "format": "agent_log",
+        "parser": "agent_parser",
+        "tail_lines": 500,
+        "real_time_monitoring": true
+      }
+    },
+
+    "analysis_config": {
+      "analysis_interval_seconds": 30,
+      "batch_size": 5000,
+      "max_timeline_events": 10000,
+      "correlation_window_seconds": 300,
+      "enable_real_time_alerts": true,
+      "enable_historical_analysis": true
+    },
+
+    "error_patterns": {
+      "bitcoind": [
+        {
+          "pattern": "ERROR:.*",
+          "severity": "error",
+          "category": "daemon_error",
+          "description": "Bitcoin daemon error"
+        },
+        {
+          "pattern": "UpdateTip.*failed",
+          "severity": "critical",
+          "category": "blockchain_error",
+          "description": "Blockchain update failure"
+        },
+        {
+          "pattern": "RPC.*timeout",
+          "severity": "warning",
+          "category": "rpc_timeout",
+          "description": "RPC call timeout"
+        },
+        {
+          "pattern": "Cannot obtain a lock.*",
+          "severity": "critical",
+          "category": "lock_failure",
+          "description": "Database lock failure"
+        },
+        {
+          "pattern": "Corrupted block database detected",
+          "severity": "critical",
+          "category": "data_corruption",
+          "description": "Blockchain data corruption"
+        },
+        {
+          "pattern": "Connection refused",
+          "severity": "error",
+          "category": "connection_error",
+          "description": "Network connection refused"
+        },
+        {
+          "pattern": "Insufficient funds",
+          "severity": "warning",
+          "category": "wallet_error",
+          "description": "Wallet insufficient funds"
+        },
+        {
+          "pattern": "AcceptToMemoryPool.*failed",
+          "severity": "warning",
+          "category": "mempool_error",
+          "description": "Transaction mempool rejection"
+        }
+      ],
+
+      "coiniumserv": [
+        {
+          "pattern": "\\[ERROR\\].*",
+          "severity": "error",
+          "category": "pool_error",
+          "description": "Pool server error"
+        },
+        {
+          "pattern": "\\[FATAL\\].*",
+          "severity": "critical",
+          "category": "pool_fatal",
+          "description": "Pool server fatal error"
+        },
+        {
+          "pattern": "Stratum.*failed to start",
+          "severity": "critical",
+          "category": "stratum_startup_failure",
+          "description": "Stratum server startup failure"
+        },
+        {
+          "pattern": "RPC.*connection.*failed",
+          "severity": "error",
+          "category": "daemon_connection_error",
+          "description": "Pool to daemon RPC connection failure"
+        },
+        {
+          "pattern": "Share validation.*failed",
+          "severity": "warning",
+          "category": "share_validation_error",
+          "description": "Share validation failure"
+        },
+        {
+          "pattern": "Payment.*error",
+          "severity": "error",
+          "category": "payment_error",
+          "description": "Payment processing error"
+        },
+        {
+          "pattern": "Database.*error",
+          "severity": "error",
+          "category": "database_error",
+          "description": "Pool database error"
+        },
+        {
+          "pattern": "Block submission.*rejected",
+          "severity": "warning",
+          "category": "block_rejection",
+          "description": "Block submission rejected by daemon"
+        },
+        {
+          "pattern": "Exception:.*",
+          "severity": "error",
+          "category": "exception",
+          "description": "Unhandled exception"
+        }
+      ],
+
+      "miner": [
+        {
+          "pattern": "rejected.*share",
+          "severity": "warning",
+          "category": "rejected_share",
+          "description": "Mining share rejected"
+        },
+        {
+          "pattern": "connection.*failed",
+          "severity": "error",
+          "category": "pool_connection_error",
+          "description": "Miner to pool connection failure"
+        },
+        {
+          "pattern": "stratum.*error",
+          "severity": "error",
+          "category": "stratum_error",
+          "description": "Stratum protocol error"
+        },
+        {
+          "pattern": "low difficulty",
+          "severity": "warning",
+          "category": "difficulty_warning",
+          "description": "Difficulty too low warning"
+        },
+        {
+          "pattern": "hardware error",
+          "severity": "error",
+          "category": "hardware_error",
+          "description": "Mining hardware error"
+        },
+        {
+          "pattern": "thread.*crashed",
+          "severity": "critical",
+          "category": "miner_crash",
+          "description": "Miner thread crash"
+        },
+        {
+          "pattern": "stale share",
+          "severity": "info",
+          "category": "stale_share",
+          "description": "Stale share detected"
+        }
+      ],
+
+      "agents": [
+        {
+          "pattern": "ERROR:.*",
+          "severity": "error",
+          "category": "agent_error",
+          "description": "Agent execution error"
+        },
+        {
+          "pattern": "CRITICAL:.*",
+          "severity": "critical",
+          "category": "agent_critical",
+          "description": "Agent critical failure"
+        },
+        {
+          "pattern": "Timeout.*",
+          "severity": "warning",
+          "category": "agent_timeout",
+          "description": "Agent operation timeout"
+        }
+      ]
+    },
+
+    "correlation_rules": [
+      {
+        "rule_name": "daemon_rpc_to_pool_failure",
+        "description": "Correlate daemon RPC errors with pool connection failures",
+        "primary_source": "bitcoind",
+        "primary_pattern": "RPC.*timeout|RPC.*error",
+        "secondary_source": "coiniumserv",
+        "secondary_pattern": "RPC.*connection.*failed",
+        "time_window_seconds": 60,
+        "correlation_type": "causal",
+        "priority": "high"
+      },
+      {
+        "rule_name": "pool_stratum_to_miner_disconnect",
+        "description": "Correlate pool stratum errors with miner disconnections",
+        "primary_source": "coiniumserv",
+        "primary_pattern": "Stratum.*error|Stratum.*failed",
+        "secondary_source": "miner",
+        "secondary_pattern": "connection.*failed|stratum.*error",
+        "time_window_seconds": 30,
+        "correlation_type": "causal",
+        "priority": "high"
+      },
+      {
+        "rule_name": "daemon_crash_to_pool_error",
+        "description": "Correlate daemon crashes with pool errors",
+        "primary_source": "bitcoind",
+        "primary_pattern": "Shutdown|Aborted|EXCEPTION",
+        "secondary_source": "coiniumserv",
+        "secondary_pattern": "ERROR|FATAL|Exception",
+        "time_window_seconds": 120,
+        "correlation_type": "causal",
+        "priority": "critical"
+      },
+      {
+        "rule_name": "share_rejection_pattern",
+        "description": "Correlate pool share rejections with miner rejected shares",
+        "primary_source": "coiniumserv",
+        "primary_pattern": "Share validation.*failed|rejected",
+        "secondary_source": "miner",
+        "secondary_pattern": "rejected.*share",
+        "time_window_seconds": 10,
+        "correlation_type": "synchronous",
+        "priority": "medium"
+      },
+      {
+        "rule_name": "block_submission_failure",
+        "description": "Correlate pool block submissions with daemon acceptance",
+        "primary_source": "coiniumserv",
+        "primary_pattern": "Block submission|submitblock",
+        "secondary_source": "bitcoind",
+        "secondary_pattern": "AcceptBlock|ProcessNewBlock",
+        "time_window_seconds": 5,
+        "correlation_type": "synchronous",
+        "priority": "critical"
+      }
+    ],
+
+    "timeline_config": {
+      "generate_unified_timeline": true,
+      "timeline_format": "json",
+      "timeline_output": "logs/analysis/unified_timeline.json",
+      "include_info_level": false,
+      "include_warning_level": true,
+      "include_error_level": true,
+      "include_critical_level": true,
+      "max_timeline_age_hours": 24
+    },
+
+    "alert_thresholds": {
+      "error_rate_per_minute": 5,
+      "critical_error_count": 1,
+      "correlation_match_threshold": 3,
+      "daemon_error_spike_threshold": 10,
+      "pool_error_spike_threshold": 10,
+      "miner_rejection_rate_percent": 50
+    },
+
+    "retention": {
+      "raw_logs_days": 30,
+      "parsed_logs_days": 14,
+      "timeline_data_days": 7,
+      "correlation_data_days": 7
+    }
+  },
+
+  "responsibilities": [
+    "Parse bitcoind debug.log continuously",
+    "Parse CoiniumServ pool server logs",
+    "Parse miner output and logs",
+    "Parse agent logs from all agent components",
+    "Identify errors and warnings using pattern matching",
+    "Classify log events by severity and category",
+    "Correlate events across multiple log sources",
+    "Generate unified timeline of all events",
+    "Detect error patterns and anomalies",
+    "Provide root cause hints based on correlation",
+    "Real-time monitoring and alerting",
+    "Historical log analysis and reporting",
+    "Support log search and filtering",
+    "Track error trends over time"
+  ],
+
+  "inputs": {
+    "commands": [
+      "analyzeLogs",
+      "searchLogs",
+      "getTimeline",
+      "getErrors",
+      "getWarnings",
+      "correlateEvents",
+      "generateReport",
+      "clearCache",
+      "reloadConfig",
+      "getLogStats"
+    ],
+    "events": [
+      "new_log_entry",
+      "error_detected_trigger",
+      "analysis_interval_trigger",
+      "manual_analysis_request"
+    ],
+    "parameters": {
+      "time_range": "start_time and end_time for historical analysis",
+      "log_sources": "array of log sources to analyze",
+      "severity_filter": "minimum severity level (info|warning|error|critical)",
+      "search_pattern": "regex pattern for log search",
+      "correlation_only": "boolean to return only correlated events"
+    }
+  },
+
+  "outputs": {
+    "events": [
+      "logs_analyzed",
+      "errors_found",
+      "no_errors",
+      "error",
+      "critical_error_detected",
+      "correlation_detected",
+      "timeline_generated",
+      "analysis_complete",
+      "analysis_failed",
+      "alert_triggered"
+    ],
+    "status_fields": [
+      "last_analysis_timestamp",
+      "total_logs_parsed",
+      "total_errors_found",
+      "total_warnings_found",
+      "total_correlations_found",
+      "active_log_sources",
+      "analysis_status",
+      "timeline_size",
+      "error_rate_per_hour"
+    ],
+    "reports": [
+      "unified_timeline",
+      "error_summary",
+      "correlation_report",
+      "component_health_report",
+      "trend_analysis_report"
+    ]
+  },
+
+  "decisions": {
+    "logs_analyzed": {
+      "condition": "Log analysis completed successfully",
+      "description": "All configured log sources parsed, analysis completed without agent errors",
+      "next_actions": ["Generate timeline", "Check for errors", "Route to appropriate handler"]
+    },
+    "errors_found": {
+      "condition": "One or more errors/warnings detected in logs",
+      "description": "Error patterns matched, warnings or errors found in any log source",
+      "next_actions": ["Alert error_recovery_agent", "Generate correlation report", "Trigger notifications"]
+    },
+    "no_errors": {
+      "condition": "Log analysis completed with no errors or warnings found",
+      "description": "Clean logs, no error patterns matched, all components healthy",
+      "next_actions": ["Update metrics", "Continue monitoring", "Generate clean status report"]
+    },
+    "error": {
+      "condition": "Log analyzer agent failure or critical issue",
+      "description": "Agent failed to parse logs, log files missing/corrupted, or agent exception occurred",
+      "next_actions": ["Alert diagnostics_agent", "Log agent failure", "Attempt recovery"]
+    }
+  },
+
+  "rpc_endpoints": {
+    "base_url": "http://localhost:8080/agent/log_analyzer",
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/analyze",
+        "description": "Trigger log analysis",
+        "request_schema": {
+          "sources": "array of log sources (optional, default: all)",
+          "time_range": "object {start, end} (optional)",
+          "real_time": "boolean (optional, default: false)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "analysis_id": "string",
+          "logs_parsed": "integer",
+          "errors_found": "integer",
+          "warnings_found": "integer",
+          "timeline_url": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/search",
+        "description": "Search logs by pattern",
+        "request_schema": {
+          "pattern": "string (regex)",
+          "sources": "array of log sources (optional)",
+          "severity": "string (optional)",
+          "limit": "integer (optional, default: 100)"
+        },
+        "response_schema": {
+          "matches": "array of log entries",
+          "total_matches": "integer",
+          "search_time_ms": "integer"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/timeline",
+        "description": "Get unified timeline of events",
+        "query_params": {
+          "start_time": "timestamp (optional)",
+          "end_time": "timestamp (optional)",
+          "severity": "string (optional)",
+          "limit": "integer (optional, default: 1000)"
+        },
+        "response_schema": {
+          "timeline": "array of events",
+          "total_events": "integer",
+          "time_range": "object {start, end}",
+          "correlations": "array of correlation objects"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/errors",
+        "description": "Get recent errors",
+        "query_params": {
+          "hours": "integer (optional, default: 24)",
+          "source": "string (optional)",
+          "category": "string (optional)"
+        },
+        "response_schema": {
+          "errors": "array of error objects",
+          "total_errors": "integer",
+          "errors_by_category": "object",
+          "errors_by_source": "object"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/warnings",
+        "description": "Get recent warnings",
+        "query_params": {
+          "hours": "integer (optional, default: 24)",
+          "source": "string (optional)"
+        },
+        "response_schema": {
+          "warnings": "array of warning objects",
+          "total_warnings": "integer"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/correlations",
+        "description": "Get correlated events",
+        "query_params": {
+          "hours": "integer (optional, default: 24)",
+          "rule": "string (optional, rule_name to filter)"
+        },
+        "response_schema": {
+          "correlations": "array of correlation objects",
+          "total_correlations": "integer",
+          "correlations_by_rule": "object"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/stats",
+        "description": "Get log analysis statistics",
+        "response_schema": {
+          "total_logs_parsed": "integer",
+          "total_errors": "integer",
+          "total_warnings": "integer",
+          "total_correlations": "integer",
+          "active_sources": "array of strings",
+          "error_rate_per_hour": "float",
+          "last_analysis": "timestamp",
+          "uptime_seconds": "integer"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/report",
+        "description": "Generate comprehensive analysis report",
+        "request_schema": {
+          "report_type": "string (error_summary|correlation|health|trend)",
+          "time_range": "object {start, end} (optional)",
+          "format": "string (json|html|text, default: json)"
+        },
+        "response_schema": {
+          "report_id": "string",
+          "report_url": "string",
+          "report_data": "object (if format=json)",
+          "generated_at": "timestamp"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "description": "Get log analyzer health status",
+        "response_schema": {
+          "healthy": "boolean",
+          "status": "string (ok|warning|critical)",
+          "active_sources": "integer",
+          "failed_sources": "array of strings",
+          "last_error": "string (optional)",
+          "details": "object"
+        }
+      }
+    ]
+  },
+
+  "dependencies": {
+    "agents": [
+      "bitcoin_daemon_manager",
+      "pool_server_manager",
+      "miner_manager"
+    ],
+    "external_services": [
+      "bitcoind (for debug.log access)",
+      "CoiniumServ (for pool logs)"
+    ],
+    "config_files": [
+      "build/bin/Debug/config/config.json",
+      "logs/agents/*.log"
+    ],
+    "helper_scripts": [
+      "scripts/parse-logs.sh"
+    ]
+  },
+
+  "error_handling": {
+    "log_file_not_found": {
+      "action": "log_warning_and_skip",
+      "retry": false,
+      "notify_agents": ["diagnostics_agent"]
+    },
+    "log_file_permission_denied": {
+      "action": "emit_error_event",
+      "retry": false,
+      "notify_agents": ["diagnostics_agent", "error_recovery_agent"]
+    },
+    "log_parsing_failure": {
+      "action": "skip_entry_and_continue",
+      "log_failed_entry": true,
+      "max_consecutive_failures": 100
+    },
+    "correlation_timeout": {
+      "action": "complete_without_correlation",
+      "log_warning": true,
+      "timeout_threshold_seconds": 30
+    },
+    "timeline_generation_failure": {
+      "action": "return_raw_events",
+      "notify_agents": ["diagnostics_agent"]
+    },
+    "pattern_match_overflow": {
+      "action": "limit_and_warn",
+      "max_matches_per_pattern": 10000,
+      "notify_threshold": 5000
+    },
+    "memory_limit_exceeded": {
+      "action": "flush_and_continue",
+      "memory_limit_mb": 512,
+      "flush_batch_size": 1000
+    }
+  },
+
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "logs/agents/log_analyzer.log",
+    "log_rotation": {
+      "max_size_mb": 100,
+      "max_files": 10
+    },
+    "log_events": [
+      "analysis_started",
+      "analysis_completed",
+      "error_pattern_matched",
+      "correlation_detected",
+      "timeline_generated",
+      "parsing_errors",
+      "alert_triggered",
+      "configuration_changes"
+    ]
+  },
+
+  "metrics": {
+    "collect": true,
+    "metrics": [
+      "total_logs_parsed",
+      "total_errors_detected",
+      "total_warnings_detected",
+      "total_correlations_found",
+      "analysis_execution_time_ms",
+      "parsing_speed_lines_per_second",
+      "error_detection_rate",
+      "correlation_match_rate",
+      "timeline_generation_time_ms",
+      "active_log_sources_count",
+      "failed_log_sources_count",
+      "alert_count",
+      "cache_hit_rate"
+    ],
+    "export_to": ["performance_analyzer", "diagnostics_agent"]
+  },
+
+  "validation": {
+    "schema_version": "2.0.0",
+    "required_fields": [
+      "log_sources",
+      "analysis_config.analysis_interval_seconds",
+      "error_patterns",
+      "correlation_rules",
+      "timeline_config"
+    ],
+    "validation_rules": {
+      "analysis_interval_seconds": "integer, min 10, max 3600",
+      "batch_size": "integer, min 100, max 50000",
+      "correlation_window_seconds": "integer, min 1, max 3600",
+      "error_patterns.*.severity": ["info", "warning", "error", "critical"],
+      "correlation_rules.*.time_window_seconds": "integer, min 1, max 3600"
+    }
+  },
+
+  "performance": {
+    "max_concurrent_parsers": 4,
+    "parser_thread_pool_size": 8,
+    "enable_caching": true,
+    "cache_size_mb": 256,
+    "cache_ttl_seconds": 300,
+    "enable_indexing": true,
+    "index_update_interval_seconds": 60
+  }
+}

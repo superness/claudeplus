@@ -1254,59 +1254,173 @@ class PipelineDesigner {
         nodeIds.push(nodeId);
       });
     } else {
-      // Check if stages have phase information for vertical grouping
-      const hasPhases = template.stages.some(s => s.phase);
+      // Smart flowchart-style DAG layout
+      console.log('📐 Computing smart flowchart layout from connections...');
 
-    if (hasPhases) {
-      // Group stages by phase and layout vertically
-      const phases = {};
-      template.stages.forEach(stage => {
-        const phase = stage.phase || 'default';
-        if (!phases[phase]) phases[phase] = [];
-        phases[phase].push(stage);
+      // Build connection map
+      const connections = template.connections || [];
+      const stageMap = {};
+      template.stages.forEach(s => stageMap[s.id] = s);
+
+      // Find primary flow path (follow first connection from each node)
+      const primaryNext = {}; // node -> its primary next node
+      const allTargets = new Set();
+
+      connections.forEach(conn => {
+        if (conn.to !== 'end') {
+          allTargets.add(conn.to);
+          // First connection from a node is "primary"
+          if (!primaryNext[conn.from]) {
+            primaryNext[conn.from] = conn.to;
+          }
+        }
       });
 
-      const phaseKeys = Object.keys(phases);
-      const xStart = 5000; // Start well centered in 10000px canvas
-      const yStart = 5000; // Start well centered in 10000px canvas
-      const xSpacing = 400; // Space between phases
-      const ySpacing = 150; // Space between nodes in same phase
+      // Find start node
+      let startNode = template.startStage;
+      if (!startNode) {
+        for (const stage of template.stages) {
+          if (!allTargets.has(stage.id)) {
+            startNode = stage.id;
+            break;
+          }
+        }
+      }
+      if (!startNode) startNode = template.stages[0]?.id;
 
-      phaseKeys.forEach((phase, phaseIndex) => {
-        const phaseStages = phases[phase];
-        const x = xStart + (phaseIndex * xSpacing);
+      // Build primary chain (the main happy path)
+      const primaryChain = [];
+      const inChain = new Set();
+      let current = startNode;
+      while (current && !inChain.has(current)) {
+        primaryChain.push(current);
+        inChain.add(current);
+        current = primaryNext[current];
+      }
 
-        phaseStages.forEach((stage, stageIndex) => {
-          const y = yStart + (stageIndex * ySpacing);
-          const nodeId = this.createNode({
-            id: stage.id,
-            name: stage.name,
-            type: stage.type || 'agent',
-            icon: this.getStageIcon(stage.type),
-            description: stage.description,
-            agent: stage.agent,
-            x: x,
-            y: y,
-            config: {
-              inputs: stage.inputs || [],
-              outputs: stage.outputs || [],
-              phase: stage.phase
+      // Find nodes not in primary chain (branch/loop nodes)
+      const branchNodes = template.stages
+        .map(s => s.id)
+        .filter(id => !inChain.has(id));
+
+      console.log(`📐 Primary chain: ${primaryChain.length} nodes, Branch nodes: ${branchNodes.length}`);
+      console.log(`📐 Primary chain: ${primaryChain.join(' → ')}`);
+
+      // Position settings
+      const xStart = 4700;
+      const yMain = 5000;
+      const xSpacing = 350;
+      const yBranchOffset = 200;
+      const nodePositions = {};
+
+      // If primary chain is too short (< 50% of nodes), use grid layout instead
+      if (primaryChain.length < template.stages.length * 0.5) {
+        console.log('📐 Primary chain too short, using smart grid layout');
+
+        // Use the stages array order but arrange in a flowing grid
+        const nodesPerRow = Math.ceil(Math.sqrt(template.stages.length * 2)); // Wide rectangle
+        template.stages.forEach((stage, index) => {
+          const row = Math.floor(index / nodesPerRow);
+          const col = index % nodesPerRow;
+          nodePositions[stage.id] = {
+            x: xStart + col * xSpacing,
+            y: yMain - 200 + row * 180
+          };
+        });
+      } else {
+        // Position primary chain horizontally
+        primaryChain.forEach((nodeId, index) => {
+          nodePositions[nodeId] = {
+            x: xStart + index * xSpacing,
+            y: yMain
+          };
+        });
+      }
+
+      // Position branch nodes near their connection points (only if we used primary chain layout)
+      if (primaryChain.length >= template.stages.length * 0.5) {
+        branchNodes.forEach((nodeId, index) => {
+          // Default position: spread out below the main flow
+          let nearX = xStart + (index + 1) * xSpacing;
+          let nearY = yMain + yBranchOffset * (1 + Math.floor(index / 3)); // Stack rows if many branches
+
+          // Try to find better position based on connections
+          let foundConnection = false;
+
+          // Check what connects TO this node
+          connections.forEach(conn => {
+            if (conn.to === nodeId && nodePositions[conn.from]) {
+              nearX = nodePositions[conn.from].x + xSpacing * 0.5;
+              foundConnection = true;
             }
           });
-          nodeIds.push(nodeId);
+
+          // Check what this node connects TO
+          connections.forEach(conn => {
+            if (conn.from === nodeId && nodePositions[conn.to]) {
+              if (!foundConnection) {
+                nearX = nodePositions[conn.to].x - xSpacing * 0.5;
+              } else {
+                // Average the two positions
+                nearX = (nearX + nodePositions[conn.to].x - xSpacing * 0.5) / 2;
+              }
+            }
+          });
+
+          // Alternate above/below for variety
+          if (index % 2 === 1) {
+            nearY = yMain - yBranchOffset;
+          }
+
+          nodePositions[nodeId] = { x: nearX, y: nearY };
+        });
+      }
+
+      // Second pass: refine branch node positions based on connections
+      // Put fix_issues type nodes (loop-back nodes) below the main flow
+      connections.forEach(conn => {
+        // If a node connects BACKWARD (to earlier in chain), put it below
+        const fromChainIdx = primaryChain.indexOf(conn.from);
+        const toChainIdx = primaryChain.indexOf(conn.to);
+
+        if (fromChainIdx > toChainIdx && toChainIdx >= 0) {
+          // This is a loop-back connection, the 'from' node should be positioned
+          // such that the loop is visible - usually already handled
+        }
+      });
+
+      // Special handling: find "fix" or "retry" nodes and position them nicely
+      branchNodes.forEach(nodeId => {
+        const stage = stageMap[nodeId];
+        if (!stage) return;
+
+        // If this node loops back, position it below the midpoint of the loop
+        connections.forEach(conn => {
+          if (conn.from === nodeId) {
+            const targetIdx = primaryChain.indexOf(conn.to);
+            if (targetIdx >= 0) {
+              // Find what connects TO this node
+              connections.forEach(c2 => {
+                if (c2.to === nodeId) {
+                  const sourceIdx = primaryChain.indexOf(c2.from);
+                  if (sourceIdx >= 0 && sourceIdx > targetIdx) {
+                    // This is a loop: source -> nodeId -> target (backwards)
+                    const midX = (nodePositions[primaryChain[sourceIdx]].x + nodePositions[primaryChain[targetIdx]].x) / 2;
+                    nodePositions[nodeId] = {
+                      x: midX,
+                      y: yMain + yBranchOffset
+                    };
+                  }
+                }
+              });
+            }
+          }
         });
       });
-    } else {
-      // Fallback to grid layout for templates without phases
-      const xStart = 5000; // Start well centered in 10000px canvas
-      const yStart = 5000; // Start well centered in 10000px canvas
-      const xSpacing = 350;
-      const ySpacing = 150;
-      const nodesPerRow = 4; // Max nodes per row
 
-      template.stages.forEach((stage, index) => {
-        const row = Math.floor(index / nodesPerRow);
-        const col = index % nodesPerRow;
+      // Create nodes at computed positions
+      template.stages.forEach(stage => {
+        const pos = nodePositions[stage.id] || { x: xStart, y: yMain };
 
         const nodeId = this.createNode({
           id: stage.id,
@@ -1315,8 +1429,8 @@ class PipelineDesigner {
           icon: this.getStageIcon(stage.type),
           description: stage.description,
           agent: stage.agent,
-          x: xStart + (col * xSpacing),
-          y: yStart + (row * ySpacing),
+          x: pos.x,
+          y: pos.y,
           config: {
             inputs: stage.inputs || [],
             outputs: stage.outputs || []
@@ -1324,7 +1438,8 @@ class PipelineDesigner {
         });
         nodeIds.push(nodeId);
       });
-    }
+
+      console.log(`📐 Flowchart layout: ${primaryChain.length} main nodes, ${branchNodes.length} branch nodes`);
     }
 
     // Create edges based on flow or connections

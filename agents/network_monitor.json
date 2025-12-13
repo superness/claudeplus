@@ -1,0 +1,308 @@
+{
+  "agent_name": "network_monitor",
+  "agent_type": "monitoring",
+  "group": 2,
+  "version": "2.0.0",
+  "description": "Monitors network connectivity between all mining pool components (daemon, pool, miners), tracks connection states, detects network issues (latency, packet loss, disconnections), monitors port availability, logs network events, and alerts on connectivity problems",
+  "permissions": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+  "decisions": ["network_healthy", "network_issues", "connection_lost", "error"],
+  "configuration": {
+    "monitoring_interval_seconds": 30,
+    "daemon_host": "172.22.45.9",
+    "daemon_rpc_port": 18443,
+    "stratum_port": 3333,
+    "web_interface_port": 81,
+    "latency_threshold_ms": 100,
+    "packet_loss_threshold_percent": 5,
+    "port_check_timeout_seconds": 5,
+    "connection_retry_attempts": 3,
+    "alert_cooldown_seconds": 300
+  },
+  "responsibilities": [
+    "Monitor daemon-to-pool connectivity (JSON-RPC)",
+    "Monitor pool-to-miner connectivity (Stratum)",
+    "Track connection states for all network links",
+    "Detect network issues (latency, packet loss, disconnections)",
+    "Monitor port availability (RPC, Stratum, Web)",
+    "Measure network performance metrics",
+    "Log network events to file",
+    "Generate alerts on connectivity problems",
+    "Detect and report network bottlenecks"
+  ],
+  "dependencies": {
+    "agents": ["bitcoin_daemon_manager", "pool_server_manager", "stratum_monitor"],
+    "config_files": [
+      "build/bin/Debug/config/config.json",
+      "build/bin/Debug/config/pools/default.json"
+    ],
+    "log_files": [
+      "logs/server.log",
+      "logs/debug.log",
+      "logs/network_monitor.log"
+    ]
+  },
+  "monitoring_checks": {
+    "daemon_connectivity": {
+      "description": "Check Bitcoin daemon RPC connectivity",
+      "method": "TCP port check and RPC ping",
+      "commands": [
+        "nc -zv -w5 {daemon_host} {daemon_rpc_port}",
+        "curl -s --max-time 5 --data-binary '{\"jsonrpc\":\"1.0\",\"id\":\"networkmon\",\"method\":\"ping\",\"params\":[]}' -H 'content-type: text/plain;' http://{daemon_user}:{daemon_pass}@{daemon_host}:{daemon_rpc_port}/"
+      ],
+      "failure_decision": "connection_lost",
+      "error_patterns": ["Connection refused", "timeout", "Connection timed out"]
+    },
+    "stratum_connectivity": {
+      "description": "Check Stratum server port availability",
+      "method": "TCP port check and active connection count",
+      "commands": [
+        "netstat -tan | grep :{stratum_port} | grep ESTABLISHED | wc -l",
+        "ss -tan state established '( sport = :{stratum_port} )' | wc -l",
+        "nc -zv -w5 localhost {stratum_port}"
+      ],
+      "failure_decision": "connection_lost",
+      "healthy_condition": "Port listening and accepting connections"
+    },
+    "network_latency": {
+      "description": "Measure network latency to daemon",
+      "method": "ICMP ping measurement",
+      "commands": [
+        "ping -c 5 -W 2 {daemon_host} | tail -1 | awk -F '/' '{print $5}'",
+        "ping -c 10 -i 0.2 {daemon_host} | grep 'rtt\\|round-trip' | awk -F '/' '{print $5}'"
+      ],
+      "threshold_check": "avg_latency_ms > {latency_threshold_ms}",
+      "warning_decision": "network_issues",
+      "metric": "average_latency_ms"
+    },
+    "packet_loss": {
+      "description": "Detect packet loss to daemon",
+      "method": "Ping packet loss analysis",
+      "commands": [
+        "ping -c 20 -i 0.5 {daemon_host} | grep 'packet loss' | awk '{print $6}' | sed 's/%//'"
+      ],
+      "threshold_check": "packet_loss_percent > {packet_loss_threshold_percent}",
+      "warning_decision": "network_issues",
+      "metric": "packet_loss_percent"
+    },
+    "port_availability": {
+      "description": "Check all critical ports are listening",
+      "ports": [
+        {"name": "daemon_rpc", "port": 18443, "protocol": "tcp"},
+        {"name": "stratum", "port": 3333, "protocol": "tcp"},
+        {"name": "web_interface", "port": 81, "protocol": "tcp"}
+      ],
+      "commands": [
+        "netstat -tln | grep :{port}",
+        "ss -tln | grep :{port}",
+        "lsof -i :{port} -sTCP:LISTEN"
+      ],
+      "failure_decision": "connection_lost"
+    },
+    "connection_states": {
+      "description": "Monitor TCP connection states",
+      "method": "Track established, time_wait, close_wait connections",
+      "commands": [
+        "netstat -tan | awk '{print $6}' | sort | uniq -c",
+        "ss -tan | awk '{print $1}' | sort | uniq -c"
+      ],
+      "alert_conditions": [
+        "CLOSE_WAIT connections > 50",
+        "TIME_WAIT connections > 200",
+        "SYN_SENT connections > 10"
+      ],
+      "warning_decision": "network_issues"
+    },
+    "bandwidth_check": {
+      "description": "Monitor network bandwidth and throughput",
+      "method": "Check network interface statistics",
+      "commands": [
+        "ifconfig | grep 'RX packets\\|TX packets' | awk '{print $3,$7}'",
+        "cat /proc/net/dev | grep eth0 | awk '{print $2,$10}'"
+      ],
+      "metric": "bytes_rx_tx"
+    }
+  },
+  "rpc_endpoints": {
+    "base_url": "http://localhost:8080/agent/network_monitor",
+    "endpoints": [
+      {"method": "GET", "path": "/status", "description": "Overall network health status"},
+      {"method": "GET", "path": "/latency", "description": "Current latency metrics"},
+      {"method": "GET", "path": "/connections", "description": "Active connection states"},
+      {"method": "GET", "path": "/ports", "description": "Port availability status"},
+      {"method": "GET", "path": "/alerts", "description": "Recent network alerts"},
+      {"method": "POST", "path": "/check", "description": "Trigger immediate network check"},
+      {"method": "GET", "path": "/history", "description": "Network health history"}
+    ]
+  },
+  "outputs": {
+    "events": [
+      "network_check_started",
+      "network_check_completed",
+      "daemon_connection_lost",
+      "daemon_connection_restored",
+      "stratum_port_unavailable",
+      "stratum_port_restored",
+      "high_latency_detected",
+      "latency_normalized",
+      "packet_loss_detected",
+      "packet_loss_resolved",
+      "port_unavailable",
+      "port_restored",
+      "miner_disconnected",
+      "miner_reconnected",
+      "network_congestion_detected",
+      "network_error"
+    ],
+    "metrics": [
+      "daemon_connection_status",
+      "stratum_connection_status",
+      "average_latency_ms",
+      "packet_loss_percent",
+      "active_miner_connections",
+      "established_connections_count",
+      "time_wait_connections_count",
+      "close_wait_connections_count",
+      "daemon_rpc_port_status",
+      "stratum_port_status",
+      "web_port_status",
+      "network_uptime_percent",
+      "total_checks_performed",
+      "failed_checks_count",
+      "alerts_generated_count"
+    ],
+    "log_format": {
+      "timestamp": "ISO8601",
+      "level": "INFO|WARN|ERROR",
+      "component": "network_monitor",
+      "event": "event_name",
+      "details": "event_specific_data",
+      "metrics": "json_object"
+    }
+  },
+  "alert_rules": {
+    "daemon_unreachable": {
+      "condition": "daemon RPC port not responding for 3 consecutive checks",
+      "severity": "CRITICAL",
+      "decision": "connection_lost",
+      "action": "Log error, notify pool_server_manager, trigger reconnection"
+    },
+    "stratum_unavailable": {
+      "condition": "Stratum port not listening or no established connections",
+      "severity": "CRITICAL",
+      "decision": "connection_lost",
+      "action": "Log error, notify stratum_monitor, restart stratum server"
+    },
+    "high_latency": {
+      "condition": "Average latency > {latency_threshold_ms}ms for 5 minutes",
+      "severity": "WARNING",
+      "decision": "network_issues",
+      "action": "Log warning, track latency trends, notify if sustained"
+    },
+    "packet_loss": {
+      "condition": "Packet loss > {packet_loss_threshold_percent}%",
+      "severity": "WARNING",
+      "decision": "network_issues",
+      "action": "Log warning, check network infrastructure"
+    },
+    "connection_limit": {
+      "condition": "CLOSE_WAIT or TIME_WAIT connections exceed thresholds",
+      "severity": "WARNING",
+      "decision": "network_issues",
+      "action": "Log warning, may indicate connection leaks or insufficient resources"
+    },
+    "multiple_failures": {
+      "condition": "Multiple connectivity issues detected simultaneously",
+      "severity": "CRITICAL",
+      "decision": "connection_lost",
+      "action": "Log critical error, escalate to diagnostics_agent"
+    }
+  },
+  "decision_logic": {
+    "network_healthy": {
+      "conditions": [
+        "Daemon RPC port responding",
+        "Stratum port listening and has active connections",
+        "Latency < {latency_threshold_ms}ms",
+        "Packet loss < {packet_loss_threshold_percent}%",
+        "All critical ports available",
+        "No alerts in last monitoring interval"
+      ],
+      "action": "Continue monitoring, log success metrics"
+    },
+    "network_issues": {
+      "conditions": [
+        "Latency >= {latency_threshold_ms}ms but < 500ms",
+        "Packet loss >= {packet_loss_threshold_percent}% but < 20%",
+        "Excessive CLOSE_WAIT or TIME_WAIT connections",
+        "Intermittent connection drops (recovered within 30s)",
+        "Port available but degraded performance"
+      ],
+      "action": "Log warnings, increase monitoring frequency, track trends"
+    },
+    "connection_lost": {
+      "conditions": [
+        "Daemon RPC port unreachable for {connection_retry_attempts} attempts",
+        "Stratum port not listening",
+        "All miner connections dropped",
+        "Latency > 1000ms or 100% packet loss",
+        "Critical port unavailable"
+      ],
+      "action": "Log critical error, notify dependent agents, trigger recovery procedures"
+    },
+    "error": {
+      "conditions": [
+        "Unable to execute monitoring commands (permission denied)",
+        "Configuration file missing or invalid",
+        "Network tools not available (nc, netstat, ss, ping)",
+        "Unexpected error during monitoring checks"
+      ],
+      "action": "Log error, return error decision, notify diagnostics_agent"
+    }
+  },
+  "monitoring_workflow": {
+    "1_initialization": "Load configuration from config files, validate network tools available",
+    "2_daemon_check": "Verify daemon RPC connectivity using TCP check and RPC ping",
+    "3_stratum_check": "Verify Stratum port listening and count active miner connections",
+    "4_latency_measurement": "Ping daemon host and calculate average latency",
+    "5_packet_loss_check": "Perform extended ping test and measure packet loss percentage",
+    "6_port_scan": "Check all critical ports (RPC, Stratum, Web) are listening",
+    "7_connection_analysis": "Analyze TCP connection states for anomalies",
+    "8_log_analysis": "Parse recent logs for connection errors and network events",
+    "9_metrics_calculation": "Calculate uptime, connection counts, performance metrics",
+    "10_decision_making": "Evaluate all checks against decision logic and return appropriate decision",
+    "11_logging": "Write detailed network status to network_monitor.log",
+    "12_alerting": "Generate alerts if thresholds exceeded (respecting cooldown)"
+  },
+  "instructions": "## Network Monitoring Agent Instructions\n\n### Objective\nMonitor all network connectivity between mining pool components, detect issues, and alert on problems.\n\n### Monitoring Procedure\n\n#### 1. Daemon Connectivity Check\n```bash\n# Check daemon RPC port\nnc -zv -w5 172.22.45.9 18443\nif [ $? -ne 0 ]; then\n  echo \"ERROR: Daemon RPC port unreachable\" >> logs/network_monitor.log\n  DECISION=\"connection_lost\"\nfi\n\n# Test RPC endpoint\ncurl -s --max-time 5 --data-binary '{\"jsonrpc\":\"1.0\",\"id\":\"networkmon\",\"method\":\"getblockchaininfo\",\"params\":[]}' \\\n  -H 'content-type: text/plain;' http://bitcoinrpc:SuperSecurePassword123@172.22.45.9:18443/\nif [ $? -ne 0 ]; then\n  echo \"ERROR: Daemon RPC not responding\" >> logs/network_monitor.log\n  DECISION=\"connection_lost\"\nfi\n```\n\n#### 2. Stratum Connectivity Check\n```bash\n# Check Stratum port listening\nnetstat -tln | grep :3333\nif [ $? -ne 0 ]; then\n  echo \"ERROR: Stratum port not listening\" >> logs/network_monitor.log\n  DECISION=\"connection_lost\"\nfi\n\n# Count active miner connections\nACTIVE_MINERS=$(netstat -tan | grep :3333 | grep ESTABLISHED | wc -l)\necho \"INFO: Active miners: $ACTIVE_MINERS\" >> logs/network_monitor.log\n```\n\n#### 3. Latency Measurement\n```bash\n# Ping daemon and extract average latency\nAVG_LATENCY=$(ping -c 10 -i 0.2 172.22.45.9 | grep 'rtt\\|round-trip' | awk -F '/' '{print $5}')\necho \"INFO: Average latency: ${AVG_LATENCY}ms\" >> logs/network_monitor.log\n\nif (( $(echo \"$AVG_LATENCY > 100\" | bc -l) )); then\n  echo \"WARN: High latency detected: ${AVG_LATENCY}ms\" >> logs/network_monitor.log\n  DECISION=\"network_issues\"\nfi\n```\n\n#### 4. Packet Loss Check\n```bash\n# Measure packet loss\nPACKET_LOSS=$(ping -c 20 -i 0.5 172.22.45.9 | grep 'packet loss' | awk '{print $6}' | sed 's/%//')\necho \"INFO: Packet loss: ${PACKET_LOSS}%\" >> logs/network_monitor.log\n\nif (( $(echo \"$PACKET_LOSS > 5\" | bc -l) )); then\n  echo \"WARN: High packet loss: ${PACKET_LOSS}%\" >> logs/network_monitor.log\n  DECISION=\"network_issues\"\nfi\n```\n\n#### 5. Port Availability Scan\n```bash\n# Check all critical ports\nfor PORT in 18443 3333 81; do\n  if ! lsof -i :$PORT -sTCP:LISTEN >/dev/null 2>&1; then\n    echo \"ERROR: Port $PORT not listening\" >> logs/network_monitor.log\n    DECISION=\"connection_lost\"\n  fi\ndone\n```\n\n#### 6. Connection State Analysis\n```bash\n# Count connection states\nCLOSE_WAIT=$(netstat -tan | grep CLOSE_WAIT | wc -l)\nTIME_WAIT=$(netstat -tan | grep TIME_WAIT | wc -l)\n\nif [ $CLOSE_WAIT -gt 50 ]; then\n  echo \"WARN: Excessive CLOSE_WAIT connections: $CLOSE_WAIT\" >> logs/network_monitor.log\n  DECISION=\"network_issues\"\nfi\n\nif [ $TIME_WAIT -gt 200 ]; then\n  echo \"WARN: Excessive TIME_WAIT connections: $TIME_WAIT\" >> logs/network_monitor.log\n  DECISION=\"network_issues\"\nfi\n```\n\n#### 7. Log Analysis for Network Events\n```bash\n# Search logs for connection errors\ngrep -i \"connection\\|timeout\\|refused\\|unreachable\" logs/server.log | tail -20\ngrep -i \"disconnect\\|lost\" logs/debug.log | tail -20\n```\n\n#### 8. Decision Logic\n```\nIF all checks pass:\n  DECISION = \"network_healthy\"\n  LOG \"INFO: All network checks passed\"\n  \nIF latency high OR packet loss high OR excessive connections:\n  DECISION = \"network_issues\"\n  LOG \"WARN: Network issues detected\"\n  \nIF daemon unreachable OR stratum unavailable OR critical port down:\n  DECISION = \"connection_lost\"\n  LOG \"ERROR: Critical connectivity failure\"\n  ALERT administrators\n  \nIF monitoring commands fail OR config missing:\n  DECISION = \"error\"\n  LOG \"ERROR: Monitoring error\"\n```\n\n### Alert Generation\n- Respect {alert_cooldown_seconds} between repeated alerts\n- Log all events to logs/network_monitor.log\n- Critical alerts: daemon unreachable, stratum down\n- Warning alerts: high latency, packet loss, connection anomalies\n\n### Recovery Actions\n- connection_lost: Notify dependent agents for reconnection attempts\n- network_issues: Increase monitoring frequency, track trends\n- Multiple failures: Escalate to diagnostics_agent and error_recovery_agent\n\n### Metrics to Track\n- Daemon connection uptime %\n- Stratum connection uptime %\n- Average latency (rolling 5-minute window)\n- Packet loss percentage\n- Active miner connection count\n- Connection state distribution\n- Alerts generated per hour\n- Failed checks vs total checks ratio",
+  "context_files": [
+    "build/bin/Debug/config/config.json",
+    "build/bin/Debug/config/pools/default.json",
+    "build/bin/Debug/config/coins/bitcoin.json",
+    "logs/server.log",
+    "logs/debug.log"
+  ],
+  "required_tools": [
+    "nc (netcat)",
+    "ping",
+    "netstat or ss",
+    "lsof",
+    "curl",
+    "grep",
+    "awk",
+    "bc (for floating point math)"
+  ],
+  "error_handling": {
+    "tool_not_found": "Log error, attempt fallback command (e.g., ss instead of netstat), return 'error' decision if no alternatives",
+    "permission_denied": "Log error, suggest running with appropriate permissions, return 'error' decision",
+    "timeout": "Retry up to {connection_retry_attempts} times, then return 'connection_lost' decision",
+    "invalid_config": "Log error with details, return 'error' decision, notify config_generator agent",
+    "unexpected_error": "Log full error details, return 'error' decision, notify diagnostics_agent"
+  },
+  "performance": {
+    "monitoring_interval": "30 seconds (configurable)",
+    "check_timeout": "5 seconds per individual check",
+    "max_execution_time": "45 seconds for complete monitoring cycle",
+    "log_rotation": "Daily, keep 30 days",
+    "metrics_retention": "7 days detailed, 90 days aggregated"
+  }
+}

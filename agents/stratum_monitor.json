@@ -1,0 +1,624 @@
+{
+  "agent_name": "stratum_monitor",
+  "agent_type": "monitoring",
+  "group": 2,
+  "version": "2.0.0",
+  "description": "Comprehensive Stratum protocol monitor that tracks all protocol messages between miners and pool, validates protocol compliance, monitors connection health, detects errors, and provides detailed event logging",
+
+  "configuration": {
+    "stratum_port": 3333,
+    "monitoring_interval_seconds": 10,
+    "connection_timeout_seconds": 30,
+    "share_rate_alert_threshold": 0.1,
+    "protocol_validation_enabled": true,
+    "max_missed_heartbeats": 3,
+    "log_all_messages": true,
+    "error_threshold_per_minute": 10,
+    "duplicate_share_threshold": 5
+  },
+
+  "state_machine": {
+    "initial_state": "monitor_active",
+    "states": {
+      "monitor_active": {
+        "description": "Actively monitoring stratum protocol communications",
+        "entry_actions": ["initialize_monitoring", "reset_error_counters", "log_monitoring_started"],
+        "monitoring_actions": [
+          "capture_subscribe_messages",
+          "capture_authorize_messages",
+          "capture_notify_messages",
+          "capture_submit_messages",
+          "capture_difficulty_messages",
+          "capture_configure_messages",
+          "track_connection_health",
+          "validate_message_sequence",
+          "measure_latency",
+          "count_active_workers"
+        ],
+        "exit_actions": ["log_state_transition"]
+      },
+      "protocol_valid": {
+        "description": "Protocol messages are valid and compliant",
+        "entry_actions": ["log_protocol_valid", "update_valid_message_counter"],
+        "validation_checks": [
+          "verify_subscribe_format",
+          "verify_authorize_credentials",
+          "verify_notify_job_params",
+          "verify_submit_share_params",
+          "verify_difficulty_value",
+          "verify_extranonce_size",
+          "verify_ntime_range",
+          "verify_nonce_size"
+        ],
+        "exit_actions": ["log_validation_complete"]
+      },
+      "protocol_error": {
+        "description": "Protocol error detected in stratum messages",
+        "entry_actions": ["log_protocol_error", "increment_error_counter", "capture_error_details"],
+        "error_types": [
+          "JobNotFound",
+          "IncorrectNonceSize",
+          "NTimeOutOfRange",
+          "IncorrectExtraNonce2Size",
+          "IncorrectNTimeSize",
+          "DuplicateShare",
+          "LowDifficultyShare",
+          "InvalidJsonFormat",
+          "MissingRequiredParams",
+          "UnauthorizedSubmit",
+          "UnknownMethod"
+        ],
+        "recovery_actions": [
+          "notify_error_recovery_agent",
+          "log_error_details",
+          "track_error_frequency",
+          "check_error_threshold"
+        ],
+        "exit_actions": ["clear_error_context"]
+      },
+      "error": {
+        "description": "Critical error in monitoring system or excessive protocol errors",
+        "entry_actions": ["log_critical_error", "notify_administrators", "trigger_recovery"],
+        "error_conditions": [
+          "monitoring_system_failure",
+          "connection_lost",
+          "error_threshold_exceeded",
+          "invalid_configuration",
+          "resource_exhaustion"
+        ],
+        "recovery_actions": [
+          "restart_monitoring",
+          "reset_connections",
+          "escalate_to_error_recovery_agent"
+        ],
+        "exit_actions": ["log_recovery_attempt"]
+      }
+    },
+
+    "transitions": [
+      {
+        "from": "monitor_active",
+        "to": "protocol_valid",
+        "trigger": "valid_message_received",
+        "conditions": ["message_format_correct", "parameters_valid", "sequence_correct"]
+      },
+      {
+        "from": "protocol_valid",
+        "to": "monitor_active",
+        "trigger": "validation_complete",
+        "conditions": ["no_errors_detected"]
+      },
+      {
+        "from": "monitor_active",
+        "to": "protocol_error",
+        "trigger": "invalid_message_detected",
+        "conditions": ["validation_failed", "error_identified"]
+      },
+      {
+        "from": "protocol_error",
+        "to": "monitor_active",
+        "trigger": "error_handled",
+        "conditions": ["error_logged", "below_error_threshold"]
+      },
+      {
+        "from": "protocol_error",
+        "to": "error",
+        "trigger": "critical_error_threshold_exceeded",
+        "conditions": ["error_rate_too_high", "repeated_failures"]
+      },
+      {
+        "from": "error",
+        "to": "monitor_active",
+        "trigger": "recovery_successful",
+        "conditions": ["system_recovered", "connections_restored"]
+      },
+      {
+        "from": "monitor_active",
+        "to": "error",
+        "trigger": "monitoring_failure",
+        "conditions": ["system_error", "connection_lost"]
+      }
+    ]
+  },
+
+  "stratum_protocol_monitoring": {
+    "message_types": {
+      "mining.subscribe": {
+        "direction": "client_to_server",
+        "description": "Miner subscribes to receive mining work",
+        "required_params": ["signature"],
+        "optional_params": ["session_id"],
+        "response_fields": ["extranonce1", "extranonce2_size", "subscriptions"],
+        "validation_rules": [
+          "signature_format_valid",
+          "extranonce1_hex_encoded",
+          "extranonce2_size_positive"
+        ],
+        "logged_fields": ["miner_signature", "session_id", "extranonce1", "timestamp"],
+        "success_event": "subscribe_successful",
+        "error_events": ["subscribe_failed", "invalid_signature"]
+      },
+      "mining.authorize": {
+        "direction": "client_to_server",
+        "description": "Miner authenticates with username and password",
+        "required_params": ["username", "password"],
+        "optional_params": [],
+        "response_type": "boolean",
+        "validation_rules": [
+          "username_not_empty",
+          "username_format_valid",
+          "password_provided"
+        ],
+        "logged_fields": ["username", "authorization_result", "timestamp", "connection_id"],
+        "success_event": "authorize_successful",
+        "error_events": ["authorize_failed", "authentication_error"]
+      },
+      "mining.notify": {
+        "direction": "server_to_client",
+        "description": "Server sends new mining job to miner",
+        "required_params": [
+          "job_id",
+          "prevhash",
+          "coinbase1",
+          "coinbase2",
+          "merkle_branches",
+          "version",
+          "nbits",
+          "ntime",
+          "clean_jobs"
+        ],
+        "validation_rules": [
+          "job_id_unique",
+          "prevhash_64_hex",
+          "coinbase_hex_valid",
+          "merkle_branches_array",
+          "version_hex_valid",
+          "nbits_hex_valid",
+          "ntime_hex_valid",
+          "clean_jobs_boolean"
+        ],
+        "logged_fields": ["job_id", "difficulty", "clean_jobs", "timestamp", "miner_count"],
+        "success_event": "job_distributed",
+        "error_events": ["job_distribution_failed", "invalid_job_params"]
+      },
+      "mining.submit": {
+        "direction": "client_to_server",
+        "description": "Miner submits completed work (share)",
+        "required_params": [
+          "username",
+          "job_id",
+          "extranonce2",
+          "ntime",
+          "nonce"
+        ],
+        "optional_params": ["version"],
+        "response_type": "boolean",
+        "validation_rules": [
+          "job_exists",
+          "extranonce2_correct_size",
+          "ntime_in_range",
+          "nonce_correct_size",
+          "share_not_duplicate",
+          "difficulty_sufficient"
+        ],
+        "error_mappings": {
+          "JobNotFound": "job_id_invalid_or_expired",
+          "IncorrectNonceSize": "nonce_must_be_32bit_hex",
+          "NTimeOutOfRange": "ntime_outside_valid_range",
+          "IncorrectExtraNonce2Size": "extranonce2_size_mismatch",
+          "IncorrectNTimeSize": "ntime_must_be_32bit_hex",
+          "DuplicateShare": "share_already_submitted",
+          "LowDifficultyShare": "share_difficulty_too_low"
+        },
+        "logged_fields": [
+          "username",
+          "job_id",
+          "extranonce2",
+          "ntime",
+          "nonce",
+          "version",
+          "share_valid",
+          "error_type",
+          "difficulty",
+          "timestamp"
+        ],
+        "success_event": "share_accepted",
+        "error_events": [
+          "share_rejected_job_not_found",
+          "share_rejected_incorrect_nonce_size",
+          "share_rejected_ntime_out_of_range",
+          "share_rejected_incorrect_extranonce2",
+          "share_rejected_duplicate",
+          "share_rejected_low_difficulty"
+        ]
+      },
+      "mining.set_difficulty": {
+        "direction": "server_to_client",
+        "description": "Server updates miner difficulty (vardiff)",
+        "required_params": ["difficulty"],
+        "validation_rules": [
+          "difficulty_positive",
+          "difficulty_reasonable_range"
+        ],
+        "logged_fields": ["miner_id", "old_difficulty", "new_difficulty", "timestamp"],
+        "success_event": "difficulty_updated",
+        "error_events": ["difficulty_update_failed"]
+      },
+      "mining.configure": {
+        "direction": "client_to_server",
+        "description": "Miner configures protocol extensions",
+        "required_params": ["extensions"],
+        "optional_params": ["parameters"],
+        "validation_rules": [
+          "extensions_array",
+          "supported_extensions_only"
+        ],
+        "logged_fields": ["extensions_requested", "extensions_enabled", "timestamp"],
+        "success_event": "configure_successful",
+        "error_events": ["configure_failed", "unsupported_extension"]
+      }
+    }
+  },
+
+  "connection_health_monitoring": {
+    "health_checks": [
+      {
+        "name": "connection_alive",
+        "interval_seconds": 10,
+        "method": "check_tcp_connection_state",
+        "failure_threshold": 3,
+        "recovery_action": "reconnect"
+      },
+      {
+        "name": "heartbeat_check",
+        "interval_seconds": 15,
+        "method": "verify_message_activity",
+        "max_silence_seconds": 60,
+        "failure_action": "mark_connection_stale"
+      },
+      {
+        "name": "response_time_check",
+        "interval_seconds": 30,
+        "method": "measure_message_latency",
+        "threshold_ms": 5000,
+        "failure_action": "log_slow_connection"
+      },
+      {
+        "name": "error_rate_check",
+        "interval_seconds": 60,
+        "method": "calculate_error_rate",
+        "max_error_percent": 10,
+        "failure_action": "trigger_protocol_error_state"
+      }
+    ],
+    "connection_metrics": [
+      "total_connections",
+      "active_connections",
+      "idle_connections",
+      "failed_connections",
+      "average_connection_duration",
+      "connection_rate_per_minute"
+    ]
+  },
+
+  "protocol_compliance_validation": {
+    "sequence_validation": {
+      "required_sequence": ["subscribe", "authorize", "receive_job", "submit_share"],
+      "enforce_order": true,
+      "allow_violations": false,
+      "violation_action": "log_and_reject"
+    },
+    "message_format_validation": {
+      "enforce_json_rpc_2_0": true,
+      "require_id_field": true,
+      "require_method_field": true,
+      "require_params_field": true,
+      "reject_malformed": true
+    },
+    "parameter_validation": {
+      "check_parameter_types": true,
+      "check_parameter_ranges": true,
+      "check_hex_encoding": true,
+      "check_string_lengths": true
+    }
+  },
+
+  "logging_configuration": {
+    "log_levels": {
+      "protocol_messages": "verbose",
+      "validation_results": "debug",
+      "errors": "error",
+      "state_transitions": "info",
+      "connection_events": "info",
+      "performance_metrics": "debug"
+    },
+    "log_targets": [
+      {
+        "name": "stratum_message_log",
+        "path": "logs/stratum_messages.log",
+        "format": "json",
+        "rotation": "daily",
+        "retention_days": 7,
+        "events": [
+          "subscribe_successful",
+          "authorize_successful",
+          "job_distributed",
+          "share_accepted",
+          "share_rejected_*",
+          "difficulty_updated"
+        ]
+      },
+      {
+        "name": "protocol_error_log",
+        "path": "logs/stratum_errors.log",
+        "format": "json",
+        "rotation": "daily",
+        "retention_days": 30,
+        "events": [
+          "protocol_error",
+          "validation_failed",
+          "share_rejected_*",
+          "connection_failed",
+          "error_threshold_exceeded"
+        ]
+      },
+      {
+        "name": "connection_health_log",
+        "path": "logs/stratum_health.log",
+        "format": "json",
+        "rotation": "hourly",
+        "retention_days": 3,
+        "events": [
+          "connection_established",
+          "connection_closed",
+          "connection_timeout",
+          "heartbeat_missed",
+          "latency_high"
+        ]
+      },
+      {
+        "name": "metrics_log",
+        "path": "logs/stratum_metrics.log",
+        "format": "json",
+        "rotation": "hourly",
+        "retention_days": 7,
+        "metrics": [
+          "active_workers",
+          "shares_per_minute",
+          "average_difficulty",
+          "reject_rate",
+          "error_rate",
+          "connection_rate"
+        ]
+      }
+    ]
+  },
+
+  "responsibilities": [
+    "Monitor all Stratum protocol messages (subscribe, authorize, notify, submit)",
+    "Validate protocol compliance and message format",
+    "Track connection health and detect connection issues",
+    "Detect and log protocol errors with detailed context",
+    "Measure and report protocol performance metrics",
+    "Enforce proper message sequencing",
+    "Validate share submission parameters",
+    "Track worker activity and share submission rates",
+    "Monitor difficulty adjustments (vardiff)",
+    "Detect duplicate shares and low difficulty shares",
+    "Alert on protocol violations and error thresholds",
+    "Provide comprehensive event logging for all stratum events"
+  ],
+
+  "dependencies": {
+    "agents": ["pool_server_manager", "miner_pool_connector", "error_recovery_agent"],
+    "services": ["stratum_server", "share_manager", "job_manager"]
+  },
+
+  "rpc_endpoints": {
+    "base_url": "http://localhost:8080/agent/stratum_monitor",
+    "endpoints": [
+      {
+        "method": "GET",
+        "path": "/workers",
+        "description": "List all connected workers with connection details"
+      },
+      {
+        "method": "GET",
+        "path": "/workers/{id}",
+        "description": "Get detailed information about specific worker"
+      },
+      {
+        "method": "GET",
+        "path": "/shares",
+        "description": "Get share submission statistics"
+      },
+      {
+        "method": "GET",
+        "path": "/shares/recent",
+        "description": "Get recent share submissions with validation results"
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "description": "Get overall stratum protocol health status"
+      },
+      {
+        "method": "GET",
+        "path": "/health/connections",
+        "description": "Get detailed connection health metrics"
+      },
+      {
+        "method": "GET",
+        "path": "/messages",
+        "description": "Get recent protocol messages"
+      },
+      {
+        "method": "GET",
+        "path": "/messages/{type}",
+        "description": "Get messages filtered by type (subscribe/authorize/notify/submit)"
+      },
+      {
+        "method": "GET",
+        "path": "/errors",
+        "description": "Get protocol error summary"
+      },
+      {
+        "method": "GET",
+        "path": "/errors/recent",
+        "description": "Get recent protocol errors with details"
+      },
+      {
+        "method": "GET",
+        "path": "/metrics",
+        "description": "Get comprehensive stratum protocol metrics"
+      },
+      {
+        "method": "GET",
+        "path": "/state",
+        "description": "Get current state machine state and transition history"
+      },
+      {
+        "method": "POST",
+        "path": "/validate",
+        "description": "Manually validate a stratum message"
+      }
+    ]
+  },
+
+  "outputs": {
+    "events": [
+      "worker_connected",
+      "worker_disconnected",
+      "subscribe_successful",
+      "subscribe_failed",
+      "authorize_successful",
+      "authorize_failed",
+      "job_distributed",
+      "share_submitted",
+      "share_accepted",
+      "share_rejected_job_not_found",
+      "share_rejected_incorrect_nonce_size",
+      "share_rejected_ntime_out_of_range",
+      "share_rejected_incorrect_extranonce2",
+      "share_rejected_duplicate",
+      "share_rejected_low_difficulty",
+      "difficulty_updated",
+      "protocol_error",
+      "protocol_valid",
+      "connection_timeout",
+      "connection_health_degraded",
+      "error_threshold_exceeded",
+      "monitoring_started",
+      "monitoring_stopped",
+      "state_transition"
+    ],
+    "metrics": [
+      "active_workers",
+      "total_connections",
+      "shares_per_minute",
+      "shares_accepted_count",
+      "shares_rejected_count",
+      "average_difficulty",
+      "current_network_difficulty",
+      "reject_rate_percent",
+      "error_rate_percent",
+      "duplicate_share_count",
+      "low_difficulty_share_count",
+      "average_share_latency_ms",
+      "jobs_distributed_count",
+      "subscribe_count",
+      "authorize_success_count",
+      "authorize_failure_count",
+      "connection_uptime_seconds",
+      "total_messages_processed",
+      "validation_failures_count",
+      "protocol_errors_count"
+    ]
+  },
+
+  "error_handling": {
+    "JobNotFound": {
+      "action": "reject_share",
+      "log_level": "warning",
+      "notify_miner": true,
+      "increment_counter": true
+    },
+    "IncorrectNonceSize": {
+      "action": "reject_share",
+      "log_level": "error",
+      "notify_miner": true,
+      "check_threshold": true
+    },
+    "NTimeOutOfRange": {
+      "action": "reject_share",
+      "log_level": "warning",
+      "notify_miner": true,
+      "increment_counter": true
+    },
+    "IncorrectExtraNonce2Size": {
+      "action": "reject_share",
+      "log_level": "error",
+      "notify_miner": true,
+      "check_threshold": true
+    },
+    "DuplicateShare": {
+      "action": "reject_share",
+      "log_level": "info",
+      "notify_miner": false,
+      "increment_counter": true,
+      "threshold": 5,
+      "threshold_action": "investigate_miner"
+    },
+    "LowDifficultyShare": {
+      "action": "reject_share",
+      "log_level": "warning",
+      "notify_miner": true,
+      "increment_counter": true
+    },
+    "connection_timeout": {
+      "action": "notify",
+      "notify_agents": ["error_recovery_agent", "miner_pool_connector"],
+      "recovery_strategy": "reconnect"
+    },
+    "error_threshold_exceeded": {
+      "action": "escalate",
+      "notify_agents": ["error_recovery_agent"],
+      "trigger_state": "error"
+    },
+    "monitoring_failure": {
+      "action": "restart",
+      "notify_agents": ["error_recovery_agent", "diagnostics_agent"],
+      "max_restart_attempts": 3
+    }
+  },
+
+  "performance_tuning": {
+    "message_buffer_size": 10000,
+    "max_concurrent_validations": 100,
+    "validation_timeout_ms": 1000,
+    "metrics_aggregation_interval_seconds": 60,
+    "connection_pool_size": 1000,
+    "enable_message_caching": true,
+    "cache_ttl_seconds": 300
+  }
+}

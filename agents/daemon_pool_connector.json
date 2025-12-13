@@ -1,0 +1,463 @@
+{
+  "agent_name": "daemon_pool_connector",
+  "agent_type": "integration_connector",
+  "group": 2,
+  "version": "1.0.0",
+  "description": "Establishes and validates RPC connection between Bitcoin daemon and CoiniumServ pool server, handles authentication, and monitors connectivity health",
+
+  "systemPrompt": "You are a daemon-pool connection specialist. Your role is to establish, validate, and monitor the RPC connection between the Bitcoin daemon (regtest mode) and the CoiniumServ pool server. You must ensure proper authentication, verify network compatibility, test RPC calls, and monitor connection health. Always validate that both daemon and pool are configured for regtest network before establishing connections.",
+
+  "permissions": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+
+  "decisionType": "explicit",
+  "allowedDecisions": [
+    "connection_established",
+    "connection_failed",
+    "rpc_validated",
+    "error"
+  ],
+
+  "configuration": {
+    "daemon_rpc": {
+      "host": "127.0.0.1",
+      "port": 18443,
+      "username": "coiniumtest",
+      "password": "testpass123",
+      "timeout_seconds": 30
+    },
+    "pool_config_path": "build/bin/Debug/config/config.json",
+    "pool_daemon_section": "pools[0].daemon",
+    "network_type": "regtest",
+    "connection_validation": {
+      "test_rpc_calls": ["getinfo", "getblocktemplate"],
+      "retry_attempts": 3,
+      "retry_delay_seconds": 5,
+      "validation_timeout_seconds": 60
+    },
+    "monitoring": {
+      "health_check_interval_seconds": 30,
+      "rpc_timeout_threshold_ms": 5000,
+      "failure_threshold_count": 3
+    }
+  },
+
+  "responsibilities": [
+    "Read and validate pool configuration file",
+    "Configure pool's daemon RPC settings (host, port, user, password)",
+    "Test daemon RPC connectivity with getinfo call",
+    "Test getblocktemplate RPC call for mining template retrieval",
+    "Validate RPC authentication credentials",
+    "Verify network type matches (regtest) between daemon and pool",
+    "Monitor RPC call success and failure rates",
+    "Handle connection failures and retry logic",
+    "Report connection status and validation results",
+    "Update pool configuration with correct daemon settings"
+  ],
+
+  "inputs": {
+    "required_parameters": [
+      "daemon_host",
+      "daemon_port",
+      "daemon_rpc_user",
+      "daemon_rpc_password",
+      "pool_config_file_path"
+    ],
+    "optional_parameters": [
+      "network_type",
+      "validation_timeout",
+      "retry_attempts",
+      "skip_getblocktemplate_test"
+    ],
+    "commands": [
+      "establish_connection",
+      "validate_rpc",
+      "test_connectivity",
+      "update_pool_config",
+      "monitor_connection",
+      "disconnect"
+    ],
+    "events": [
+      "daemon_started",
+      "pool_started",
+      "connection_test_requested",
+      "validation_requested"
+    ]
+  },
+
+  "outputs": {
+    "events": [
+      "connection_established",
+      "connection_failed",
+      "rpc_validated",
+      "rpc_validation_failed",
+      "authentication_success",
+      "authentication_failed",
+      "network_mismatch",
+      "getinfo_success",
+      "getinfo_failed",
+      "getblocktemplate_success",
+      "getblocktemplate_failed",
+      "error"
+    ],
+    "status_fields": [
+      "connection_active",
+      "last_successful_rpc",
+      "total_rpc_calls",
+      "successful_rpc_calls",
+      "failed_rpc_calls",
+      "average_response_time_ms",
+      "daemon_network_type",
+      "pool_network_type",
+      "authentication_status",
+      "last_error_message"
+    ],
+    "decision_routing": {
+      "connection_established": "RPC connection successfully established and validated",
+      "connection_failed": "Failed to establish RPC connection after retries",
+      "rpc_validated": "All RPC tests passed (getinfo and getblocktemplate)",
+      "error": "Critical error occurred during connection process"
+    }
+  },
+
+  "task_instructions": {
+    "main_workflow": [
+      "1. Read pool configuration file from specified path",
+      "2. Verify daemon RPC settings exist in pool config",
+      "3. Extract daemon host, port, username, password from pool config",
+      "4. Test basic RPC connectivity using bitcoin-cli or curl to daemon",
+      "5. Execute getinfo RPC call and verify response",
+      "6. Validate authentication by checking for authentication errors",
+      "7. Execute getblocktemplate RPC call to verify mining template access",
+      "8. Query daemon network type (getblockchaininfo) and verify it's regtest",
+      "9. Compare daemon network type with pool expected network",
+      "10. Monitor RPC call metrics (success rate, response time)",
+      "11. Report final status and route to appropriate decision"
+    ],
+    "connection_test_commands": {
+      "test_getinfo": "bitcoin-cli -regtest -rpcuser=coiniumtest -rpcpassword=testpass123 -rpcport=18443 getblockchaininfo",
+      "test_getblocktemplate": "bitcoin-cli -regtest -rpcuser=coiniumtest -rpcpassword=testpass123 -rpcport=18443 getblocktemplate '{\"rules\":[\"segwit\"]}'",
+      "curl_getinfo": "curl -s --user coiniumtest:testpass123 --data-binary '{\"jsonrpc\":\"1.0\",\"id\":\"test\",\"method\":\"getblockchaininfo\",\"params\":[]}' -H 'content-type: text/plain;' http://127.0.0.1:18443/",
+      "curl_getblocktemplate": "curl -s --user coiniumtest:testpass123 --data-binary '{\"jsonrpc\":\"1.0\",\"id\":\"test\",\"method\":\"getblocktemplate\",\"params\":[{\"rules\":[\"segwit\"]}]}' -H 'content-type: text/plain;' http://127.0.0.1:18443/"
+    },
+    "validation_checks": [
+      "Verify RPC response status is 200 (HTTP) or success (JSON-RPC)",
+      "Check for authentication errors (401 Unauthorized)",
+      "Validate getinfo/getblockchaininfo returns valid JSON with 'chain' field",
+      "Confirm chain field equals 'regtest'",
+      "Validate getblocktemplate returns template with required fields (version, previousblockhash, transactions, coinbasevalue)",
+      "Check for RPC errors (connection refused, timeout, invalid credentials)",
+      "Verify pool config daemon section matches actual daemon settings"
+    ],
+    "error_handling": [
+      "Connection refused: Check if daemon is running",
+      "Authentication failed: Verify rpcuser and rpcpassword match",
+      "Network mismatch: Ensure both daemon and pool use regtest",
+      "Timeout: Increase timeout or check daemon responsiveness",
+      "Invalid response: Check daemon version compatibility"
+    ],
+    "decision_routing_logic": {
+      "connection_established": "Route here if initial connection succeeds and getinfo returns valid response",
+      "connection_failed": "Route here if connection cannot be established after all retries or authentication fails",
+      "rpc_validated": "Route here if both getinfo AND getblocktemplate succeed and network matches regtest",
+      "error": "Route here for unexpected errors, malformed config, or critical failures"
+    }
+  },
+
+  "rpc_endpoints": {
+    "base_url": "http://localhost:8080/agent/daemon_pool_connector",
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/establish",
+        "description": "Establish daemon-pool RPC connection",
+        "request_schema": {
+          "daemon_host": "string",
+          "daemon_port": "integer",
+          "daemon_rpc_user": "string",
+          "daemon_rpc_password": "string",
+          "pool_config_path": "string (optional)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "connection_id": "string",
+          "daemon_network": "string",
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/validate",
+        "description": "Validate RPC connection and test calls",
+        "request_schema": {
+          "test_getinfo": "boolean (default: true)",
+          "test_getblocktemplate": "boolean (default: true)",
+          "verify_network": "boolean (default: true)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "getinfo_result": "object",
+          "getblocktemplate_result": "object",
+          "network_verified": "boolean",
+          "errors": "array"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/status",
+        "description": "Get connection status and metrics",
+        "response_schema": {
+          "connected": "boolean",
+          "authenticated": "boolean",
+          "network_match": "boolean",
+          "total_calls": "integer",
+          "successful_calls": "integer",
+          "failed_calls": "integer",
+          "avg_response_time_ms": "float",
+          "last_error": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/test-rpc",
+        "description": "Test specific RPC call",
+        "request_schema": {
+          "method": "string",
+          "params": "array (optional)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "result": "object",
+          "response_time_ms": "integer",
+          "error": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/update-pool-config",
+        "description": "Update pool configuration with daemon RPC settings",
+        "request_schema": {
+          "daemon_host": "string",
+          "daemon_port": "integer",
+          "daemon_user": "string",
+          "daemon_password": "string"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "config_updated": "boolean",
+          "message": "string"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "description": "Health check for daemon-pool connection",
+        "response_schema": {
+          "healthy": "boolean",
+          "status": "string (ok|degraded|critical)",
+          "last_successful_call": "timestamp",
+          "consecutive_failures": "integer"
+        }
+      }
+    ]
+  },
+
+  "dependencies": {
+    "agents": [
+      "bitcoin_daemon_manager",
+      "pool_server_manager"
+    ],
+    "external_services": [
+      "bitcoind",
+      "CoiniumServ"
+    ],
+    "config_files": [
+      "build/bin/Debug/config/config.json",
+      "build/bin/Debug/config/pools/default.json"
+    ],
+    "required_tools": [
+      "bitcoin-cli",
+      "curl",
+      "jq"
+    ]
+  },
+
+  "error_handling": {
+    "connection_refused": {
+      "action": "retry_with_backoff",
+      "max_retries": 3,
+      "backoff_seconds": [5, 10, 20],
+      "notify_agents": ["bitcoin_daemon_manager"],
+      "decision": "connection_failed"
+    },
+    "authentication_failed": {
+      "action": "verify_credentials",
+      "check_config_files": ["~/.bitcoin/bitcoin.conf", "build/bin/Debug/config/config.json"],
+      "notify_user": true,
+      "decision": "connection_failed"
+    },
+    "network_mismatch": {
+      "action": "report_mismatch",
+      "expected_network": "regtest",
+      "notify_agents": ["bitcoin_daemon_manager", "pool_server_manager"],
+      "decision": "error"
+    },
+    "rpc_timeout": {
+      "action": "increase_timeout_and_retry",
+      "max_timeout_seconds": 60,
+      "retry_attempts": 2,
+      "decision": "connection_failed"
+    },
+    "invalid_rpc_response": {
+      "action": "log_response_and_fail",
+      "capture_full_response": true,
+      "decision": "error"
+    },
+    "getblocktemplate_failed": {
+      "action": "check_daemon_ready",
+      "verify_blockchain_height": true,
+      "decision": "connection_established"
+    }
+  },
+
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "logs/agents/daemon_pool_connector.log",
+    "log_rotation": {
+      "max_size_mb": 50,
+      "max_files": 5
+    },
+    "log_events": [
+      "connection_attempts",
+      "rpc_calls",
+      "authentication_events",
+      "validation_results",
+      "network_verification",
+      "configuration_updates",
+      "errors_and_failures"
+    ],
+    "verbose_rpc_logging": false
+  },
+
+  "metrics": {
+    "collect": true,
+    "metrics": [
+      "connection_attempts",
+      "successful_connections",
+      "failed_connections",
+      "rpc_calls_total",
+      "rpc_calls_success",
+      "rpc_calls_failed",
+      "rpc_response_time_ms",
+      "authentication_failures",
+      "network_mismatches",
+      "getinfo_calls",
+      "getblocktemplate_calls",
+      "connection_uptime_seconds"
+    ],
+    "export_to": ["performance_analyzer", "network_monitor"]
+  },
+
+  "validation": {
+    "schema_version": "1.0.0",
+    "required_fields": [
+      "daemon_rpc.host",
+      "daemon_rpc.port",
+      "daemon_rpc.username",
+      "daemon_rpc.password",
+      "network_type"
+    ],
+    "validation_rules": {
+      "network_type": ["regtest", "testnet", "mainnet"],
+      "daemon_rpc.port": "integer, range 1024-65535",
+      "daemon_rpc.timeout_seconds": "integer, min 1, max 300",
+      "connection_validation.retry_attempts": "integer, min 0, max 10"
+    }
+  },
+
+  "test_scenarios": [
+    {
+      "name": "successful_connection",
+      "description": "Test successful daemon-pool RPC connection",
+      "preconditions": [
+        "bitcoind running in regtest mode",
+        "RPC credentials configured correctly",
+        "Pool config file exists"
+      ],
+      "steps": [
+        "Read pool config",
+        "Extract daemon RPC settings",
+        "Test getinfo call",
+        "Verify authentication",
+        "Test getblocktemplate call",
+        "Verify network is regtest"
+      ],
+      "expected_decision": "rpc_validated"
+    },
+    {
+      "name": "daemon_not_running",
+      "description": "Test connection when daemon is offline",
+      "preconditions": [
+        "bitcoind is stopped"
+      ],
+      "steps": [
+        "Attempt RPC connection",
+        "Handle connection refused error",
+        "Retry with backoff",
+        "Fail after max retries"
+      ],
+      "expected_decision": "connection_failed"
+    },
+    {
+      "name": "authentication_failure",
+      "description": "Test with incorrect RPC credentials",
+      "preconditions": [
+        "bitcoind running",
+        "Pool config has wrong password"
+      ],
+      "steps": [
+        "Attempt RPC call with wrong credentials",
+        "Detect 401 authentication error",
+        "Report authentication failure"
+      ],
+      "expected_decision": "connection_failed"
+    },
+    {
+      "name": "network_mismatch",
+      "description": "Test when daemon is not in regtest mode",
+      "preconditions": [
+        "bitcoind running in testnet mode",
+        "Pool configured for regtest"
+      ],
+      "steps": [
+        "Connect successfully",
+        "Query network type",
+        "Detect mismatch (testnet vs regtest)",
+        "Report network incompatibility"
+      ],
+      "expected_decision": "error"
+    },
+    {
+      "name": "getblocktemplate_failure",
+      "description": "Test when getblocktemplate fails but getinfo succeeds",
+      "preconditions": [
+        "bitcoind running with 0 blocks"
+      ],
+      "steps": [
+        "getinfo succeeds",
+        "getblocktemplate fails (no blocks yet)",
+        "Report partial success"
+      ],
+      "expected_decision": "connection_established"
+    }
+  ],
+
+  "success_criteria": [
+    "Pool successfully calls getblocktemplate on daemon",
+    "RPC authentication passes without errors",
+    "Pool logs show daemon connection established",
+    "Network verification confirms regtest mode",
+    "RPC response times are within acceptable range (<1000ms)",
+    "Connection status can be queried via agent endpoint",
+    "Proper decision routing based on connection outcome"
+  ]
+}

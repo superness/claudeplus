@@ -1,0 +1,319 @@
+{
+  "agent_name": "dependency_installer",
+  "agent_type": "infrastructure",
+  "group": 1,
+  "version": "1.0.0",
+  "description": "Installs and verifies mining infrastructure dependencies including Bitcoin Core, Mono Runtime, and CPU miner. Handles apt package management, PPA setup, and source compilation with WSL compatibility.",
+
+  "configuration": {
+    "installation_base_path": "/usr/local",
+    "temp_build_dir": "/tmp/mining-deps-build",
+    "log_dir": "/tmp/mining-deps-install-logs",
+    "auto_cleanup_temp": true,
+    "verify_after_install": true,
+    "use_sudo": true,
+    "apt_update_before_install": true,
+
+    "components": {
+      "bitcoind": {
+        "package_method": "ppa",
+        "ppa_repo": "ppa:bitcoin/bitcoin",
+        "packages": ["bitcoind", "bitcoin-cli"],
+        "verify_command": "bitcoind --version",
+        "verify_pattern": "Bitcoin Core version"
+      },
+      "mono": {
+        "package_method": "apt",
+        "packages": ["mono-complete"],
+        "verify_command": "mono --version",
+        "verify_pattern": "Mono JIT compiler version"
+      },
+      "cpuminer": {
+        "package_method": "source",
+        "repo_url": "https://github.com/pooler/cpuminer.git",
+        "build_dependencies": ["build-essential", "libcurl4-openssl-dev", "automake", "autoconf", "pkg-config", "libssl-dev"],
+        "build_commands": [
+          "./autogen.sh",
+          "./configure CFLAGS=\"-O3\"",
+          "make",
+          "sudo make install"
+        ],
+        "verify_command": "minerd --version",
+        "verify_pattern": "cpuminer"
+      }
+    },
+
+    "installation_order": ["mono", "bitcoind", "cpuminer"],
+
+    "retry_policy": {
+      "max_retries": 2,
+      "retry_delay_seconds": 5,
+      "continue_on_failure": false
+    }
+  },
+
+  "responsibilities": [
+    "Install Bitcoin Core via PPA repository",
+    "Install Mono Runtime for CoiniumServ execution",
+    "Build and install cpuminer from source",
+    "Install build dependencies for source compilation",
+    "Run apt update before package installations",
+    "Add PPA repositories when needed",
+    "Verify installations using version commands",
+    "Create installation logs for debugging",
+    "Clean up temporary build directories",
+    "Handle WSL-specific installation quirks",
+    "Provide detailed installation status and errors",
+    "Verify all dependencies before declaring success",
+    "Handle permission requirements (sudo)",
+    "Manage disk space for builds and packages"
+  ],
+
+  "inputs": {
+    "commands": [
+      "installAll",
+      "installBitcoind",
+      "installMono",
+      "installCpuminer",
+      "verifyAll",
+      "verifyBitcoind",
+      "verifyMono",
+      "verifyCpuminer",
+      "cleanupTemp",
+      "getInstallationStatus"
+    ],
+    "parameters": {
+      "skip_apt_update": "boolean (optional, default: false)",
+      "force_reinstall": "boolean (optional, default: false)",
+      "build_threads": "integer (optional, default: number of CPU cores)",
+      "cleanup_on_failure": "boolean (optional, default: true)",
+      "verbose_output": "boolean (optional, default: true)"
+    }
+  },
+
+  "outputs": {
+    "events": [
+      "all_dependencies_installed",
+      "bitcoind_installed",
+      "mono_installed",
+      "cpuminer_installed",
+      "component_verified",
+      "component_install_failed",
+      "ppa_added",
+      "apt_update_completed",
+      "source_build_started",
+      "source_build_completed",
+      "installation_logs_created",
+      "temp_cleanup_completed",
+      "verification_failed",
+      "installation_complete",
+      "installation_failed"
+    ],
+    "generated_files": [
+      "/tmp/mining-deps-install-logs/bitcoind_install.log",
+      "/tmp/mining-deps-install-logs/mono_install.log",
+      "/tmp/mining-deps-install-logs/cpuminer_install.log",
+      "/tmp/mining-deps-build/ (temporary, cleaned up)"
+    ],
+    "status_fields": [
+      "installed_components",
+      "failed_components",
+      "verification_results",
+      "installation_time_seconds",
+      "disk_space_used_mb",
+      "installation_logs"
+    ]
+  },
+
+  "installation_scripts": {
+    "bitcoind": {
+      "script": "#!/bin/bash\nset -e\necho \"Installing Bitcoin Core...\"\nsudo add-apt-repository ppa:bitcoin/bitcoin -y\nsudo apt update\nsudo apt install -y bitcoind bitcoin-cli\nbitcoind --version",
+      "expected_packages": ["bitcoind", "bitcoin-cli"]
+    },
+    "mono": {
+      "script": "#!/bin/bash\nset -e\necho \"Installing Mono Runtime...\"\nsudo apt update\nsudo apt install -y mono-complete\nmono --version",
+      "expected_packages": ["mono-complete"]
+    },
+    "cpuminer": {
+      "script": "#!/bin/bash\nset -e\necho \"Installing cpuminer build dependencies...\"\nsudo apt update\nsudo apt install -y build-essential libcurl4-openssl-dev automake autoconf pkg-config libssl-dev\necho \"Cloning cpuminer repository...\"\nrm -rf /tmp/cpuminer\ngit clone https://github.com/pooler/cpuminer.git /tmp/cpuminer\ncd /tmp/cpuminer\necho \"Building cpuminer...\"\n./autogen.sh\n./configure CFLAGS=\"-O3\"\nmake -j$(nproc)\nsudo make install\nsudo ldconfig\nminerd --version",
+      "expected_executables": ["minerd"]
+    }
+  },
+
+  "dependencies": {
+    "agents": [],
+    "external_services": ["apt", "git"],
+    "required_commands": ["sudo", "apt", "git", "make", "gcc"],
+    "required_directories": [
+      "/tmp",
+      "/usr/local/bin"
+    ]
+  },
+
+  "error_handling": {
+    "ppa_add_failed": {
+      "action": "retry_with_apt_update",
+      "max_retries": 2,
+      "decision": "installation_failed",
+      "log_error": true
+    },
+    "apt_update_failed": {
+      "action": "retry_after_delay",
+      "delay_seconds": 5,
+      "decision": "installation_failed",
+      "suggest_network_check": true
+    },
+    "package_install_failed": {
+      "action": "check_disk_space_and_retry",
+      "decision": "installation_failed",
+      "log_apt_errors": true
+    },
+    "source_build_failed": {
+      "action": "check_dependencies_and_log",
+      "preserve_build_directory": true,
+      "decision": "installation_failed",
+      "suggest_manual_review": true
+    },
+    "verification_failed": {
+      "action": "report_verification_details",
+      "decision": "installation_failed",
+      "include_version_output": true
+    },
+    "sudo_not_available": {
+      "action": "abort_installation",
+      "decision": "installation_failed",
+      "message": "sudo access required for system package installation"
+    },
+    "disk_space_insufficient": {
+      "action": "abort_installation",
+      "decision": "installation_failed",
+      "suggest_cleanup": true
+    }
+  },
+
+  "validation": {
+    "pre_installation_checks": [
+      "sudo_available",
+      "apt_available",
+      "git_available",
+      "sufficient_disk_space (min 2GB free)",
+      "internet_connectivity"
+    ],
+    "post_installation_checks": [
+      "bitcoind_executable_exists",
+      "bitcoin-cli_executable_exists",
+      "mono_executable_exists",
+      "minerd_executable_exists",
+      "bitcoind_version_valid",
+      "mono_version_valid",
+      "minerd_version_valid"
+    ],
+    "verification_commands": {
+      "bitcoind": "bitcoind --version | head -n1",
+      "bitcoin-cli": "bitcoin-cli --version | head -n1",
+      "mono": "mono --version | head -n1",
+      "minerd": "minerd --version | head -n1"
+    }
+  },
+
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "logs/agents/dependency_installer.log",
+    "installation_logs_dir": "/tmp/mining-deps-install-logs",
+    "log_rotation": {
+      "max_size_mb": 100,
+      "max_files": 3
+    },
+    "log_events": [
+      "installation_started",
+      "ppa_added",
+      "apt_update_started",
+      "apt_update_completed",
+      "package_install_started",
+      "package_install_completed",
+      "source_clone_started",
+      "source_build_started",
+      "source_build_completed",
+      "source_install_completed",
+      "verification_started",
+      "verification_completed",
+      "cleanup_started",
+      "installation_completed",
+      "installation_failed",
+      "error_details"
+    ]
+  },
+
+  "metrics": {
+    "collect": true,
+    "metrics": [
+      "total_installation_time_seconds",
+      "bitcoind_install_time_seconds",
+      "mono_install_time_seconds",
+      "cpuminer_build_time_seconds",
+      "disk_space_used_mb",
+      "apt_update_time_seconds",
+      "source_build_success_rate",
+      "verification_success_rate",
+      "installation_failures"
+    ],
+    "export_to": ["performance_analyzer", "diagnostics_agent"]
+  },
+
+  "decisions": {
+    "all_dependencies_installed": {
+      "description": "All three components (bitcoind, mono, cpuminer) installed and verified successfully",
+      "conditions": [
+        "Bitcoin Core PPA added successfully",
+        "bitcoind and bitcoin-cli installed via apt",
+        "Mono runtime installed via apt",
+        "cpuminer built from source successfully",
+        "All components verified with version commands",
+        "All verification patterns matched",
+        "No critical errors during installation"
+      ]
+    },
+    "installation_failed": {
+      "description": "One or more dependencies failed to install or verify",
+      "conditions": [
+        "PPA addition failed",
+        "apt update failed",
+        "Package installation failed",
+        "Source build failed",
+        "Verification command failed",
+        "sudo not available",
+        "Insufficient disk space",
+        "Any critical installation error"
+      ]
+    }
+  },
+
+  "success_criteria": {
+    "bitcoind_installed": "bitcoind --version returns valid Bitcoin Core version",
+    "bitcoin_cli_installed": "bitcoin-cli --version returns valid version",
+    "mono_installed": "mono --version returns valid Mono JIT compiler version",
+    "minerd_installed": "minerd --version returns valid cpuminer version",
+    "all_executables_in_path": "which bitcoind && which bitcoin-cli && which mono && which minerd all succeed",
+    "no_installation_errors": "No errors in installation logs",
+    "temp_cleaned": "Temporary build directory removed"
+  },
+
+  "selfLearning": {
+    "enabled": true,
+    "agentDefinitionPath": "/mnt/c/github/claudeplus/agents/dependency_installer.json",
+    "learningTypes": [
+      "installation_success_patterns",
+      "build_dependency_requirements",
+      "version_compatibility",
+      "installation_timing",
+      "error_recovery_strategies"
+    ],
+    "updateTriggers": [
+      "after_successful_installation_method",
+      "after_discovering_dependency_requirement",
+      "after_resolving_build_failure"
+    ],
+    "minValidations": 2,
+    "instruction": "Track which installation methods work for different environments (WSL versions, Ubuntu versions), which build dependencies are actually required, which software versions are compatible together, typical installation times. When you find reliable installation patterns (2+ successes), update your installation scripts and configurations."
+  }
+}

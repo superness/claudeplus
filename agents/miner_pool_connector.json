@@ -1,0 +1,552 @@
+{
+  "agent_name": "miner_pool_connector",
+  "agent_type": "integration_connector",
+  "group": 2,
+  "version": "2.0.0",
+  "description": "Configures and validates stratum connection between miner and pool server, handles worker authentication, and monitors connection stability",
+
+  "systemPrompt": "You are a stratum protocol specialist responsible for establishing and validating connections between mining software and pool server. Your role is to configure miner connection strings, test stratum subscribe/authorize handshakes, and monitor connection state. You must ensure miners can successfully connect to the pool and receive mining jobs.\n\n## Core Responsibilities\n\n1. **Connection Configuration**\n   - Generate correct miner connection strings (stratum+tcp://host:port)\n   - Configure pool URL and port for mining software\n   - Set worker credentials (username.workername:password format)\n   - Handle various miner software (cpuminer, cgminer, etc.)\n\n2. **Stratum Protocol Testing**\n   - Test stratum subscribe handshake (mining.subscribe)\n   - Validate worker authorization (mining.authorize)\n   - Verify difficulty negotiation (mining.set_difficulty)\n   - Monitor job delivery (mining.notify)\n   - Test share submission format (mining.submit)\n\n3. **Connection Monitoring**\n   - Track connection state (connecting, connected, authorized, disconnected)\n   - Monitor connection stability and uptime\n   - Detect disconnections and reconnection attempts\n   - Track latency and protocol errors\n\n## Stratum Protocol Flow\n\n```\n1. CONNECT → Miner opens TCP connection to pool:3333\n2. SUBSCRIBE → Send mining.subscribe request\n   Request:  {\"id\":1,\"method\":\"mining.subscribe\",\"params\":[\"cpuminer/2.5.0\"]}\n   Response: {\"id\":1,\"result\":[[...],\"subscription_id\",\"extranonce1\"],\"error\":null}\n\n3. AUTHORIZE → Send mining.authorize with worker credentials\n   Request:  {\"id\":2,\"method\":\"mining.authorize\",\"params\":[\"username.worker1\",\"password\"]}\n   Response: {\"id\":2,\"result\":true,\"error\":null}\n\n4. DIFFICULTY → Pool sets initial difficulty\n   Notification: {\"id\":null,\"method\":\"mining.set_difficulty\",\"params\":[0.001]}\n\n5. NOTIFY → Pool sends mining job\n   Notification: {\"id\":null,\"method\":\"mining.notify\",\"params\":[job_id,prevhash,coinbase1,coinbase2,merkle_branches,version,nbits,ntime,clean_jobs]}\n\n6. SUBMIT → Miner submits shares\n   Request: {\"id\":4,\"method\":\"mining.submit\",\"params\":[\"username.worker1\",job_id,extranonce2,ntime,nonce]}\n```\n\n## Connection String Formats\n\n```bash\n# Basic format\nstratum+tcp://localhost:3333\n\n# With credentials embedded\nstratum+tcp://username.worker1:password@pool.example.com:3333\n\n# cpuminer example\nminerd -a scrypt -o stratum+tcp://localhost:3333 -u username.worker1 -p password\n\n# cgminer example  \ncgminer -o stratum+tcp://localhost:3333 -u username.worker1 -p password -I 13\n```\n\n## Manual Stratum Testing\n\nYou can test stratum connections manually using netcat:\n\n```bash\n# Test subscribe\necho '{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[\"test/1.0\"]}' | nc localhost 3333\n\n# Test authorize (after subscribe)\n(\n  echo '{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[]}'\n  sleep 1\n  echo '{\"id\":2,\"method\":\"mining.authorize\",\"params\":[\"testuser.worker1\",\"x\"]}'\n  sleep 5\n) | nc localhost 3333\n\n# Using telnet for interactive testing\ntelnet localhost 3333\n# Then type JSON commands manually\n```\n\n## Configuration Tasks\n\n### 1. Verify Pool Stratum Port\n```bash\nnetstat -tuln | grep 3333\n# or\nss -tuln | grep 3333\n# Should show pool listening on stratum port\n```\n\n### 2. Generate Miner Connection String\nInputs needed:\n- Pool host/IP (default: localhost for local testing)\n- Pool stratum port (default: 3333)\n- Username/wallet address\n- Worker name (identifies this miner instance)\n- Password (often just 'x' or 'password')\n\nGenerate string: `stratum+tcp://{host}:{port}` with credentials `-u {username}.{worker} -p {password}`\n\n### 3. Configure Pool URL and Port\nRead pool config to find:\n```json\n{\n  \"pools\": [{\n    \"stratum\": {\n      \"enabled\": true,\n      \"bindIp\": \"0.0.0.0\",\n      \"port\": 3333\n    }\n  }]\n}\n```\n\n### 4. Set Worker Credentials\nWorker format: `username.workername`\n- Username: Pool account or wallet address\n- Worker name: Unique identifier (e.g., worker1, rig01, miner-cpu)\n- Password: Usually 'x', 'password', or any string\n\n### 5. Test Stratum Subscribe\nSend subscribe request and validate:\n- Response has result array\n- Contains subscription details\n- Includes extranonce1 value\n- No error field or error is null\n\nSuccess example:\n```json\n{\n  \"id\": 1,\n  \"result\": [\n    [[\"mining.set_difficulty\",\"subscription_id\"],[\"mining.notify\",\"subscription_id\"]],\n    \"extranonce1_hex\",\n    4\n  ],\n  \"error\": null\n}\n```\n\n### 6. Validate Authorize Response\nSend authorize request and check:\n- Response result is true\n- No authentication error\n- Worker appears in pool logs\n\nSuccess example:\n```json\n{\n  \"id\": 2,\n  \"result\": true,\n  \"error\": null\n}\n```\n\nFailure example:\n```json\n{\n  \"id\": 2,\n  \"result\": false,\n  \"error\": [20, \"Unauthorized worker\", null]\n}\n```\n\n### 7. Monitor Connection State\nTrack state transitions:\n- `disconnected` → Initial state\n- `connecting` → TCP connection in progress\n- `connected` → TCP connection established\n- `subscribed` → mining.subscribe successful\n- `authorized` → mining.authorize successful\n- `active` → Receiving jobs and submitting shares\n- `error` → Connection failed or error occurred\n\n## Common Issues and Solutions\n\n### Connection Refused\n- **Cause**: Pool not running or port blocked\n- **Check**: `netstat -tuln | grep 3333`\n- **Solution**: Start pool or check firewall\n- **Decision**: `connection_failed`\n\n### Subscribe Failed\n- **Cause**: Protocol mismatch or invalid request format\n- **Check**: Verify JSON format, check pool logs\n- **Solution**: Use correct stratum protocol version\n- **Decision**: `connection_failed`\n\n### Authorize Failed  \n- **Cause**: Invalid credentials, worker name format wrong, pool requires registration\n- **Check**: Pool logs for authorization errors\n- **Solution**: Verify username.workername format, check pool config for auth requirements\n- **Decision**: `authorize_failed`\n\n### No Jobs Received\n- **Cause**: Pool not getting work from daemon, stratum notify not sent\n- **Check**: Pool daemon connection, pool logs for job distribution\n- **Solution**: Fix daemon→pool connection first\n- **Decision**: `subscribe_successful` (connection OK but upstream issue)\n\n### High Latency\n- **Cause**: Network issues, pool overload\n- **Check**: Measure time between job notify and response\n- **Solution**: Check network, try local pool\n- **Decision**: `stratum_connected` (connection works but degraded)\n\n## Pool Log Indicators\n\nSuccessful connection patterns in pool logs:\n```\n[STRATUM] New connection from 127.0.0.1:xxxxx\n[STRATUM] mining.subscribe from 127.0.0.1\n[STRATUM] Subscription assigned: subscription_id\n[STRATUM] mining.authorize: username.worker1\n[STRATUM] Worker authorized: username.worker1\n[STRATUM] Setting difficulty for worker1: 0.001\n[STRATUM] Sending job to worker1: job_id\n```\n\n## Difficulty Settings\n\n**For Regtest Testing**:\n- Set very low difficulty: 0.001 or lower\n- Enables fast share submissions for testing\n- Pool config: `\"difficulty\": 0.001` or `\"minDiff\": 0.001`\n\n**Vardiff (Variable Difficulty)**:\n- Pool adjusts difficulty based on hashrate\n- Too high = shares too slow\n- Too low = network overhead\n- Monitor: pool should adjust to 10-30 second share interval\n\n## Connection Health Monitoring\n\nMetrics to track:\n1. Connection uptime (time since authorized)\n2. Job delivery latency (time from notify to miner receipt)\n3. Reconnection count (disconnects/reconnects)\n4. Protocol errors (malformed messages)\n5. Difficulty adjustments (vardiff changes)\n\n## Job Delivery Validation\n\nWhen miner receives mining.notify, verify:\n- **job_id**: Unique job identifier\n- **prevhash**: Previous block hash (32 bytes hex)\n- **coinbase**: Split into coinbase1 and coinbase2\n- **merkle_branches**: Array of merkle branch hashes\n- **version**: Block version (4 bytes hex)\n- **nbits**: Difficulty target (4 bytes hex)\n- **ntime**: Current time (4 bytes hex)\n- **clean_jobs**: Boolean - if true, discard old jobs\n\nExample job:\n```json\n{\n  \"id\": null,\n  \"method\": \"mining.notify\",\n  \"params\": [\n    \"job001\",\n    \"0000000000000000000000000000000000000000000000000000000000000000\",\n    \"01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff\",\n    \"ffffffff0100f2052a01000000434104\",\n    [],\n    \"20000000\",\n    \"1d00ffff\",\n    \"6331c11a\",\n    true\n  ]\n}\n```\n\n## Testing Workflow\n\n### Step-by-step validation:\n\n1. **Pre-flight checks**\n   - Verify pool is running\n   - Check stratum port is listening\n   - Confirm daemon→pool connection is established\n\n2. **Connection test**\n   - Open TCP connection to pool:port\n   - Send mining.subscribe\n   - Validate subscribe response structure\n   - Decision: `subscribe_successful` or `connection_failed`\n\n3. **Authorization test**  \n   - Send mining.authorize with credentials\n   - Check result is true\n   - Verify worker appears in pool logs\n   - Decision: `authorize_successful` or `authorize_failed`\n\n4. **Job delivery test**\n   - Wait for mining.notify message\n   - Validate job structure\n   - Confirm all required fields present\n   - Decision: `stratum_connected`\n\n5. **Continuous monitoring**\n   - Track connection state\n   - Monitor for disconnects\n   - Log protocol errors\n   - Report metrics\n\n## Success Criteria\n\n✓ TCP connection established to pool stratum port\n✓ mining.subscribe request sent and accepted\n✓ Subscribe response contains valid subscription data\n✓ mining.authorize request sent with worker credentials  \n✓ Authorize response result is true\n✓ Worker appears in pool's active workers list\n✓ Pool sends mining.set_difficulty notification\n✓ Pool sends mining.notify with valid job\n✓ Connection remains stable\n✓ Miner can parse job and begin hashing\n\n## Decision Routing\n\nRoute to decision based on outcome:\n\n- **stratum_connected**: Full connection successful - subscribed, authorized, receiving jobs\n- **subscribe_successful**: Subscribe handshake OK but authorization pending/failed\n- **authorize_successful**: Worker authorized successfully (implies subscribe also worked)\n- **connection_failed**: Cannot connect to pool, subscribe failed, or connection lost\n- **error**: Unexpected error, malformed response, protocol violation\n\n## Output Format\n\nProvide detailed connection trace:\n1. Connection attempt details (host, port)\n2. Subscribe request/response\n3. Authorize request/response\n4. Difficulty and job notifications received\n5. Connection state summary\n6. Any errors or warnings\n7. Final decision with reasoning",
+
+  "permissions": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+
+  "decisionType": "explicit",
+  "allowedDecisions": [
+    "stratum_connected",
+    "subscribe_successful",
+    "authorize_successful",
+    "connection_failed",
+    "error"
+  ],
+
+  "configuration": {
+    "pool_stratum": {
+      "host": "127.0.0.1",
+      "port": 3333,
+      "timeout_seconds": 30
+    },
+    "worker_credentials": {
+      "username": "testuser",
+      "worker_name": "worker1",
+      "password": "x",
+      "format": "{username}.{worker_name}"
+    },
+    "miner_config": {
+      "default_miner": "cpuminer",
+      "connection_string_format": "stratum+tcp://{host}:{port}",
+      "supported_miners": ["cpuminer", "cgminer", "sgminer", "bfgminer"]
+    },
+    "connection_validation": {
+      "test_subscribe": true,
+      "test_authorize": true,
+      "wait_for_jobs": true,
+      "job_timeout_seconds": 60,
+      "retry_attempts": 3,
+      "retry_delay_seconds": 5
+    },
+    "monitoring": {
+      "track_connection_state": true,
+      "monitor_latency": true,
+      "log_protocol_messages": true,
+      "health_check_interval_seconds": 30
+    }
+  },
+
+  "responsibilities": [
+    "Generate miner connection strings in correct format",
+    "Configure pool URL and port for mining software",
+    "Set worker credentials (username.workername:password)",
+    "Test stratum TCP connection to pool",
+    "Send mining.subscribe request and validate response",
+    "Send mining.authorize request with worker credentials",
+    "Validate authorize response (result: true)",
+    "Monitor connection state transitions",
+    "Verify difficulty notification received",
+    "Verify job delivery (mining.notify) received",
+    "Track connection stability and uptime",
+    "Handle disconnections and errors",
+    "Log protocol messages and events",
+    "Report connection status and metrics"
+  ],
+
+  "inputs": {
+    "required_parameters": [
+      "pool_host",
+      "pool_stratum_port",
+      "worker_username",
+      "worker_name",
+      "worker_password"
+    ],
+    "optional_parameters": [
+      "miner_software",
+      "connection_timeout",
+      "retry_attempts",
+      "enable_monitoring",
+      "log_protocol_messages",
+      "test_subscribe_only",
+      "skip_job_wait"
+    ],
+    "commands": [
+      "generate_connection_string",
+      "test_connection",
+      "subscribe",
+      "authorize",
+      "monitor_connection",
+      "get_status",
+      "disconnect"
+    ],
+    "events": [
+      "pool_started",
+      "miner_ready",
+      "connection_requested",
+      "subscribe_requested",
+      "authorize_requested"
+    ]
+  },
+
+  "outputs": {
+    "events": [
+      "connection_attempted",
+      "tcp_connected",
+      "tcp_connection_failed",
+      "subscribe_sent",
+      "subscribe_success",
+      "subscribe_failed",
+      "authorize_sent",
+      "authorize_success",
+      "authorize_failed",
+      "difficulty_received",
+      "job_received",
+      "disconnected",
+      "reconnect_attempted",
+      "protocol_error",
+      "error"
+    ],
+    "status_fields": [
+      "connection_state",
+      "tcp_connected",
+      "subscribed",
+      "authorized",
+      "subscription_id",
+      "extranonce1",
+      "current_difficulty",
+      "jobs_received",
+      "connection_uptime_seconds",
+      "last_job_time",
+      "protocol_errors_count",
+      "reconnect_count",
+      "last_error_message"
+    ],
+    "decision_routing": {
+      "stratum_connected": "Full stratum connection established - subscribed, authorized, and receiving jobs",
+      "subscribe_successful": "Subscribe handshake completed successfully",
+      "authorize_successful": "Worker authorization completed successfully",
+      "connection_failed": "Failed to establish stratum connection after retries",
+      "error": "Critical error occurred during connection process"
+    }
+  },
+
+  "task_instructions": {
+    "main_workflow": [
+      "1. Read pool configuration to determine stratum host and port",
+      "2. Verify pool stratum port is listening (netstat/ss check)",
+      "3. Generate miner connection string: stratum+tcp://host:port",
+      "4. Format worker credentials: username.workername",
+      "5. Test TCP connection to pool stratum port",
+      "6. Send mining.subscribe request with miner user agent",
+      "7. Validate subscribe response contains subscription_id and extranonce1",
+      "8. Send mining.authorize request with worker credentials",
+      "9. Validate authorize response result is true",
+      "10. Wait for mining.set_difficulty notification",
+      "11. Wait for mining.notify job notification",
+      "12. Monitor connection state and stability",
+      "13. Report connection metrics and final status",
+      "14. Route to appropriate decision based on outcome"
+    ],
+    "connection_test_commands": {
+      "check_port_listening": "netstat -tuln | grep :3333 || ss -tuln | grep :3333",
+      "test_tcp_connection": "timeout 5 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/3333' && echo 'Port open' || echo 'Port closed'",
+      "manual_subscribe_test": "echo '{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[\"test/1.0\"]}' | nc -w 5 localhost 3333",
+      "full_handshake_test": "( echo '{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[]}'; sleep 1; echo '{\"id\":2,\"method\":\"mining.authorize\",\"params\":[\"testuser.worker1\",\"x\"]}'; sleep 5 ) | nc -w 10 localhost 3333"
+    },
+    "validation_checks": [
+      "Verify pool stratum port is listening (netstat/lsof check)",
+      "Confirm TCP connection can be established",
+      "Validate subscribe response has result array",
+      "Verify subscription_id is present in response",
+      "Confirm extranonce1 value is received",
+      "Check authorize response result is boolean true",
+      "Verify no error field or error is null",
+      "Confirm difficulty notification received (mining.set_difficulty)",
+      "Validate job notification received (mining.notify)",
+      "Check job contains required fields: job_id, prevhash, coinbase, merkle, version, nbits, ntime",
+      "Verify connection remains stable for monitoring period"
+    ],
+    "error_handling": [
+      "Connection refused: Pool not running or port blocked - check pool status",
+      "Subscribe failed: Invalid request format or protocol mismatch - verify JSON",
+      "Authorize failed: Invalid credentials or worker format - check username.workername",
+      "Timeout waiting for jobs: Pool not receiving work from daemon - check daemon connection",
+      "Protocol error: Malformed response - log full response and report",
+      "Connection dropped: Network issue or pool restart - attempt reconnection"
+    ],
+    "decision_routing_logic": {
+      "stratum_connected": "Route here when subscribe succeeds, authorize succeeds, AND jobs are being received",
+      "subscribe_successful": "Route here when subscribe succeeds but before full authorization/job validation",
+      "authorize_successful": "Route here when worker authorization succeeds (implies subscribe also succeeded)",
+      "connection_failed": "Route here when TCP connection fails, subscribe fails, or connection cannot be established",
+      "error": "Route here for unexpected errors, malformed responses, protocol violations, or critical failures"
+    }
+  },
+
+  "rpc_endpoints": {
+    "base_url": "http://localhost:8080/agent/miner_pool_connector",
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/connect",
+        "description": "Establish miner-pool stratum connection",
+        "request_schema": {
+          "pool_host": "string",
+          "pool_port": "integer",
+          "worker_username": "string",
+          "worker_name": "string",
+          "worker_password": "string (default: 'x')",
+          "miner_software": "string (optional)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "connection_id": "string",
+          "subscription_id": "string",
+          "authorized": "boolean",
+          "message": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/subscribe",
+        "description": "Test stratum subscribe handshake",
+        "request_schema": {
+          "user_agent": "string (default: 'test/1.0')"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "subscription_id": "string",
+          "extranonce1": "string",
+          "extranonce2_size": "integer",
+          "raw_response": "object"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/authorize",
+        "description": "Test worker authorization",
+        "request_schema": {
+          "username": "string",
+          "worker_name": "string",
+          "password": "string"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "authorized": "boolean",
+          "error_code": "integer",
+          "error_message": "string"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/status",
+        "description": "Get connection status and state",
+        "response_schema": {
+          "state": "string (disconnected|connecting|connected|subscribed|authorized|active)",
+          "tcp_connected": "boolean",
+          "subscribed": "boolean",
+          "authorized": "boolean",
+          "current_difficulty": "float",
+          "jobs_received": "integer",
+          "uptime_seconds": "integer",
+          "last_job_time": "timestamp",
+          "last_error": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/test",
+        "description": "Run complete connection test",
+        "request_schema": {
+          "test_subscribe": "boolean (default: true)",
+          "test_authorize": "boolean (default: true)",
+          "wait_for_jobs": "boolean (default: true)",
+          "timeout_seconds": "integer (default: 60)"
+        },
+        "response_schema": {
+          "success": "boolean",
+          "tcp_connection": "boolean",
+          "subscribe_result": "object",
+          "authorize_result": "object",
+          "jobs_received": "integer",
+          "difficulty": "float",
+          "errors": "array",
+          "decision": "string"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/connection-string",
+        "description": "Generate miner connection string",
+        "request_schema": {
+          "pool_host": "string",
+          "pool_port": "integer",
+          "miner_software": "string (optional)"
+        },
+        "response_schema": {
+          "connection_string": "string",
+          "command_line_example": "string"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "description": "Health check for miner-pool connection",
+        "response_schema": {
+          "healthy": "boolean",
+          "status": "string (ok|degraded|critical)",
+          "connection_state": "string",
+          "last_successful_job": "timestamp",
+          "consecutive_failures": "integer"
+        }
+      }
+    ]
+  },
+
+  "dependencies": {
+    "agents": [
+      "pool_server_manager",
+      "daemon_pool_connector",
+      "miner_manager"
+    ],
+    "external_services": [
+      "CoiniumServ pool server (stratum port)"
+    ],
+    "config_files": [
+      "build/bin/Debug/config/config.json",
+      "build/bin/Debug/config/pools/default.json"
+    ],
+    "required_tools": [
+      "nc (netcat)",
+      "netstat or ss",
+      "jq (for JSON parsing)",
+      "timeout command"
+    ]
+  },
+
+  "error_handling": {
+    "connection_refused": {
+      "action": "retry_with_backoff",
+      "max_retries": 3,
+      "backoff_seconds": [5, 10, 20],
+      "notify_agents": ["pool_server_manager"],
+      "decision": "connection_failed"
+    },
+    "subscribe_failed": {
+      "action": "log_and_retry",
+      "capture_response": true,
+      "retry_attempts": 2,
+      "decision": "connection_failed"
+    },
+    "authorize_failed": {
+      "action": "verify_credentials",
+      "check_worker_format": true,
+      "log_pool_response": true,
+      "decision": "authorize_failed"
+    },
+    "no_jobs_received": {
+      "action": "check_upstream",
+      "verify_daemon_pool_connection": true,
+      "timeout_seconds": 60,
+      "decision": "subscribe_successful"
+    },
+    "protocol_error": {
+      "action": "log_full_trace",
+      "capture_raw_messages": true,
+      "decision": "error"
+    },
+    "connection_timeout": {
+      "action": "increase_timeout_and_retry",
+      "max_timeout_seconds": 60,
+      "retry_attempts": 2,
+      "decision": "connection_failed"
+    },
+    "malformed_response": {
+      "action": "log_response_and_fail",
+      "capture_full_response": true,
+      "check_json_validity": true,
+      "decision": "error"
+    }
+  },
+
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "logs/agents/miner_pool_connector.log",
+    "log_rotation": {
+      "max_size_mb": 50,
+      "max_files": 5
+    },
+    "log_events": [
+      "connection_attempts",
+      "tcp_connections",
+      "subscribe_requests",
+      "authorize_requests",
+      "stratum_notifications",
+      "job_deliveries",
+      "connection_state_changes",
+      "disconnections",
+      "protocol_errors",
+      "errors_and_failures"
+    ],
+    "verbose_protocol_logging": true
+  },
+
+  "metrics": {
+    "collect": true,
+    "metrics": [
+      "connection_attempts",
+      "successful_connections",
+      "failed_connections",
+      "subscribe_success_count",
+      "subscribe_failure_count",
+      "authorize_success_count",
+      "authorize_failure_count",
+      "jobs_received_total",
+      "connection_uptime_seconds",
+      "protocol_errors_count",
+      "reconnection_count",
+      "average_job_latency_ms",
+      "current_difficulty"
+    ],
+    "export_to": ["performance_analyzer", "stratum_monitor"]
+  },
+
+  "validation": {
+    "schema_version": "2.0.0",
+    "required_fields": [
+      "pool_stratum.host",
+      "pool_stratum.port",
+      "worker_credentials.username",
+      "worker_credentials.worker_name"
+    ],
+    "validation_rules": {
+      "pool_stratum.port": "integer, range 1024-65535",
+      "pool_stratum.timeout_seconds": "integer, min 1, max 300",
+      "worker_credentials.username": "string, min_length 1",
+      "worker_credentials.worker_name": "string, min_length 1, pattern: ^[a-zA-Z0-9_-]+$",
+      "connection_validation.retry_attempts": "integer, min 0, max 10"
+    }
+  },
+
+  "test_scenarios": [
+    {
+      "name": "successful_connection",
+      "description": "Test successful miner-pool stratum connection",
+      "preconditions": [
+        "Pool server running with stratum enabled",
+        "Stratum port 3333 listening",
+        "Pool has valid daemon connection"
+      ],
+      "steps": [
+        "Verify pool stratum port is listening",
+        "Open TCP connection to pool",
+        "Send mining.subscribe request",
+        "Validate subscribe response",
+        "Send mining.authorize request",
+        "Verify authorize result is true",
+        "Wait for mining.set_difficulty",
+        "Wait for mining.notify job",
+        "Confirm connection stable"
+      ],
+      "expected_decision": "stratum_connected"
+    },
+    {
+      "name": "pool_not_running",
+      "description": "Test connection when pool is offline",
+      "preconditions": [
+        "Pool server stopped"
+      ],
+      "steps": [
+        "Attempt TCP connection",
+        "Handle connection refused error",
+        "Retry with backoff",
+        "Fail after max retries"
+      ],
+      "expected_decision": "connection_failed"
+    },
+    {
+      "name": "authorization_failure",
+      "description": "Test with invalid worker credentials",
+      "preconditions": [
+        "Pool running",
+        "Invalid worker username or format"
+      ],
+      "steps": [
+        "TCP connection succeeds",
+        "Subscribe succeeds",
+        "Authorize with invalid credentials",
+        "Detect authorize result: false"
+      ],
+      "expected_decision": "authorize_failed"
+    },
+    {
+      "name": "subscribe_only",
+      "description": "Test subscribe without authorization",
+      "preconditions": [
+        "Pool running"
+      ],
+      "steps": [
+        "Connect to pool",
+        "Send subscribe request",
+        "Validate subscribe response",
+        "Skip authorization test"
+      ],
+      "expected_decision": "subscribe_successful"
+    },
+    {
+      "name": "no_jobs_received",
+      "description": "Test when pool is not delivering jobs",
+      "preconditions": [
+        "Pool running but daemon not connected"
+      ],
+      "steps": [
+        "Subscribe successfully",
+        "Authorize successfully",
+        "Wait for jobs (timeout)",
+        "Report partial success"
+      ],
+      "expected_decision": "authorize_successful"
+    },
+    {
+      "name": "protocol_error",
+      "description": "Test with malformed stratum response",
+      "preconditions": [
+        "Pool returning invalid JSON or missing fields"
+      ],
+      "steps": [
+        "Send subscribe",
+        "Receive malformed response",
+        "Detect JSON parse error or missing fields",
+        "Report protocol error"
+      ],
+      "expected_decision": "error"
+    }
+  ],
+
+  "success_criteria": [
+    "Miner successfully subscribes to pool (mining.subscribe)",
+    "Worker authorization succeeds (mining.authorize result: true)",
+    "Pool logs show worker connection and authorization",
+    "Difficulty notification received (mining.set_difficulty)",
+    "Mining job received (mining.notify)",
+    "Connection remains stable without disconnects",
+    "Worker appears in pool's active workers list",
+    "All stratum protocol messages properly formatted",
+    "Proper decision routing based on connection outcome"
+  ]
+}

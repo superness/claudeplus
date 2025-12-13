@@ -2700,15 +2700,37 @@ Your commentary:`;
     stages.forEach(stage => stageMap[stage.id] = stage);
 
     // Find the current stage to resume from
-    let currentStageId = stages[currentStageIndex]?.id;
+    // Use the last completed stage to determine what failed and needs re-running
+    // The lastCompletedStage was the one that routed TO the failed stage
+    let previousStageId = completedStages.length > 0 ? completedStages[completedStages.length - 1] : null;
+
+    // Find what stage the previous stage routed to - that's the one that failed
+    let currentStageId = null;
+    if (previousStageId) {
+      const matchingConnection = connections.find(conn => {
+        if (conn.from !== previousStageId) return false;
+        // Check if this connection was taken based on the result
+        const prevResult = results[previousStageId] || '';
+        const condition = typeof conn.condition === 'object' ? conn.condition.value : conn.condition;
+        return prevResult.toLowerCase().includes(condition.toLowerCase());
+      });
+      currentStageId = matchingConnection?.to || null;
+    }
+
+    // Fallback: try to find stage by name from pipelineState.currentStage
+    if (!currentStageId && pipelineState.currentStage) {
+      const stageByName = stages.find(s => s.name === pipelineState.currentStage);
+      currentStageId = stageByName?.id || null;
+    }
+
     let executionCount = completedStages.length;
     const maxExecutions = 100;
 
-    console.log(`[PROXY] Resuming from stage index ${currentStageIndex}: ${stages[currentStageIndex]?.name}`);
+    console.log(`[PROXY] Resuming from stage: ${currentStageId} (previous: ${previousStageId})`);
     console.log(`[PROXY] Execution count: ${executionCount}`);
 
     // Send resume notification
-    await this.sendCommentaryUpdate(ws, `Resuming pipeline "${pipelineState.name}" from stage "${stages[currentStageIndex]?.name}". ${executionCount} stages already completed.`, workingDir);
+    await this.sendCommentaryUpdate(ws, `Resuming pipeline "${pipelineState.name}" from stage "${currentStageId}". ${executionCount} stages already completed.`, workingDir);
 
     // Continue the execution loop from where it left off
     while (currentStageId && executionCount < maxExecutions) {
@@ -2751,9 +2773,20 @@ Your commentary:`;
         // Build input for this stage
         let stageInput = userContext;
         const stageInputs = stage.inputs || stage.config?.inputs || [];
-        if (stageInputs && stageInputs.length > 0) {
+
+        // Collect all input stage IDs, including loop-back detection
+        const allInputStages = new Set(stageInputs);
+
+        // AUTO-INCLUDE LOOP-BACK: If the previous stage routed back to this stage,
+        // automatically include the previous stage's output even if not explicitly listed
+        if (previousStageId && previousStageId !== stage.id && results[previousStageId]) {
+          allInputStages.add(previousStageId);
+          console.log(`[PROXY] Loop-back detected: Auto-including output from '${previousStageId}' as input to '${stage.id}'`);
+        }
+
+        if (allInputStages.size > 0) {
           stageInput += '\n\nInputs from previous stages:\n';
-          stageInputs.forEach(inputStage => {
+          allInputStages.forEach(inputStage => {
             if (results[inputStage] && inputStage !== stage.id) {
               stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
             }
@@ -2785,13 +2818,16 @@ Your commentary:`;
           await this.savePipelineState(pipelineState);
 
           const matchingConnection = connections.find(conn => conn.from === stage.id);
-          currentStageId = matchingConnection?.to || null;
 
           this.logPipelineExecution(pipelineState.id, 'stage_routed', {
             fromStage: stage.id,
-            toStage: currentStageId,
+            toStage: matchingConnection?.to || null,
             decision: "SUB_PIPELINE_COMPLETED"
           });
+
+          // Track previous stage for loop-back input injection
+          previousStageId = stage.id;
+          currentStageId = matchingConnection?.to || null;
 
           continue;
         }
@@ -2853,14 +2889,18 @@ Your commentary:`;
         // Determine next stage (build temporary pipeline object for routing)
         const tempPipeline = { stages, connections };
         const decision = this.extractDecision(result);
-        currentStageId = this.determineNextStage(tempPipeline, stage.id, result);
+        const nextStageId = this.determineNextStage(tempPipeline, stage.id, result);
 
         this.logPipelineExecution(pipelineState.id, 'stage_routed', {
           fromStage: stage.id,
-          toStage: currentStageId,
+          toStage: nextStageId,
           decision: decision,
           reasoning: decision ? `Decision "${decision}" matched connection condition` : 'No decision found, using default routing'
         });
+
+        // Track previous stage for loop-back input injection
+        previousStageId = stage.id;
+        currentStageId = nextStageId;
 
       } catch (error) {
         console.error(`[PROXY] Stage ${stage.name} failed:`, error);
@@ -3005,13 +3045,14 @@ Your commentary:`;
     pipeline.stages.forEach(stage => stageMap[stage.id] = stage);
 
     let currentStageId = pipeline.stages[0]?.id; // Start with first stage
+    let previousStageId = null; // Track the previous stage for loop-back detection
     let executionCount = 0;
     const maxExecutions = 100; // Prevent infinite loops (allow sufficient iterations for complex debugging)
-    
+
     while (currentStageId && executionCount < maxExecutions) {
       const stage = stageMap[currentStageId];
       if (!stage) break;
-      
+
       executionCount++;
       try {
         console.log(`[PROXY] Executing stage: ${stage.name} (${stage.agent})`);
@@ -3057,9 +3098,20 @@ Your commentary:`;
         // Build input for this stage
         let stageInput = userContext;
         const stageInputs = stage.inputs || stage.config?.inputs || [];
-        if (stageInputs && stageInputs.length > 0) {
+
+        // Collect all input stage IDs, including loop-back detection
+        const allInputStages = new Set(stageInputs);
+
+        // AUTO-INCLUDE LOOP-BACK: If the previous stage routed back to this stage,
+        // automatically include the previous stage's output even if not explicitly listed
+        if (previousStageId && previousStageId !== stage.id && results[previousStageId]) {
+          allInputStages.add(previousStageId);
+          console.log(`[PROXY] Loop-back detected: Auto-including output from '${previousStageId}' as input to '${stage.id}'`);
+        }
+
+        if (allInputStages.size > 0) {
           stageInput += '\n\nInputs from previous stages:\n';
-          stageInputs.forEach(inputStage => {
+          allInputStages.forEach(inputStage => {
             // Prevent stages from accessing their own previous results to avoid confusion
             if (results[inputStage] && inputStage !== stage.id) {
               stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
@@ -3168,6 +3220,8 @@ Your commentary:`;
             conn.from === stage.id
           );
 
+          // Track previous stage for loop-back input injection
+          previousStageId = stage.id;
           currentStageId = matchingConnection?.to || null;
           console.log(`[PROXY] Sub-pipeline complete. Next stage: ${currentStageId || 'END'}`);
           console.log(`[PROXY] [DEBUG] Found ${parentConnections.length} parent connections, matching connection for ${stage.id}:`, matchingConnection);
@@ -3334,6 +3388,8 @@ Your commentary:`;
           reasoning: decision ? `Decision "${decision}" matched connection condition` : 'No decision found, using default routing'
         });
 
+        // Track previous stage for loop-back input injection
+        previousStageId = stage.id;
         currentStageId = nextStageId;
         
       } catch (error) {

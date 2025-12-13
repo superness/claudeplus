@@ -696,7 +696,7 @@ class InfographicGenerator {
 
       ${stage.prompt ? `
       <div class="prompt-section">
-        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(${stage.promptLength.toLocaleString()} characters)</span></div>
+        <div class="section-label">📥 AGENT PROMPT <span class="char-count">(${(stage.promptLength || stage.prompt.length || 0).toLocaleString()} characters)</span></div>
         <button class="collapsible" data-target="prompt_${stageId}_${stage.executionNumber || 1}">Click to expand prompt from ${this.escapeHtml(stage.agent)}</button>
         <div class="collapsible-content" id="prompt_${stageId}_${stage.executionNumber || 1}">
           <pre class="code-content">${this.escapeHtml(stage.prompt)}</pre>
@@ -706,7 +706,7 @@ class InfographicGenerator {
 
       ${stage.output ? `
       <div class="output-section">
-        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(${stage.outputLength.toLocaleString()} characters)</span></div>
+        <div class="section-label">📤 AGENT OUTPUT <span class="char-count">(${(stage.outputLength || stage.output.length || 0).toLocaleString()} characters)</span></div>
         <button class="collapsible" data-target="output_${stageId}_${stage.executionNumber || 1}">Click to expand output from ${this.escapeHtml(stage.agent)}</button>
         <div class="collapsible-content" id="output_${stageId}_${stage.executionNumber || 1}">
           <pre class="code-content">${this.escapeHtml(stage.output)}</pre>
@@ -897,7 +897,7 @@ class InfographicGenerator {
         </div>
         <div class="metric">
           <div class="metric-label">Latest Run</div>
-          <div class="metric-value" style="font-size: 0.9em;">${runs.length > 0 ? runs[0].modified.toLocaleString() : 'N/A'}</div>
+          <div class="metric-value" style="font-size: 0.9em;">${runs.length > 0 && runs[0].modified ? runs[0].modified.toLocaleString() : 'N/A'}</div>
         </div>
       </div>
     </div>
@@ -909,7 +909,7 @@ class InfographicGenerator {
           <div class="run-info">
             <h3>${index === 0 ? '🟢 ' : ''}Run ${runs.length - index}</h3>
             <p><strong>Timestamp:</strong> ${run.timestamp.replace('T', ' ')}</p>
-            <p><strong>Modified:</strong> ${run.modified.toLocaleString()}</p>
+            <p><strong>Modified:</strong> ${run.modified ? run.modified.toLocaleString() : 'N/A'}</p>
           </div>
           <a href="${run.name}/infographic.html" class="run-link">View Report →</a>
         </div>

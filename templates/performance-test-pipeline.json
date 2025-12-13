@@ -1,0 +1,139 @@
+{
+  "id": "performance-test-pipeline",
+  "name": "Performance Test Pipeline",
+  "version": "2.0.0",
+  "description": "Performance and stress testing pipeline for CoiniumServ with baseline measurement, load testing, and threshold validation",
+  "author": "SuperCoinServ Meta-Pipeline System",
+  "category": "testing",
+  "stages": [
+    {
+      "id": "setup_performance_environment",
+      "name": "Setup Performance Environment",
+      "agent": "cycle_integration_tester",
+      "description": "Setup performance test environment with monitoring enabled",
+      "inputs": [],
+      "decisions": [
+        {"choice": "environment_ready", "description": "Performance environment setup complete"},
+        {"choice": "setup_failed", "description": "Failed to setup environment"}
+      ]
+    },
+    {
+      "id": "capture_baseline",
+      "name": "Capture Baseline Performance",
+      "agent": "performance_analyzer",
+      "description": "Run baseline performance test with 10 concurrent miners for 5 minutes and collect metrics",
+      "inputs": ["setup_performance_environment"],
+      "decisions": [
+        {"choice": "baseline_captured", "description": "Baseline metrics captured successfully"},
+        {"choice": "baseline_failed", "description": "Failed to capture baseline"}
+      ]
+    },
+    {
+      "id": "stress_test_stratum",
+      "name": "Stress Test Stratum Server",
+      "agent": "cycle_integration_tester",
+      "description": "Stress test with 100 concurrent connections and 50 shares/second for 10 minutes",
+      "inputs": ["capture_baseline"],
+      "decisions": [
+        {"choice": "stress_test_passed", "description": "Stratum server handled stress test"},
+        {"choice": "stress_test_failed", "description": "Stratum server failed under stress"}
+      ]
+    },
+    {
+      "id": "load_test_share_processing",
+      "name": "Load Test Share Processing",
+      "agent": "share_validator",
+      "description": "Submit 10,000 shares at maximum rate and validate processing performance",
+      "inputs": ["stress_test_stratum"],
+      "decisions": [
+        {"choice": "shares_processed", "description": "All shares processed successfully"},
+        {"choice": "processing_failed", "description": "Share processing failed or too slow"}
+      ]
+    },
+    {
+      "id": "test_block_validation",
+      "name": "Test Block Validation Performance",
+      "agent": "block_validator",
+      "description": "Validate 50 blocks concurrently and measure validation time",
+      "inputs": ["load_test_share_processing"],
+      "decisions": [
+        {"choice": "validation_performant", "description": "Block validation within acceptable time"},
+        {"choice": "validation_slow", "description": "Block validation too slow"}
+      ]
+    },
+    {
+      "id": "analyze_performance_metrics",
+      "name": "Analyze Performance Metrics",
+      "agent": "performance_analyzer",
+      "description": "Compare test metrics against baseline and identify bottlenecks",
+      "inputs": ["test_block_validation"],
+      "decisions": [
+        {"choice": "analysis_complete", "description": "Performance analysis complete"},
+        {"choice": "analysis_failed", "description": "Failed to analyze metrics"}
+      ]
+    },
+    {
+      "id": "validate_thresholds",
+      "name": "Validate Performance Thresholds",
+      "agent": "performance_analyzer",
+      "description": "Check CPU < 80%, Memory < 1GB, Share latency < 100ms, Throughput > 40 shares/sec",
+      "inputs": ["analyze_performance_metrics"],
+      "decisions": [
+        {"choice": "thresholds_met", "description": "All performance thresholds met"},
+        {"choice": "thresholds_exceeded", "description": "Performance thresholds exceeded"}
+      ]
+    },
+    {
+      "id": "generate_performance_report",
+      "name": "Generate Performance Report",
+      "agent": "performance_analyzer",
+      "description": "Generate HTML performance report with charts and recommendations",
+      "inputs": ["validate_thresholds"],
+      "decisions": [
+        {"choice": "report_generated", "description": "Performance report generated"},
+        {"choice": "report_failed", "description": "Failed to generate report"}
+      ]
+    },
+    {
+      "id": "performance_tests_complete",
+      "name": "Performance Tests Complete",
+      "agent": "proof_validator",
+      "description": "Final validation - all performance tests passed and report generated",
+      "inputs": ["generate_performance_report"],
+      "decisions": [
+        {"choice": "complete", "description": "Performance tests passed"},
+        {"choice": "failed", "description": "Performance tests failed"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "sequential",
+    "connections": [
+      {"from": "setup_performance_environment", "to": "capture_baseline", "condition": "environment_ready"},
+      {"from": "setup_performance_environment", "to": null, "condition": "setup_failed", "description": "Environment setup failed - END"},
+      {"from": "capture_baseline", "to": "stress_test_stratum", "condition": "baseline_captured"},
+      {"from": "capture_baseline", "to": null, "condition": "baseline_failed", "description": "Baseline capture failed - END"},
+      {"from": "stress_test_stratum", "to": "load_test_share_processing", "condition": "stress_test_passed"},
+      {"from": "stress_test_stratum", "to": "load_test_share_processing", "condition": "stress_test_failed", "description": "Continue despite stress test issues"},
+      {"from": "load_test_share_processing", "to": "test_block_validation", "condition": "shares_processed"},
+      {"from": "load_test_share_processing", "to": null, "condition": "processing_failed", "description": "Share processing failed - END"},
+      {"from": "test_block_validation", "to": "analyze_performance_metrics", "condition": "validation_performant"},
+      {"from": "test_block_validation", "to": "analyze_performance_metrics", "condition": "validation_slow", "description": "Continue to analyze slow validation"},
+      {"from": "analyze_performance_metrics", "to": "validate_thresholds", "condition": "analysis_complete"},
+      {"from": "analyze_performance_metrics", "to": null, "condition": "analysis_failed", "description": "Analysis failed - END"},
+      {"from": "validate_thresholds", "to": "generate_performance_report", "condition": "thresholds_met"},
+      {"from": "validate_thresholds", "to": "generate_performance_report", "condition": "thresholds_exceeded", "description": "Generate report even if thresholds exceeded"},
+      {"from": "generate_performance_report", "to": "performance_tests_complete", "condition": "report_generated"},
+      {"from": "generate_performance_report", "to": null, "condition": "report_failed", "description": "Report generation failed - END"},
+      {"from": "performance_tests_complete", "to": null, "condition": "complete", "description": "Performance tests complete - END"},
+      {"from": "performance_tests_complete", "to": null, "condition": "failed", "description": "Performance validation failed - END"}
+    ]
+  },
+  "metadata": {
+    "tags": ["testing", "performance", "stress-test", "benchmarking"],
+    "author": "SuperCoinServ Meta-Pipeline System",
+    "estimatedTime": "30-45 minutes",
+    "requiresWSL": true,
+    "refactored": "2025-01-22 - Converted from 3 actions-based stages to 9 atomic stages"
+  }
+}
