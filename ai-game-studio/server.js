@@ -685,6 +685,17 @@ wss.on('connection', (ws) => {
         case 'unsubscribe':
           clientProjects.delete(ws);
           break;
+
+        case 'inject-pipeline-feedback':
+          // Forward feedback to proxy server for injection into running pipeline
+          console.log(`[WS] Forwarding feedback to proxy: "${msg.feedback?.substring(0, 50)}..."`);
+          pipelineBridge.send({
+            type: 'inject-pipeline-feedback',
+            projectId: msg.projectId,
+            pipelineId: msg.pipelineId,
+            feedback: msg.feedback
+          });
+          break;
       }
     } catch (err) {
       console.error('[WS] Message error:', err);
@@ -768,13 +779,26 @@ pipelineBridge.onEvent((msg) => {
     const content = msg.content || {};
     console.log(`[Server] Received commentary: ${content.message?.substring(0, 50)}...`);
 
-    // Broadcast commentary to all connected clients
+    // Broadcast commentary to all connected clients that are subscribed to a project
     wss.clients.forEach(client => {
-      if (client.readyState === 1 && client.projectId) { // WebSocket.OPEN
+      if (client.readyState === 1 && clientProjects.has(client)) { // WebSocket.OPEN
         client.send(JSON.stringify({
           type: 'pipeline-commentary',
           ...content
         }));
+      }
+    });
+    return;
+  }
+
+  // Handle feedback injection responses
+  if (msg.type === 'feedback-injected' || msg.type === 'feedback-error' || msg.type === 'pipeline-feedback-update') {
+    console.log(`[Server] Received feedback response: ${msg.type}`);
+
+    // Broadcast to all connected clients (they can filter by pipelineId if needed)
+    wss.clients.forEach(client => {
+      if (client.readyState === 1) {
+        client.send(JSON.stringify(msg));
       }
     });
     return;

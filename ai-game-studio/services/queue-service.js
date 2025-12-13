@@ -333,14 +333,10 @@ class QueueService {
       if (progress.lastCompletedOutput && outputKey !== lastOutputKey) {
         lastOutputKey = outputKey;
 
-        // Generate a high-level summary for the UI
-        const summary = this.generateAgentSummary(progress.lastCompletedAgent, progress.lastCompletedOutput);
-
         this.emit('agent-output', {
           projectId,
           phase,
           agent: progress.lastCompletedAgent,
-          summary: summary,
           output: progress.lastCompletedOutput,
           completedCount: progress.completedCount,
           totalStages: progress.totalStages

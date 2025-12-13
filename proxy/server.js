@@ -988,7 +988,87 @@ class ClaudeProxy {
           success: deleted
         }));
       }
-      
+
+    } else if (message.type === 'inject-pipeline-feedback') {
+      console.log(`[PROXY] Injecting user feedback into pipeline: ${message.pipelineId}`);
+
+      try {
+        // Load current pipeline state
+        const statePath = path.join(__dirname, 'pipeline-states', `${message.pipelineId}.json`);
+        const currentPath = path.join(__dirname, 'pipeline-states', 'current.json');
+
+        let pipelineState = null;
+
+        // Try to load by specific ID first, then current
+        if (message.pipelineId && fs.existsSync(statePath)) {
+          pipelineState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+        } else if (fs.existsSync(currentPath)) {
+          pipelineState = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+        }
+
+        if (!pipelineState) {
+          throw new Error('No active pipeline found to inject feedback');
+        }
+
+        // Initialize userFeedback array if not present
+        if (!pipelineState.userFeedback) {
+          pipelineState.userFeedback = [];
+        }
+
+        // Add the feedback with timestamp
+        const feedbackEntry = {
+          timestamp: new Date().toISOString(),
+          message: message.feedback,
+          stage: pipelineState.currentStage,
+          stageIndex: pipelineState.currentStageIndex,
+          consumed: false  // Will be marked true once an agent receives it
+        };
+
+        pipelineState.userFeedback.push(feedbackEntry);
+
+        // Save updated pipeline state
+        fs.writeFileSync(statePath, JSON.stringify(pipelineState, null, 2));
+        fs.writeFileSync(currentPath, JSON.stringify(pipelineState, null, 2));
+
+        console.log(`[PROXY] Feedback injected: "${message.feedback.substring(0, 50)}..."`);
+        console.log(`[PROXY] Total feedback entries: ${pipelineState.userFeedback.length}`);
+
+        // Log the feedback injection
+        this.logPipelineExecution(pipelineState.id, 'user_feedback_injected', {
+          feedback: message.feedback,
+          currentStage: pipelineState.currentStage,
+          stageIndex: pipelineState.currentStageIndex,
+          totalFeedback: pipelineState.userFeedback.length
+        });
+
+        // Send confirmation back
+        ws.send(JSON.stringify({
+          type: 'feedback-injected',
+          pipelineId: pipelineState.id,
+          feedbackCount: pipelineState.userFeedback.length,
+          message: `Feedback will be included in the next stage: "${pipelineState.currentStage}"`
+        }));
+
+        // Broadcast to all clients for UI update
+        this.clients.forEach(client => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({
+              type: 'pipeline-feedback-update',
+              pipelineId: pipelineState.id,
+              feedbackCount: pipelineState.userFeedback.length,
+              latestFeedback: feedbackEntry
+            }));
+          }
+        });
+
+      } catch (error) {
+        console.error('[PROXY] Failed to inject feedback:', error);
+        ws.send(JSON.stringify({
+          type: 'feedback-error',
+          error: error.message
+        }));
+      }
+
     } else if (message.type === 'get-templates') {
       console.log('[PROXY] Client requesting all templates');
       
@@ -3118,6 +3198,54 @@ Your commentary:`;
               stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
             }
           });
+        }
+
+        // INJECT USER FEEDBACK: Check for any pending user feedback and include it
+        // Reload pipeline state to get latest feedback (may have been updated while running)
+        try {
+          const feedbackStatePath = path.join(__dirname, 'pipeline-states', `${pipelineState.id}.json`);
+          if (fs.existsSync(feedbackStatePath)) {
+            const latestState = JSON.parse(fs.readFileSync(feedbackStatePath, 'utf8'));
+            const pendingFeedback = (latestState.userFeedback || []).filter(f => !f.consumed);
+
+            if (pendingFeedback.length > 0) {
+              stageInput += '\n\n=== USER FEEDBACK (IMPORTANT - Address these concerns) ===\n';
+              stageInput += 'The user has provided the following feedback during pipeline execution.\n';
+              stageInput += 'You MUST incorporate this feedback into your work:\n\n';
+
+              pendingFeedback.forEach((feedback, idx) => {
+                stageInput += `[Feedback ${idx + 1} - ${new Date(feedback.timestamp).toLocaleTimeString()}]\n`;
+                stageInput += `${feedback.message}\n\n`;
+              });
+
+              stageInput += '=== END USER FEEDBACK ===\n';
+
+              // Mark feedback as consumed
+              latestState.userFeedback = latestState.userFeedback.map(f => ({
+                ...f,
+                consumed: true,
+                consumedBy: stage.id,
+                consumedAt: new Date().toISOString()
+              }));
+
+              // Save updated state
+              fs.writeFileSync(feedbackStatePath, JSON.stringify(latestState, null, 2));
+              const currentPath = path.join(__dirname, 'pipeline-states', 'current.json');
+              fs.writeFileSync(currentPath, JSON.stringify(latestState, null, 2));
+
+              console.log(`[PROXY] Injected ${pendingFeedback.length} user feedback items into stage ${stage.id}`);
+
+              // Log feedback consumption
+              this.logPipelineExecution(pipelineState.id, 'user_feedback_consumed', {
+                stageId: stage.id,
+                stageName: stage.name,
+                feedbackCount: pendingFeedback.length,
+                feedbackMessages: pendingFeedback.map(f => f.message)
+              });
+            }
+          }
+        } catch (feedbackErr) {
+          console.error('[PROXY] Error loading user feedback:', feedbackErr.message);
         }
 
         // Send commentator update for stage start with inputs context

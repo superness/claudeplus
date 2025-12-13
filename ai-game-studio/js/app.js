@@ -1106,6 +1106,9 @@ document.getElementById('run-script-btn')?.addEventListener('click', () => {
   }
 });
 
+// Initialize pipeline feedback UI
+initFeedbackUI();
+
 // Parse AI chat commands for server management
 function parseServerCommand(message) {
   const lowerMsg = message.toLowerCase().trim();
@@ -1303,6 +1306,20 @@ function handleWebSocketMessage(msg) {
         addSystemMessage(`Script failed with exit code ${msg.exitCode}`);
       }
       break;
+
+    // Pipeline feedback injection responses
+    case 'feedback-injected':
+      handleFeedbackInjected(msg);
+      break;
+
+    case 'feedback-error':
+      handleFeedbackError(msg);
+      break;
+
+    case 'pipeline-feedback-update':
+      // Broadcast notification that feedback was added
+      addSystemMessage(`Feedback queued (${msg.feedbackCount} total)`);
+      break;
   }
 }
 
@@ -1450,10 +1467,25 @@ function showProgress(text, percent) {
   indicator.classList.remove('hidden');
   indicator.querySelector('.progress-fill').style.width = `${percent}%`;
   indicator.querySelector('.progress-text').textContent = text;
+
+  // Show feedback input when pipeline is running
+  const feedbackEl = document.getElementById('pipeline-feedback');
+  if (feedbackEl) {
+    feedbackEl.classList.remove('hidden');
+  }
 }
 
 function hideProgress() {
   document.getElementById('progress-indicator').classList.add('hidden');
+
+  // Hide feedback input when pipeline completes
+  const feedbackEl = document.getElementById('pipeline-feedback');
+  if (feedbackEl) {
+    feedbackEl.classList.add('hidden');
+    // Clear any status messages
+    const statusEl = document.getElementById('feedback-status');
+    if (statusEl) statusEl.textContent = '';
+  }
 }
 
 function calculateProgress(msg) {
@@ -1469,6 +1501,98 @@ function updateProjectStatus(status) {
     currentProject.status = status;
     document.getElementById('project-status').textContent = status;
     document.getElementById('project-status').className = `status-badge ${status}`;
+  }
+}
+
+// ============================================
+// Pipeline Feedback Injection
+// ============================================
+
+// Send feedback to inject into the running pipeline
+function injectPipelineFeedback() {
+  const feedbackInput = document.getElementById('feedback-input');
+  const feedbackBtn = document.getElementById('inject-feedback-btn');
+  const feedbackStatus = document.getElementById('feedback-status');
+
+  const feedback = feedbackInput?.value?.trim();
+  if (!feedback) {
+    if (feedbackStatus) {
+      feedbackStatus.textContent = 'Please enter feedback first';
+      feedbackStatus.className = 'feedback-status error';
+    }
+    return;
+  }
+
+  // Disable button while sending
+  if (feedbackBtn) feedbackBtn.disabled = true;
+  if (feedbackStatus) {
+    feedbackStatus.textContent = 'Sending feedback...';
+    feedbackStatus.className = 'feedback-status';
+  }
+
+  // Send via WebSocket
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'inject-pipeline-feedback',
+      projectId: currentProject?.id,
+      feedback: feedback
+    }));
+  } else {
+    if (feedbackStatus) {
+      feedbackStatus.textContent = 'Connection lost. Please refresh.';
+      feedbackStatus.className = 'feedback-status error';
+    }
+    if (feedbackBtn) feedbackBtn.disabled = false;
+  }
+}
+
+// Handle successful feedback injection
+function handleFeedbackInjected(msg) {
+  const feedbackInput = document.getElementById('feedback-input');
+  const feedbackBtn = document.getElementById('inject-feedback-btn');
+  const feedbackStatus = document.getElementById('feedback-status');
+
+  if (feedbackInput) feedbackInput.value = '';
+  if (feedbackBtn) feedbackBtn.disabled = false;
+  if (feedbackStatus) {
+    feedbackStatus.textContent = msg.message || 'Feedback injected successfully!';
+    feedbackStatus.className = 'feedback-status success';
+
+    // Clear status after 3 seconds
+    setTimeout(() => {
+      if (feedbackStatus) feedbackStatus.textContent = '';
+    }, 3000);
+  }
+}
+
+// Handle feedback injection error
+function handleFeedbackError(msg) {
+  const feedbackBtn = document.getElementById('inject-feedback-btn');
+  const feedbackStatus = document.getElementById('feedback-status');
+
+  if (feedbackBtn) feedbackBtn.disabled = false;
+  if (feedbackStatus) {
+    feedbackStatus.textContent = msg.error || 'Failed to inject feedback';
+    feedbackStatus.className = 'feedback-status error';
+  }
+}
+
+// Initialize feedback button click handler
+function initFeedbackUI() {
+  const feedbackBtn = document.getElementById('inject-feedback-btn');
+  if (feedbackBtn) {
+    feedbackBtn.addEventListener('click', injectPipelineFeedback);
+  }
+
+  // Also allow Enter key to submit (with Ctrl/Cmd)
+  const feedbackInput = document.getElementById('feedback-input');
+  if (feedbackInput) {
+    feedbackInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        injectPipelineFeedback();
+      }
+    });
   }
 }
 
