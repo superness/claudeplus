@@ -318,6 +318,7 @@ function renderProjects() {
 
   list.innerHTML = projects.map(p => `
     <div class="project-card" data-id="${p.id}">
+      <button class="delete-project-btn" data-id="${p.id}" title="Delete project">&times;</button>
       <h3>${escapeHtml(p.name)}</h3>
       <p>${escapeHtml(p.game_idea)}</p>
       <div class="meta">
@@ -327,13 +328,38 @@ function renderProjects() {
     </div>
   `).join('');
 
-  // Click handlers
+  // Click handlers for cards
   list.querySelectorAll('.project-card').forEach(card => {
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (e) => {
+      // Don't open if clicking delete button
+      if (e.target.classList.contains('delete-project-btn')) return;
       const project = projects.find(p => p.id === card.dataset.id);
       if (project) openStudio(project);
     });
   });
+
+  // Click handlers for delete buttons
+  list.querySelectorAll('.delete-project-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const projectId = btn.dataset.id;
+      const project = projects.find(p => p.id === projectId);
+      if (project && confirm(`Delete "${project.name}"? This cannot be undone.`)) {
+        await deleteProject(projectId);
+      }
+    });
+  });
+}
+
+// Delete a project
+async function deleteProject(projectId) {
+  try {
+    await api(`/projects/${projectId}`, { method: 'DELETE' });
+    projects = projects.filter(p => p.id !== projectId);
+    renderProjects();
+  } catch (err) {
+    alert('Failed to delete project: ' + err.message);
+  }
 }
 
 // New Game Modal
@@ -435,8 +461,23 @@ function openStudio(project) {
 // Start tracking pipeline progress and show engaging updates
 async function startTrackingAndShowProgress(projectId) {
   try {
-    // Tell server to start tracking
-    await api(`/projects/${projectId}/track-progress`, { method: 'POST' });
+    // Tell server to start tracking (this also reconciles completed pipelines)
+    const trackResult = await api(`/projects/${projectId}/track-progress`, { method: 'POST' });
+
+    // If reconciliation happened, refresh queue and update status
+    if (trackResult.reconciled) {
+      console.log('Pipeline reconciled, refreshing queue...');
+      loadQueue();
+      if (trackResult.status === 'live') {
+        updateProjectStatus('live');
+        addSystemMessage('Your game is now live!');
+        hideProgress();
+        return;
+      } else if (trackResult.status === 'implementing') {
+        addSystemMessage('Previous work completed! Processing next item...');
+        // Continue to show progress for the new work
+      }
+    }
 
     // Fetch current progress
     const progress = await api(`/projects/${projectId}/pipeline-progress`);
@@ -535,6 +576,16 @@ document.getElementById('back-to-dashboard').addEventListener('click', () => {
   loadProjects();
 });
 
+document.getElementById('delete-project-studio').addEventListener('click', async () => {
+  if (!currentProject) return;
+  if (confirm(`Delete "${currentProject.name}"? This cannot be undone.`)) {
+    await deleteProject(currentProject.id);
+    disconnectWebSocket();
+    currentProject = null;
+    showScreen('dashboard');
+  }
+});
+
 // Chat form
 document.getElementById('chat-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -606,11 +657,48 @@ async function loadQueue() {
   }
 }
 
+// Mark a work item as completed (for stale/abandoned items)
+async function markWorkComplete(itemId) {
+  if (!currentProject) return;
+
+  try {
+    const result = await api(`/projects/${currentProject.id}/queue/${itemId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'completed' })
+    });
+
+    if (result.success) {
+      addSystemMessage('Work item marked as complete.');
+      loadQueue();
+
+      // Refresh project status if needed
+      const { project } = await api(`/projects/${currentProject.id}`);
+      if (project.status !== currentProject.status) {
+        updateProjectStatus(project.status);
+      }
+    }
+  } catch (err) {
+    addSystemMessage('Failed to mark item complete: ' + err.message);
+  }
+}
+
 function renderQueue({ currentWork, queued, completed }) {
   // Current work
   const currentEl = document.getElementById('current-work');
   if (currentWork) {
-    currentEl.innerHTML = `<div class="queue-item in-progress">${escapeHtml(currentWork.description)}</div>`;
+    currentEl.innerHTML = `
+      <div class="queue-item in-progress">
+        ${escapeHtml(currentWork.description)}
+        <button class="btn-small mark-complete" data-id="${currentWork.id}" title="Mark as complete (for stale items)">Done</button>
+      </div>`;
+
+    // Add click handler for mark complete button
+    currentEl.querySelector('.mark-complete')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm('Mark this work item as completed? Use this for stale/abandoned pipelines.')) {
+        await markWorkComplete(currentWork.id);
+      }
+    });
   } else {
     currentEl.innerHTML = '<div class="empty-queue">Nothing running</div>';
   }
@@ -633,6 +721,46 @@ function renderQueue({ currentWork, queued, completed }) {
     `).join('');
   } else {
     completedEl.innerHTML = '<div class="empty-queue">No completed items</div>';
+  }
+
+  // Also load stories
+  loadStories();
+}
+
+// Load pipeline stories for the current project
+async function loadStories() {
+  if (!currentProject) return;
+
+  try {
+    const { stories } = await api(`/projects/${currentProject.id}/stories`);
+    renderStories(stories);
+  } catch (err) {
+    console.error('Failed to load stories:', err);
+  }
+}
+
+function renderStories(stories) {
+  const storiesEl = document.getElementById('pipeline-stories');
+
+  if (stories && stories.length > 0) {
+    storiesEl.innerHTML = stories.map(story => {
+      const date = new Date(story.timestamp.replace('T', ' ').replace(/-/g, (m, i) => i > 6 ? ':' : '-'));
+      const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const icon = story.type === 'design' ? '📋' : '🔧';
+      const shortDesc = story.description.length > 40 ? story.description.substring(0, 40) + '...' : story.description;
+
+      return `
+        <a href="${story.url}" target="_blank" class="story-item queue-item">
+          <span class="story-icon">${icon}</span>
+          <div class="story-info">
+            <div class="story-desc">${escapeHtml(shortDesc)}</div>
+            <div class="story-time">${timeStr}</div>
+          </div>
+        </a>
+      `;
+    }).join('');
+  } else {
+    storiesEl.innerHTML = '<div class="empty-queue">No stories yet</div>';
   }
 }
 

@@ -3,10 +3,14 @@
  * User-facing game builder with pipeline execution
  */
 
+// Load environment variables first
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
+const fs = require('fs');
 const bcrypt = require('bcrypt');
 
 const db = require('./services/db');
@@ -217,6 +221,34 @@ app.delete('/api/projects/:id/queue/:itemId', authMiddleware, (req, res) => {
   res.json({ success });
 });
 
+// Mark a work item as completed or failed (for stale/abandoned items)
+app.post('/api/projects/:id/queue/:itemId/complete', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const { status } = req.body; // 'completed' or 'error'
+  const newStatus = status === 'error' ? 'error' : 'completed';
+
+  try {
+    db.updateWorkStatus(req.params.itemId, newStatus);
+    queueService.emit('work-completed', { projectId: project.id, itemId: req.params.itemId });
+
+    // Check if project should go live
+    const queueStatus = queueService.getQueueStatus(project.id);
+    if (queueStatus.queued.length === 0 && !queueStatus.currentWork) {
+      db.updateProjectStatus(project.id, 'live');
+      queueService.emit('project-live', { projectId: project.id });
+    }
+
+    res.json({ success: true, status: newStatus });
+  } catch (err) {
+    console.error('[API] Complete work item error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================
 // Pipeline Progress Routes
 // ============================================
@@ -242,6 +274,103 @@ app.post('/api/projects/:id/track-progress', authMiddleware, (req, res) => {
   const result = queueService.startTrackingProject(req.params.id);
   res.json(result);
 });
+
+// ============================================
+// Pipeline Stories Routes
+// ============================================
+
+// Get pipeline stories for a project
+app.get('/api/projects/:id/stories', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const stories = [];
+    const infographicsDir = path.join(__dirname, '../proxy/pipeline-infographics');
+    const pipelinesDir = path.join(__dirname, '../proxy/pipelines');
+
+    if (!fs.existsSync(infographicsDir)) {
+      return res.json({ stories: [] });
+    }
+
+    // Scan all pipeline folders and find ones that match this project
+    const pipelineFolders = fs.readdirSync(infographicsDir)
+      .filter(d => d.startsWith('pipeline_'))
+      .sort()
+      .reverse(); // newest first
+
+    for (const folder of pipelineFolders) {
+      const pipelineDir = path.join(infographicsDir, folder);
+
+      // Check execution log to see if this pipeline was for our project
+      const pipelineTimestamp = folder.replace('pipeline_', '');
+      const executionLogPath = path.join(pipelinesDir, `${folder}_execution.json`);
+
+      let isForThisProject = false;
+      let pipelineType = 'feature';
+      let description = 'Pipeline run';
+
+      if (fs.existsSync(executionLogPath)) {
+        try {
+          const logContent = fs.readFileSync(executionLogPath, 'utf8');
+          // Check if working directory contains our project ID
+          if (logContent.includes(req.params.id)) {
+            isForThisProject = true;
+            // Try to determine type from log
+            if (logContent.includes('living-game-world') || logContent.includes('game-design')) {
+              pipelineType = 'design';
+              description = 'Initial Design';
+            } else if (logContent.includes('feature-implementer')) {
+              pipelineType = 'feature';
+            }
+          }
+        } catch (e) {
+          // Ignore read errors
+        }
+      }
+
+      // Also check if this matches known pipeline IDs
+      if (project.design_pipeline_id === folder) {
+        isForThisProject = true;
+        pipelineType = 'design';
+        description = 'Initial Design';
+      }
+
+      if (!isForThisProject) continue;
+
+      // Find the latest run directory with story.html
+      const runs = fs.readdirSync(pipelineDir)
+        .filter(d => d.startsWith('run_'))
+        .sort()
+        .reverse();
+
+      for (const run of runs) {
+        const storyPath = path.join(pipelineDir, run, 'story.html');
+        if (fs.existsSync(storyPath)) {
+          stories.push({
+            pipelineId: folder,
+            runId: run,
+            timestamp: run.replace('run_', ''),
+            description,
+            url: `/pipeline-stories/${folder}/${run}/story.html`,
+            type: pipelineType
+          });
+          break; // Only latest run per pipeline
+        }
+      }
+    }
+
+    res.json({ stories });
+  } catch (err) {
+    console.error('[API] Get stories error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Serve pipeline stories as static files
+app.use('/pipeline-stories', express.static(path.join(__dirname, '../proxy/pipeline-infographics')));
 
 // ============================================
 // Pipeline Resume Routes

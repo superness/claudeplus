@@ -381,6 +381,9 @@ class QueueService {
       db.updateWorkStatus(nextItem.id, 'in_progress', pipelineId);
       this.emit('work-started', { projectId, item: nextItem });
 
+      // Start progress polling for feature pipeline
+      this.startProgressPolling(projectId, 'feature');
+
       // Execute feature pipeline
       await pipelineBridge.executeFeaturePipeline(
         projectId,
@@ -388,7 +391,8 @@ class QueueService {
         projectDir
       );
 
-      // Mark as completed
+      // Stop polling and mark as completed
+      this.stopProgressPolling(projectId);
       db.updateWorkStatus(nextItem.id, 'completed');
       this.emit('work-completed', { projectId, item: nextItem });
       this.emit('game-updated', { projectId });
@@ -399,6 +403,7 @@ class QueueService {
 
     } catch (err) {
       console.error(`[QueueService] Work item ${nextItem.id} failed:`, err);
+      this.stopProgressPolling(projectId);
       db.updateWorkStatus(nextItem.id, 'error');
       this.emit('work-failed', { projectId, item: nextItem, error: err.message });
       this.processingProjects.delete(projectId);
@@ -541,18 +546,142 @@ class QueueService {
       }
     }
 
-    // If project is in implementing status, try to process queued work
+    // If project is in implementing status, reconcile and process
     if (project.status === 'implementing') {
       const queueStatus = this.getQueueStatus(projectId);
-      if (queueStatus.queued.length > 0 && !queueStatus.isProcessing) {
-        console.log(`[QueueService] Project ${projectId} has ${queueStatus.queued.length} queued items, starting processing`);
-        // Async - don't await, let it run in background
+
+      // Check if any "in_progress" work items have actually completed (missed signal)
+      if (queueStatus.currentWork) {
+        const workItem = queueStatus.currentWork;
+        console.log(`[QueueService] Checking if pipeline completed for work item ${workItem.id} (pipeline: ${workItem.pipeline_id})`);
+
+        let shouldMarkComplete = false;
+        let isAbandoned = false;
+
+        // Check if pipeline completed
+        if (this.checkPipelineCompleted(workItem.pipeline_id, projectId)) {
+          shouldMarkComplete = true;
+        } else {
+          // Check if work item is stale (started more than 2 hours ago with no pipeline activity)
+          const startTime = new Date(workItem.started_at || workItem.created_at);
+          const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+          if (startTime.getTime() < twoHoursAgo) {
+            // Check if there's been any recent pipeline activity
+            const logPath = this.findLatestPipelineLog();
+            if (logPath) {
+              const progress = this.parsePipelineProgress(logPath);
+              if (!progress?.lastEventTime || progress.lastEventTime.getTime() < twoHoursAgo) {
+                console.log(`[QueueService] Work item ${workItem.id} appears abandoned (no activity for 2+ hours)`);
+                isAbandoned = true;
+                shouldMarkComplete = true;
+              }
+            } else {
+              isAbandoned = true;
+              shouldMarkComplete = true;
+            }
+          }
+        }
+
+        if (shouldMarkComplete) {
+          const newStatus = isAbandoned ? 'error' : 'completed';
+          console.log(`[QueueService] Reconciling: work item ${workItem.id} marked as ${newStatus}`);
+          db.updateWorkStatus(workItem.id, newStatus);
+          this.emit('work-completed', { projectId, item: workItem, abandoned: isAbandoned });
+
+          // Check if more work queued, otherwise mark project live
+          const updatedQueue = this.getQueueStatus(projectId);
+          if (updatedQueue.queued.length === 0) {
+            db.updateProjectStatus(projectId, 'live');
+            this.emit('project-live', { projectId });
+            return { tracking: false, status: 'live', reconciled: true };
+          } else {
+            // More work queued, start processing it
+            console.log(`[QueueService] Reconciled, ${updatedQueue.queued.length} items still queued`);
+            this.processNextInQueue(projectId);
+            return { tracking: true, status: 'implementing', reconciled: true };
+          }
+        }
+      }
+
+      // Process next queued item if nothing is running
+      const refreshedStatus = this.getQueueStatus(projectId);
+      if (refreshedStatus.queued.length > 0 && !refreshedStatus.isProcessing && !refreshedStatus.currentWork) {
+        console.log(`[QueueService] Project ${projectId} has ${refreshedStatus.queued.length} queued items, starting processing`);
         this.processNextInQueue(projectId);
         return { tracking: true, status: 'processing_queued_work' };
       }
     }
 
     return { tracking: false, status: project.status };
+  }
+
+  /**
+   * Check if a pipeline has completed by reading its execution log
+   * This is tricky because the pipelineId we store (e.g., feature_proj_xxx_1765649601561)
+   * doesn't exactly match the log filename (pipeline_1765649601650_execution.json)
+   * due to timing differences between when we create our ID and when proxy creates the log.
+   */
+  checkPipelineCompleted(pipelineId, projectId) {
+    if (!pipelineId && !projectId) return false;
+
+    try {
+      const files = fs.readdirSync(PROXY_PIPELINES_DIR)
+        .filter(f => f.endsWith('_execution.json'))
+        .sort()
+        .reverse(); // newest first
+
+      // Extract project ID from pipelineId if not provided
+      if (!projectId && pipelineId) {
+        const match = pipelineId.match(/proj_([a-f0-9]+)/i);
+        if (match) {
+          projectId = 'proj_' + match[1].toLowerCase();
+        }
+      }
+
+      // Extract timestamp from pipelineId for approximate matching
+      const timestampMatch = pipelineId?.match(/(\d{13})$/);
+      const pipelineTimestamp = timestampMatch ? parseInt(timestampMatch[1]) : null;
+
+      for (const logFile of files) {
+        const logPath = path.join(PROXY_PIPELINES_DIR, logFile);
+
+        try {
+          const content = fs.readFileSync(logPath, 'utf8');
+
+          // Check if this log is for our project (working dir contains project ID)
+          if (projectId && !content.includes(projectId)) {
+            continue;
+          }
+
+          // If we have a timestamp, check if the log timestamp is close (within 5 seconds)
+          if (pipelineTimestamp) {
+            const logTimestampMatch = logFile.match(/pipeline_(\d+)_execution/);
+            if (logTimestampMatch) {
+              const logTimestamp = parseInt(logTimestampMatch[1]);
+              const diff = Math.abs(logTimestamp - pipelineTimestamp);
+              // Skip if timestamps are more than 5 seconds apart
+              if (diff > 5000) {
+                continue;
+              }
+            }
+          }
+
+          // Check if this pipeline completed
+          if (content.includes('"eventType":"pipeline_completed"')) {
+            console.log(`[QueueService] Found completed pipeline in ${logFile}`);
+            return true;
+          }
+        } catch (readErr) {
+          // Skip files we can't read
+          continue;
+        }
+      }
+
+      return false;
+    } catch (err) {
+      console.error('[QueueService] Error checking pipeline completion:', err.message);
+      return false;
+    }
   }
 
   /**
