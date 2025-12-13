@@ -37,6 +37,7 @@ class DatabaseService {
         name TEXT NOT NULL,
         game_idea TEXT NOT NULL,
         game_type TEXT DEFAULT '2d',
+        design_complexity TEXT,
         status TEXT DEFAULT 'designing',
         design_pipeline_id TEXT,
         feature_pipeline_id TEXT,
@@ -44,6 +45,9 @@ class DatabaseService {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
       );
+
+      -- Add design_complexity column if it doesn't exist (for existing databases)
+      -- SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we handle this in code
 
       CREATE TABLE IF NOT EXISTS work_queue (
         id TEXT PRIMARY KEY,
@@ -58,6 +62,15 @@ class DatabaseService {
         FOREIGN KEY (project_id) REFERENCES projects(id)
       );
     `);
+
+    // Migration: Add design_complexity column if it doesn't exist
+    try {
+      this.db.exec('ALTER TABLE projects ADD COLUMN design_complexity TEXT');
+      console.log('[DB] Added design_complexity column');
+    } catch (err) {
+      // Column already exists, ignore error
+    }
+
     console.log('[DB] Database initialized');
   }
 
@@ -101,12 +114,12 @@ class DatabaseService {
   }
 
   // Project methods
-  createProject(userId, name, gameIdea, gameType = '2d') {
+  createProject(userId, name, gameIdea, gameType = '2d', designComplexity = null) {
     const id = 'proj_' + uuidv4().slice(0, 8);
     const stmt = this.db.prepare(
-      'INSERT INTO projects (id, user_id, name, game_idea, game_type) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO projects (id, user_id, name, game_idea, game_type, design_complexity) VALUES (?, ?, ?, ?, ?, ?)'
     );
-    stmt.run(id, userId, name, gameIdea, gameType);
+    stmt.run(id, userId, name, gameIdea, gameType, designComplexity);
     return this.getProject(id);
   }
 

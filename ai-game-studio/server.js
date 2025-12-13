@@ -136,14 +136,20 @@ app.get('/api/projects', authMiddleware, (req, res) => {
 
 app.post('/api/projects', authMiddleware, async (req, res) => {
   try {
-    const { name, gameIdea, gameType } = req.body;
+    const { name, gameIdea, gameType, designComplexity } = req.body;
 
     if (!name || !gameIdea) {
       return res.status(400).json({ error: 'Name and game idea required' });
     }
 
-    // Create project
-    const project = db.createProject(req.userId, name, gameIdea, gameType || '2d');
+    // Validate designComplexity if provided
+    const validComplexities = ['simple', 'standard', 'complex', null, ''];
+    const complexity = validComplexities.includes(designComplexity) ? (designComplexity || null) : null;
+
+    // Create project with optional complexity override
+    const project = db.createProject(req.userId, name, gameIdea, gameType || '2d', complexity);
+
+    console.log(`[API] Created project ${project.id} with complexity: ${complexity || 'auto-detect'}`);
 
     // Start design phase asynchronously
     queueService.startDesignPhase(project);
@@ -209,6 +215,32 @@ app.delete('/api/projects/:id/queue/:itemId', authMiddleware, (req, res) => {
 
   const success = queueService.cancelQueuedItem(req.params.itemId);
   res.json({ success });
+});
+
+// ============================================
+// Pipeline Progress Routes
+// ============================================
+
+// Get current pipeline progress for a project
+app.get('/api/projects/:id/pipeline-progress', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const progress = queueService.getPipelineProgress(req.params.id);
+  res.json(progress);
+});
+
+// Start tracking pipeline progress for a project (called when opening studio)
+app.post('/api/projects/:id/track-progress', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  const result = queueService.startTrackingProject(req.params.id);
+  res.json(result);
 });
 
 // ============================================

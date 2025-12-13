@@ -5,6 +5,7 @@
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const complexityClassifier = require('./complexity-classifier');
 
 const PROXY_URL = 'ws://localhost:8081';
 const TEMPLATES_DIR = path.join(__dirname, '../../templates');
@@ -98,13 +99,33 @@ class PipelineBridge {
     return JSON.parse(fs.readFileSync(templatePath, 'utf8'));
   }
 
-  async executeDesignPipeline(projectId, gameIdea, workingDir) {
+  async executeDesignPipeline(projectId, gameIdea, workingDir, options = {}) {
     if (!this.connected) {
       await this.connect();
     }
 
-    const template = this.loadTemplate('living-game-world-v1');
+    // Determine template based on complexity
+    let templateName;
+    let detectedComplexity;
+
+    if (options.manualComplexity) {
+      // User specified complexity manually
+      detectedComplexity = options.manualComplexity;
+      templateName = complexityClassifier.getTemplateForComplexity(options.manualComplexity);
+      console.log(`[PipelineBridge] Using manual complexity: ${options.manualComplexity} -> ${templateName}`);
+    } else {
+      // Auto-classify using Haiku
+      detectedComplexity = await complexityClassifier.classify(gameIdea);
+      templateName = complexityClassifier.getTemplateForComplexity(detectedComplexity);
+      console.log(`[PipelineBridge] Auto-classified complexity: ${detectedComplexity} -> ${templateName}`);
+    }
+
+    const template = this.loadTemplate(templateName);
     const pipelineId = `design_${projectId}_${Date.now()}`;
+
+    // Store complexity info for reference
+    template.detectedComplexity = detectedComplexity;
+    template.complexityInfo = complexityClassifier.getComplexityInfo(detectedComplexity);
 
     return new Promise((resolve, reject) => {
       // Set up handler for this pipeline

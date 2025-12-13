@@ -10,6 +10,7 @@ let currentUser = null;
 let currentProject = null;
 let projects = [];
 let ws = null;
+let lastShownStage = null;
 
 // DOM Elements
 const authScreen = document.getElementById('auth-screen');
@@ -350,11 +351,12 @@ document.getElementById('new-game-form').addEventListener('submit', async (e) =>
   const name = document.getElementById('game-name').value;
   const gameType = document.getElementById('game-type').value;
   const gameIdea = document.getElementById('game-idea').value;
+  const designComplexity = document.getElementById('design-complexity').value || null;
 
   try {
     const { project } = await api('/projects', {
       method: 'POST',
-      body: JSON.stringify({ name, gameType, gameIdea })
+      body: JSON.stringify({ name, gameType, gameIdea, designComplexity })
     });
 
     document.getElementById('new-game-modal').classList.add('hidden');
@@ -375,22 +377,39 @@ document.getElementById('new-game-form').addEventListener('submit', async (e) =>
 
 function openStudio(project) {
   currentProject = project;
+  lastShownStage = null; // Reset progress tracking
 
   // Update UI
   document.getElementById('project-name').textContent = project.name;
   document.getElementById('project-status').textContent = project.status;
   document.getElementById('project-status').className = `status-badge ${project.status}`;
 
-  // Set game URL
-  const gameUrl = `/games/${currentUser.id}/${project.id}/`;
-  document.getElementById('game-url-link').href = gameUrl;
-  document.getElementById('game-url-link').textContent = gameUrl;
+  // Set game URL - try client/ subfolder first, then root
+  const baseUrl = `/games/${currentUser.id}/${project.id}`;
+  const clientUrl = `${baseUrl}/client/`;
+  const rootUrl = `${baseUrl}/`;
 
   // Show/hide preview placeholder
   const hasGame = project.status === 'live' || project.status === 'implementing';
   document.getElementById('preview-placeholder').classList.toggle('hidden', hasGame);
+
   if (hasGame) {
-    document.getElementById('game-iframe').src = gameUrl;
+    // Check if client/index.html exists, otherwise use root
+    fetch(`${clientUrl}index.html`, { method: 'HEAD' })
+      .then(res => {
+        const gameUrl = res.ok ? clientUrl : rootUrl;
+        document.getElementById('game-url-link').href = gameUrl;
+        document.getElementById('game-url-link').textContent = gameUrl;
+        document.getElementById('game-iframe').src = gameUrl;
+      })
+      .catch(() => {
+        document.getElementById('game-url-link').href = rootUrl;
+        document.getElementById('game-url-link').textContent = rootUrl;
+        document.getElementById('game-iframe').src = rootUrl;
+      });
+  } else {
+    document.getElementById('game-url-link').href = rootUrl;
+    document.getElementById('game-url-link').textContent = rootUrl;
   }
 
   // Load queue
@@ -405,6 +424,95 @@ function openStudio(project) {
   addSystemMessage(getWelcomeMessage(project));
 
   showScreen('studio');
+
+  // Start tracking for designing or implementing status
+  // This also triggers queue processing for implementing projects
+  if (project.status === 'designing' || project.status === 'implementing') {
+    startTrackingAndShowProgress(project.id);
+  }
+}
+
+// Start tracking pipeline progress and show engaging updates
+async function startTrackingAndShowProgress(projectId) {
+  try {
+    // Tell server to start tracking
+    await api(`/projects/${projectId}/track-progress`, { method: 'POST' });
+
+    // Fetch current progress
+    const progress = await api(`/projects/${projectId}/pipeline-progress`);
+
+    if (progress.active && progress.completedStages) {
+      showPipelineProgress(progress);
+    }
+  } catch (err) {
+    console.error('Failed to fetch pipeline progress:', err);
+  }
+}
+
+// Show pipeline progress in an engaging way
+function showPipelineProgress(progress) {
+  if (!progress.completedStages || progress.completedStages.length === 0) {
+    return;
+  }
+
+  // Agent descriptions for engaging messages
+  const agentDescriptions = {
+    'task_planner': 'Planning out the game development approach',
+    'lore_architect': 'Crafting the backstory and world history',
+    'geography_designer': 'Designing the game world and locations',
+    'culture_architect': 'Building cultures, factions, and societies',
+    'economy_designer': 'Creating the economic systems and resources',
+    'combat_designer': 'Designing combat mechanics and balance',
+    'progression_designer': 'Planning player progression and rewards',
+    'system_designer': 'Architecting core game systems',
+    'api_designer': 'Designing the game\'s API and interfaces',
+    'data_modeler': 'Structuring game data and models',
+    'code_generator': 'Generating initial game code',
+    'design_validator': 'Validating design consistency',
+    'technical_validator': 'Checking technical feasibility',
+    'gameplay_validator': 'Ensuring gameplay is fun and balanced',
+    'balance_analyzer': 'Analyzing game balance',
+    'balance_auditor': 'Auditing balance across systems',
+    'systems_integrator': 'Integrating all systems together',
+    'final_integrator': 'Final integration and polish'
+  };
+
+  // Show completed stages summary
+  const recentStages = progress.completedStages.slice(-5);
+
+  addSystemMessage(`Pipeline Progress: ${progress.completedCount}/${progress.totalStages} stages complete (${progress.progress}%)`);
+
+  // Show recent completed stages
+  recentStages.forEach(stage => {
+    const desc = agentDescriptions[stage.agent] || stage.name;
+    addStageMessage(stage.agent, desc, true);
+  });
+
+  // Show current stage if available
+  if (progress.currentStage) {
+    const currentDesc = agentDescriptions[progress.currentAgent] || progress.currentStage;
+    addStageMessage(progress.currentAgent, currentDesc, false);
+    showProgress(`Working: ${currentDesc}`, progress.progress);
+  }
+}
+
+// Add a stage completion message with styling
+function addStageMessage(agent, description, completed) {
+  const messagesEl = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-message stage-message';
+
+  const icon = completed ? '✓' : '⟳';
+  const statusClass = completed ? 'completed' : 'in-progress';
+
+  div.innerHTML = `
+    <span class="stage-icon ${statusClass}">${icon}</span>
+    <span class="stage-agent">${agent || 'Agent'}</span>
+    <span class="stage-desc">${escapeHtml(description)}</span>
+  `;
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function getWelcomeMessage(project) {
@@ -613,14 +721,7 @@ function handleWebSocketMessage(msg) {
 
     case 'pipeline-progress':
       // Real-time progress from pipeline polling
-      if (msg.message) {
-        showProgress(msg.message, msg.progress || 50);
-      }
-      if (msg.currentStage && msg.completedCount !== undefined) {
-        // Update chat with stage completion
-        const stageMsg = `Stage ${msg.completedCount}/${msg.totalStages}: ${msg.currentStage}`;
-        updateLastSystemMessage(stageMsg);
-      }
+      handlePipelineProgress(msg);
       break;
 
     case 'queue-updated':
@@ -633,6 +734,43 @@ function handleWebSocketMessage(msg) {
       addSystemMessage(`Error: ${msg.error || 'Something went wrong'}`);
       updateProjectStatus('error');
       break;
+  }
+}
+
+// Handle real-time pipeline progress updates
+function handlePipelineProgress(msg) {
+  const agentDescriptions = {
+    'task_planner': 'Planning the game development approach',
+    'lore_architect': 'Crafting backstory and world history',
+    'geography_designer': 'Designing the game world and locations',
+    'culture_architect': 'Building cultures and societies',
+    'economy_designer': 'Creating economic systems',
+    'combat_designer': 'Designing combat mechanics',
+    'progression_designer': 'Planning player progression',
+    'system_designer': 'Architecting core systems',
+    'api_designer': 'Designing APIs and interfaces',
+    'data_modeler': 'Structuring game data',
+    'code_generator': 'Generating game code',
+    'design_validator': 'Validating design consistency',
+    'technical_validator': 'Checking technical feasibility',
+    'gameplay_validator': 'Ensuring fun gameplay',
+    'balance_analyzer': 'Analyzing game balance',
+    'balance_auditor': 'Auditing balance across systems',
+    'systems_integrator': 'Integrating all systems',
+    'final_integrator': 'Final integration and polish'
+  };
+
+  // Update progress bar
+  if (msg.progress !== undefined) {
+    const desc = agentDescriptions[msg.currentStage] || msg.currentStage || 'Working...';
+    showProgress(`${desc} (${msg.progress}%)`, msg.progress);
+  }
+
+  // Show stage as a message if it's a new stage
+  if (msg.currentStage && msg.currentStage !== lastShownStage) {
+    lastShownStage = msg.currentStage;
+    const desc = agentDescriptions[msg.currentStage] || msg.currentStage;
+    addStageMessage(msg.currentStage, desc, false);
   }
 }
 

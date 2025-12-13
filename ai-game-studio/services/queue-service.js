@@ -37,12 +37,27 @@ class QueueService {
 
         if (currentState.status === 'running' || currentState.status === 'paused') {
           // Check if we're already processing this pipeline
-          const projectMatch = currentState.workingDir?.match(/proj_([a-f0-9]+)/);
+          const projectMatch = currentState.workingDir?.match(/proj_([a-f0-9]+)/i);
           if (projectMatch) {
-            const projectId = 'proj_' + projectMatch[1];
-            if (this.processingProjects.has(projectId)) {
-              console.log(`[QueueService] Pipeline ${currentState.id} is already being processed`);
+            const projectId = 'proj_' + projectMatch[1].toLowerCase();
+            // Check both processingProjects AND activePipelines (progress polling)
+            if (this.processingProjects.has(projectId) || activePipelines.has(projectId)) {
+              console.log(`[QueueService] Pipeline ${currentState.id} is already being processed (processingProjects: ${this.processingProjects.has(projectId)}, activePipelines: ${activePipelines.has(projectId)})`);
               return { found: false, reason: 'already_processing' };
+            }
+          }
+
+          // Check execution log for recent activity (pipeline actively running even if server restarted)
+          const logPath = this.findLatestPipelineLog();
+          if (logPath) {
+            const progress = this.parsePipelineProgress(logPath);
+            if (progress?.lastEventTime) {
+              const timeSinceLastEvent = Date.now() - progress.lastEventTime.getTime();
+              const fiveMinutes = 5 * 60 * 1000;
+              if (timeSinceLastEvent < fiveMinutes) {
+                console.log(`[QueueService] Pipeline ${currentState.id} has recent activity (${Math.round(timeSinceLastEvent / 1000)}s ago) - actively running`);
+                return { found: false, reason: 'actively_running' };
+              }
             }
           }
 
@@ -51,10 +66,9 @@ class QueueService {
           console.log(`[QueueService]   Stage: ${currentState.currentStage} (${currentState.completedStages?.length || 0}/${currentState.stages?.length || 0})`);
           console.log(`[QueueService]   Working Dir: ${currentState.workingDir}`);
 
-          // Try to match this to a project
-          const projectMatch = currentState.workingDir?.match(/proj_([a-f0-9]+)/);
+          // Try to match this to a project (reuse projectMatch from above)
           if (projectMatch) {
-            const projectId = 'proj_' + projectMatch[1];
+            const projectId = 'proj_' + projectMatch[1].toLowerCase();
             const project = db.getProject(projectId);
 
             if (project) {
@@ -190,6 +204,7 @@ class QueueService {
       let currentStage = null;
       let completedCount = 0;
       let totalStages = 24; // Default for living-game-world
+      let lastEventTime = null;
 
       for (const event of events) {
         if (event.eventType === 'pipeline_initialized' && event.totalStages) {
@@ -201,13 +216,18 @@ class QueueService {
         if (event.eventType === 'stage_completed') {
           completedCount++;
         }
+        // Track the most recent event timestamp
+        if (event.timestamp) {
+          lastEventTime = new Date(event.timestamp);
+        }
       }
 
       return {
         currentStage,
         completedCount,
         totalStages,
-        progress: Math.round((completedCount / totalStages) * 100)
+        progress: Math.round((completedCount / totalStages) * 100),
+        lastEventTime
       };
     } catch (err) {
       return null;
@@ -278,14 +298,20 @@ class QueueService {
       const result = await pipelineBridge.executeDesignPipeline(
         project.id,
         project.game_idea,
-        projectDir
+        projectDir,
+        { manualComplexity: project.design_complexity || null }
       );
 
       this.stopProgressPolling(project.id);
       db.updateProjectStatus(project.id, 'implementing', result.pipelineId);
       this.emit('design-completed', { projectId: project.id });
 
-      // Auto-start first feature implementation
+      // Auto-queue full game build from design docs
+      console.log(`[QueueService] Auto-queuing full game build for ${project.id}`);
+      db.addToQueue(project.id, `Build the "${project.name}" game using the design documents provided. The user's vision: "${project.game_idea}". Make sure to implement all its features!`);
+      this.emit('queue-updated', { projectId: project.id });
+
+      // Start first feature implementation
       await this.processNextInQueue(project.id);
     } catch (err) {
       this.stopProgressPolling(project.id);
@@ -404,6 +430,129 @@ class QueueService {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Get detailed pipeline progress for a project
+   */
+  getPipelineProgress(projectId) {
+    const project = db.getProject(projectId);
+    if (!project) {
+      return { active: false };
+    }
+
+    // Check if there's an active pipeline
+    const isActive = this.processingProjects.has(projectId) || activePipelines.has(projectId);
+
+    // Get progress from execution log
+    const logPath = this.findLatestPipelineLog();
+    if (!logPath) {
+      return { active: isActive, progress: null };
+    }
+
+    try {
+      const content = fs.readFileSync(logPath, 'utf8');
+      const data = JSON.parse(content);
+      const events = data.events || [];
+
+      // Build detailed progress info
+      let currentStage = null;
+      let currentAgent = null;
+      let completedStages = [];
+      let totalStages = 24;
+      let lastEventTime = null;
+      let pipelineName = null;
+
+      for (const event of events) {
+        if (event.eventType === 'pipeline_initialized') {
+          totalStages = event.totalStages || totalStages;
+          pipelineName = event.pipelineName;
+        }
+        if (event.eventType === 'stage_started') {
+          currentStage = event.stageName || event.stageId;
+          currentAgent = event.agent;
+        }
+        if (event.eventType === 'stage_completed') {
+          completedStages.push({
+            name: event.stageName || event.stageId,
+            agent: event.agent,
+            timestamp: event.timestamp
+          });
+        }
+        if (event.timestamp) {
+          lastEventTime = new Date(event.timestamp);
+        }
+      }
+
+      // Check if pipeline is actively running (had activity in last 5 min)
+      const timeSinceLastEvent = lastEventTime ? Date.now() - lastEventTime.getTime() : Infinity;
+      const isActivelyRunning = timeSinceLastEvent < 5 * 60 * 1000;
+
+      return {
+        active: isActive || isActivelyRunning,
+        pipelineName,
+        currentStage,
+        currentAgent,
+        completedStages,
+        completedCount: completedStages.length,
+        totalStages,
+        progress: Math.round((completedStages.length / totalStages) * 100),
+        lastEventTime: lastEventTime?.toISOString(),
+        timeSinceLastEvent: Math.round(timeSinceLastEvent / 1000)
+      };
+    } catch (err) {
+      console.error('[QueueService] Error reading pipeline progress:', err);
+      return { active: isActive, error: err.message };
+    }
+  }
+
+  /**
+   * Start tracking a project's pipeline progress (called when user opens studio)
+   */
+  startTrackingProject(projectId) {
+    const project = db.getProject(projectId);
+    if (!project) {
+      return { tracking: false, reason: 'project_not_found' };
+    }
+
+    // Check if project has an active pipeline
+    if (project.status === 'designing' || this.processingProjects.has(projectId)) {
+      // Start progress polling if not already polling
+      if (!activePipelines.has(projectId)) {
+        const phase = project.status === 'designing' ? 'design' : 'feature';
+        this.startProgressPolling(projectId, phase);
+        console.log(`[QueueService] Started tracking progress for ${projectId}`);
+      }
+      return { tracking: true, status: project.status };
+    }
+
+    // Check execution log for recent activity even if server doesn't know about it
+    const logPath = this.findLatestPipelineLog();
+    if (logPath) {
+      const progress = this.parsePipelineProgress(logPath);
+      if (progress?.lastEventTime) {
+        const timeSinceLastEvent = Date.now() - progress.lastEventTime.getTime();
+        if (timeSinceLastEvent < 5 * 60 * 1000) {
+          // Pipeline is actively running, start polling
+          this.startProgressPolling(projectId, 'design');
+          console.log(`[QueueService] Detected active pipeline, started tracking for ${projectId}`);
+          return { tracking: true, status: 'active_pipeline_detected' };
+        }
+      }
+    }
+
+    // If project is in implementing status, try to process queued work
+    if (project.status === 'implementing') {
+      const queueStatus = this.getQueueStatus(projectId);
+      if (queueStatus.queued.length > 0 && !queueStatus.isProcessing) {
+        console.log(`[QueueService] Project ${projectId} has ${queueStatus.queued.length} queued items, starting processing`);
+        // Async - don't await, let it run in background
+        this.processNextInQueue(projectId);
+        return { tracking: true, status: 'processing_queued_work' };
+      }
+    }
+
+    return { tracking: false, status: project.status };
   }
 
   /**
