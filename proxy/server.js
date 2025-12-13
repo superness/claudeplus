@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const InfographicGenerator = require('./infographic-generator');
-const InfographicNarrator = require('./infographic-narrator');
+// const InfographicNarrator = require('./infographic-narrator'); // TODO: file not committed to repo
 const BrowserAutomationService = require('./browser-automation-service');
 const TestLibraryManager = require('./test-library-manager');
 
@@ -3453,53 +3453,54 @@ Your commentary:`;
       finalResults: Object.keys(results)
     });
 
-    // Generate AI-powered story report using InfographicNarrator
-    try {
-      console.log('[PROXY] Generating AI story report for pipeline execution...');
-
-      const infographic = this.pipelineInfographics.get(pipelineState.id);
-      if (infographic) {
-        const runDirectory = infographic.getRunDirectory();
-        const narrator = new InfographicNarrator(runDirectory);
-
-        // Prepare pipeline data for narrator
-        const pipelineData = {
-          name: pipeline.name,
-          id: pipelineState.id,
-          duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime),
-          totalStages: pipelineState.stages.length,
-          completedStages: pipelineState.completedStages.length,
-          errorCount: pipelineState.stages.filter(s => s.status === 'error').length,
-          workingDir: workingDir,
-          status: 'completed',
-          stages: pipelineState.stages || []
-        };
-
-        // Generate the story report asynchronously (don't block pipeline completion)
-        narrator.generateStoryReport(pipelineData).then(result => {
-          if (result.success) {
-            console.log('[PROXY] Story report generated:', result.storyPath);
-
-            // Notify client that story is ready (use current WebSocket)
-            const storyReadyWs = this.getPipelineWebSocket(pipelineState.id, ws);
-            storyReadyWs.send(JSON.stringify({
-              type: 'story-report-ready',
-              pipelineId: pipelineState.id,
-              storyPath: result.storyPath,
-              narrativePath: result.narrativePath,
-              message: '✨ Magical story report generated!'
-            }));
-          } else {
-            console.error('[PROXY] Story report generation failed:', result.error);
-          }
-        }).catch(err => {
-          console.error('[PROXY] Story report generation error:', err);
-        });
-      }
-    } catch (narratorError) {
-      console.error('[PROXY] Failed to generate story report:', narratorError);
-      // Don't fail the pipeline if narrator fails - just log it
-    }
+    // TODO: InfographicNarrator not committed to repo - commenting out story report generation
+    // // Generate AI-powered story report using InfographicNarrator
+    // try {
+    //   console.log('[PROXY] Generating AI story report for pipeline execution...');
+    //
+    //   const infographic = this.pipelineInfographics.get(pipelineState.id);
+    //   if (infographic) {
+    //     const runDirectory = infographic.getRunDirectory();
+    //     const narrator = new InfographicNarrator(runDirectory);
+    //
+    //     // Prepare pipeline data for narrator
+    //     const pipelineData = {
+    //       name: pipeline.name,
+    //       id: pipelineState.id,
+    //       duration: new Date(pipelineState.endTime) - new Date(pipelineState.startTime),
+    //       totalStages: pipelineState.stages.length,
+    //       completedStages: pipelineState.completedStages.length,
+    //       errorCount: pipelineState.stages.filter(s => s.status === 'error').length,
+    //       workingDir: workingDir,
+    //       status: 'completed',
+    //       stages: pipelineState.stages || []
+    //     };
+    //
+    //     // Generate the story report asynchronously (don't block pipeline completion)
+    //     narrator.generateStoryReport(pipelineData).then(result => {
+    //       if (result.success) {
+    //         console.log('[PROXY] Story report generated:', result.storyPath);
+    //
+    //         // Notify client that story is ready (use current WebSocket)
+    //         const storyReadyWs = this.getPipelineWebSocket(pipelineState.id, ws);
+    //         storyReadyWs.send(JSON.stringify({
+    //           type: 'story-report-ready',
+    //           pipelineId: pipelineState.id,
+    //           storyPath: result.storyPath,
+    //           narrativePath: result.narrativePath,
+    //           message: '✨ Magical story report generated!'
+    //         }));
+    //       } else {
+    //         console.error('[PROXY] Story report generation failed:', result.error);
+    //       }
+    //     }).catch(err => {
+    //       console.error('[PROXY] Story report generation error:', err);
+    //     });
+    //   }
+    // } catch (narratorError) {
+    //   console.error('[PROXY] Failed to generate story report:', narratorError);
+    //   // Don't fail the pipeline if narrator fails - just log it
+    // }
 
     // Auto-commit changes if working on a git repository
     // NOTE: Test collection is now handled by the test_librarian agent in the pipeline
