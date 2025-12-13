@@ -27,6 +27,24 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 app.use('/games', express.static(path.join(__dirname, 'games')));
 
+// Serve imported game files from custom paths
+app.get('/imported/:projectId/*', (req, res) => {
+  const project = db.getProject(req.params.projectId);
+  if (!project || !project.custom_path) {
+    return res.status(404).send('Not found');
+  }
+
+  const filePath = path.join(project.custom_path, req.params[0] || 'index.html');
+
+  // Security: ensure requested file is within custom_path
+  const normalizedPath = path.normalize(filePath);
+  if (!normalizedPath.startsWith(path.normalize(project.custom_path))) {
+    return res.status(403).send('Forbidden');
+  }
+
+  res.sendFile(normalizedPath);
+});
+
 // Create HTTP server
 const server = http.createServer(app);
 
@@ -182,6 +200,43 @@ app.delete('/api/projects/:id', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
+// Import an existing external game project
+app.post('/api/projects/import', authMiddleware, (req, res) => {
+  try {
+    const { name, description, path: gamePath } = req.body;
+
+    if (!name || !gamePath) {
+      return res.status(400).json({ error: 'Name and path are required' });
+    }
+
+    // Convert Windows path to WSL format if needed
+    let wslPath = gamePath;
+    if (gamePath.match(/^[A-Z]:\\/i)) {
+      wslPath = gamePath.replace(/^([A-Z]):\\/i, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
+    }
+
+    // Verify path exists
+    const fs = require('fs');
+    if (!fs.existsSync(wslPath)) {
+      return res.status(400).json({ error: `Path not found: ${wslPath}` });
+    }
+
+    const project = db.importProject(
+      req.userId,
+      name,
+      description || `Imported from ${gamePath}`,
+      wslPath,
+      'live' // Imported projects start as live
+    );
+
+    console.log(`[API] Imported project ${project.id} from ${wslPath}`);
+    res.json({ project });
+  } catch (err) {
+    console.error('[API] Import project error:', err);
+    res.status(500).json({ error: 'Failed to import project' });
+  }
+});
+
 // ============================================
 // Work Queue Routes
 // ============================================
@@ -273,6 +328,18 @@ app.post('/api/projects/:id/track-progress', authMiddleware, (req, res) => {
 
   const result = queueService.startTrackingProject(req.params.id);
   res.json(result);
+});
+
+// Manually trigger queue processing for a project
+app.post('/api/projects/:id/process-queue', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  console.log(`[API] Manual queue processing trigger for ${project.id}`);
+  queueService.processNextInQueue(req.params.id);
+  res.json({ triggered: true, projectId: req.params.id });
 });
 
 // ============================================

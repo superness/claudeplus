@@ -397,6 +397,40 @@ document.getElementById('new-game-form').addEventListener('submit', async (e) =>
   }
 });
 
+// Import Game Modal
+document.getElementById('import-game-btn').addEventListener('click', () => {
+  document.getElementById('import-game-modal').classList.remove('hidden');
+});
+
+document.getElementById('cancel-import-game').addEventListener('click', () => {
+  document.getElementById('import-game-modal').classList.add('hidden');
+});
+
+document.getElementById('import-game-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const name = document.getElementById('import-name').value;
+  const path = document.getElementById('import-path').value;
+  const description = document.getElementById('import-description').value;
+
+  try {
+    const { project } = await api('/projects/import', {
+      method: 'POST',
+      body: JSON.stringify({ name, path, description })
+    });
+
+    document.getElementById('import-game-modal').classList.add('hidden');
+    document.getElementById('import-game-form').reset();
+
+    // Add to list and open
+    projects.unshift(project);
+    renderProjects();
+    openStudio(project);
+  } catch (err) {
+    alert('Failed to import project: ' + err.message);
+  }
+});
+
 // ============================================
 // Studio
 // ============================================
@@ -410,29 +444,53 @@ function openStudio(project) {
   document.getElementById('project-status').textContent = project.status;
   document.getElementById('project-status').className = `status-badge ${project.status}`;
 
-  // Set game URL - try client/ subfolder first, then root
-  const baseUrl = `/games/${currentUser.id}/${project.id}`;
-  const clientUrl = `${baseUrl}/client/`;
-  const rootUrl = `${baseUrl}/`;
+  // Determine game URL based on project type
+  let baseUrl, clientUrl, rootUrl;
+
+  if (project.custom_path) {
+    // Imported project - use /imported/ route
+    baseUrl = `/imported/${project.id}`;
+    clientUrl = `${baseUrl}/client/`;
+    rootUrl = `${baseUrl}/`;
+  } else {
+    // Regular project - use /games/ route
+    baseUrl = `/games/${currentUser.id}/${project.id}`;
+    clientUrl = `${baseUrl}/client/`;
+    rootUrl = `${baseUrl}/`;
+  }
 
   // Show/hide preview placeholder
   const hasGame = project.status === 'live' || project.status === 'implementing';
   document.getElementById('preview-placeholder').classList.toggle('hidden', hasGame);
 
   if (hasGame) {
-    // Check if client/index.html exists, otherwise use root
-    fetch(`${clientUrl}index.html`, { method: 'HEAD' })
-      .then(res => {
-        const gameUrl = res.ok ? clientUrl : rootUrl;
-        document.getElementById('game-url-link').href = gameUrl;
-        document.getElementById('game-url-link').textContent = gameUrl;
-        document.getElementById('game-iframe').src = gameUrl;
-      })
-      .catch(() => {
-        document.getElementById('game-url-link').href = rootUrl;
-        document.getElementById('game-url-link').textContent = rootUrl;
-        document.getElementById('game-iframe').src = rootUrl;
-      });
+    // Try multiple locations for index.html
+    const tryUrls = [
+      `${clientUrl}index.html`,    // client/index.html
+      `${baseUrl}/output/index.html`, // output/index.html (common pattern)
+      `${rootUrl}index.html`       // root index.html
+    ];
+
+    async function findGameUrl() {
+      for (const testUrl of tryUrls) {
+        try {
+          const res = await fetch(testUrl, { method: 'HEAD' });
+          if (res.ok) {
+            // Return the directory containing index.html
+            return testUrl.replace('/index.html', '/');
+          }
+        } catch (e) {
+          // Continue to next URL
+        }
+      }
+      return rootUrl; // Default to root
+    }
+
+    findGameUrl().then(gameUrl => {
+      document.getElementById('game-url-link').href = gameUrl;
+      document.getElementById('game-url-link').textContent = gameUrl;
+      document.getElementById('game-iframe').src = gameUrl;
+    });
   } else {
     document.getElementById('game-url-link').href = rootUrl;
     document.getElementById('game-url-link').textContent = rootUrl;

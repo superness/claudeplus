@@ -159,8 +159,20 @@ class QueueService {
 
   /**
    * Get or create the working directory for a project
+   * If project has custom_path set, use that instead of default location
    */
-  getProjectDir(userId, projectId) {
+  getProjectDir(userId, projectId, customPath = null) {
+    // Use custom path if provided (for imported external projects)
+    if (customPath) {
+      // Convert Windows path to WSL if needed
+      let wslPath = customPath;
+      if (customPath.match(/^[A-Z]:\\/i)) {
+        wslPath = customPath.replace(/^([A-Z]):\\/i, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
+      }
+      console.log(`[QueueService] Using custom path: ${wslPath}`);
+      return wslPath;
+    }
+
     const projectDir = path.join(GAMES_DIR, userId, projectId);
     if (!fs.existsSync(projectDir)) {
       fs.mkdirSync(projectDir, { recursive: true });
@@ -350,7 +362,7 @@ class QueueService {
    * Start the design phase for a new project
    */
   async startDesignPhase(project) {
-    const projectDir = this.getProjectDir(project.user_id, project.id);
+    const projectDir = this.getProjectDir(project.user_id, project.id, project.custom_path);
 
     console.log(`[QueueService] Starting design phase for ${project.id}`);
     this.processingProjects.add(project.id);
@@ -435,7 +447,7 @@ class QueueService {
     const project = db.getProject(projectId);
     if (!project) return;
 
-    const projectDir = this.getProjectDir(project.user_id, project.id);
+    const projectDir = this.getProjectDir(project.user_id, project.id, project.custom_path);
 
     console.log(`[QueueService] Processing work item ${nextItem.id} for ${projectId}`);
     this.processingProjects.add(projectId);
@@ -614,6 +626,11 @@ class QueueService {
     // If project is in implementing status, reconcile and process
     if (project.status === 'implementing') {
       const queueStatus = this.getQueueStatus(projectId);
+      console.log(`[QueueService] startTrackingProject(${projectId}): implementing status, queueStatus =`, JSON.stringify({
+        currentWork: queueStatus.currentWork?.id || null,
+        queuedCount: queueStatus.queued.length,
+        isProcessing: queueStatus.isProcessing
+      }));
 
       // Check if any "in_progress" work items have actually completed (missed signal)
       if (queueStatus.currentWork) {
@@ -670,10 +687,18 @@ class QueueService {
 
       // Process next queued item if nothing is running
       const refreshedStatus = this.getQueueStatus(projectId);
+      console.log(`[QueueService] startTrackingProject(${projectId}): refreshedStatus =`, JSON.stringify({
+        currentWork: refreshedStatus.currentWork?.id || null,
+        queuedCount: refreshedStatus.queued.length,
+        isProcessing: refreshedStatus.isProcessing
+      }));
+
       if (refreshedStatus.queued.length > 0 && !refreshedStatus.isProcessing && !refreshedStatus.currentWork) {
         console.log(`[QueueService] Project ${projectId} has ${refreshedStatus.queued.length} queued items, starting processing`);
         this.processNextInQueue(projectId);
         return { tracking: true, status: 'processing_queued_work' };
+      } else {
+        console.log(`[QueueService] Project ${projectId} not starting processing: queued=${refreshedStatus.queued.length}, isProcessing=${refreshedStatus.isProcessing}, currentWork=${refreshedStatus.currentWork?.id}`);
       }
     }
 

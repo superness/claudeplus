@@ -71,6 +71,14 @@ class DatabaseService {
       // Column already exists, ignore error
     }
 
+    // Migration: Add custom_path column for imported external projects
+    try {
+      this.db.exec('ALTER TABLE projects ADD COLUMN custom_path TEXT');
+      console.log('[DB] Added custom_path column');
+    } catch (err) {
+      // Column already exists, ignore error
+    }
+
     console.log('[DB] Database initialized');
   }
 
@@ -120,6 +128,23 @@ class DatabaseService {
       'INSERT INTO projects (id, user_id, name, game_idea, game_type, design_complexity) VALUES (?, ?, ?, ?, ?, ?)'
     );
     stmt.run(id, userId, name, gameIdea, gameType, designComplexity);
+    return this.getProject(id);
+  }
+
+  /**
+   * Import an existing external project
+   * @param {string} userId - User ID
+   * @param {string} name - Project name
+   * @param {string} description - Brief description of the game
+   * @param {string} customPath - Path to existing game files (WSL format)
+   * @param {string} status - Initial status (default: 'live')
+   */
+  importProject(userId, name, description, customPath, status = 'live') {
+    const id = 'proj_' + uuidv4().slice(0, 8);
+    const stmt = this.db.prepare(
+      'INSERT INTO projects (id, user_id, name, game_idea, game_type, status, custom_path) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    stmt.run(id, userId, name, description, '2d', status, customPath);
     return this.getProject(id);
   }
 

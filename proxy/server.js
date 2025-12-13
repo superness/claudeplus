@@ -1135,8 +1135,8 @@ class ClaudeProxy {
           content: `Starting pipeline: ${message.pipeline.name}`
         }));
 
-        // Execute pipeline stages sequentially  
-        const response = await this.executePipelineStages(message.pipeline, message.userContext || '', workingDir, ws);
+        // Execute pipeline stages sequentially (pass client pipelineId if provided)
+        const response = await this.executePipelineStages(message.pipeline, message.userContext || '', workingDir, ws, message.pipelineId);
 
         // Send final response back to client
         ws.send(JSON.stringify({
@@ -2950,12 +2950,13 @@ Your commentary:`;
     return (currentWs && currentWs.readyState === 1) ? currentWs : fallbackWs;
   }
 
-  async executePipelineStages(pipeline, userContext, workingDir, ws) {
+  async executePipelineStages(pipeline, userContext, workingDir, ws, clientPipelineId = null) {
     console.log(`[PROXY] Executing ${pipeline.stages?.length || 0} stages for pipeline: ${pipeline.name}`);
 
     // Create pipeline state for persistence
+    // Use client-provided pipelineId if available so completion signals match
     const pipelineState = {
-      id: `pipeline_${Date.now()}`,
+      id: clientPipelineId || `pipeline_${Date.now()}`,
       name: pipeline.name,
       startTime: new Date().toISOString(),
       stages: pipeline.stages,
