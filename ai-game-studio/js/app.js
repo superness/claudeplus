@@ -998,6 +998,14 @@ async function loadServerStatus() {
       serverPanel.classList.add('hidden');
     }
 
+    // If server is already running, update the game preview
+    if (status.status === 'running' && status.url && currentProject.custom_path) {
+      document.getElementById('game-url-link').href = status.url;
+      document.getElementById('game-url-link').textContent = status.url;
+      document.getElementById('game-iframe').src = status.url;
+      document.getElementById('preview-placeholder').classList.add('hidden');
+    }
+
     return status;
   } catch (err) {
     console.error('Failed to load server status:', err);
@@ -1405,12 +1413,26 @@ function handleWebSocketMessage(msg) {
       renderServerPanel();
       addSystemMessage(`Server started on ${msg.url}`);
       clearServerLogs();
+
+      // Update game preview to use the server URL for full-stack projects
+      if (msg.url && currentProject?.custom_path) {
+        document.getElementById('game-url-link').href = msg.url;
+        document.getElementById('game-url-link').textContent = msg.url;
+        document.getElementById('game-iframe').src = msg.url;
+        document.getElementById('preview-placeholder').classList.add('hidden');
+      }
       break;
 
     case 'server-stopped':
       serverStatus = { ...serverStatus, status: 'stopped', pid: null, url: null };
       renderServerPanel();
       addSystemMessage(`Server stopped (exit code: ${msg.exitCode})`);
+
+      // Show placeholder when server stops for full-stack projects
+      if (currentProject?.custom_path) {
+        document.getElementById('preview-placeholder').classList.remove('hidden');
+        document.getElementById('game-iframe').src = 'about:blank';
+      }
       break;
 
     case 'server-output':
