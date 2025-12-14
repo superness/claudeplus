@@ -3858,8 +3858,9 @@ Your commentary:`;
           stages: pipelineState.stages || []
         };
 
-        // Generate the story report asynchronously (don't block pipeline completion)
-        narrator.generateStoryReport(pipelineData).then(result => {
+        // TEMPORARILY DISABLED - story generation uses API key
+        // TODO: Re-enable when subscription-based CLI is confirmed working
+        if (false) { narrator.generateStoryReport(pipelineData).then(result => {
           if (result.success) {
             console.log('[PROXY] Story report generated:', result.storyPath);
 
@@ -3877,7 +3878,7 @@ Your commentary:`;
           }
         }).catch(err => {
           console.error('[PROXY] Story report generation error:', err);
-        });
+        }); }
       }
     } catch (narratorError) {
       console.error('[PROXY] Failed to generate story report:', narratorError);
