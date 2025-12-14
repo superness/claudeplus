@@ -861,6 +861,8 @@ class ServerManager {
       pid: serverInfo.pid,
       port: serverInfo.port,
       url: serverInfo.url,
+      frontendUrl: serverInfo.frontendUrl,
+      clientPort: serverInfo.clientPort,
       command: serverInfo.command,
       logs: serverInfo.logs.getLast(100),
       uptime,
