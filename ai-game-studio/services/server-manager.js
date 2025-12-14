@@ -247,20 +247,28 @@ class ServerManager {
           const pkg = JSON.parse(fs.readFileSync(clientPackageJson, 'utf8'));
           const scripts = pkg.scripts || {};
 
-          // Detect port from vite.config.ts/js
-          let port = 5173; // Vite default
+          // Detect port from scripts first (e.g., "serve -p 3000")
+          let port = 3000; // Default
+          for (const script of Object.values(scripts)) {
+            const portMatch = script.match(/(?:--port[=\s]+|-p\s+)(\d+)/);
+            if (portMatch) {
+              port = parseInt(portMatch[1], 10);
+              break;
+            }
+          }
+
+          // Also check vite.config.ts/js
           const viteConfigTs = path.join(clientPath, 'vite.config.ts');
           const viteConfigJs = path.join(clientPath, 'vite.config.js');
-
           const viteConfigPath = fs.existsSync(viteConfigTs) ? viteConfigTs :
                                  fs.existsSync(viteConfigJs) ? viteConfigJs : null;
 
           if (viteConfigPath) {
             try {
               const viteConfig = fs.readFileSync(viteConfigPath, 'utf8');
-              const portMatch = viteConfig.match(/port\s*:\s*(\d+)/);
-              if (portMatch) {
-                port = parseInt(portMatch[1], 10);
+              const vitePortMatch = viteConfig.match(/port\s*:\s*(\d+)/);
+              if (vitePortMatch) {
+                port = parseInt(vitePortMatch[1], 10);
               }
             } catch (e) {
               // Ignore vite config parse errors
