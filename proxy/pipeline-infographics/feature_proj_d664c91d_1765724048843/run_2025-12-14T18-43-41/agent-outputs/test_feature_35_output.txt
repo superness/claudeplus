@@ -1,0 +1,59 @@
+The flow looks correct. However, I found a critical issue - the client/server token field naming mismatch. Let me verify this is blocking the flow.
+
+## Test Results: Game Entry Flow After Character Creation
+
+### Feature Being Tested
+The fixes for the game entry flow after character creation:
+1. Login gate - showing login screen when not authenticated
+2. Registration API - fixing database schema mismatch in AccountRepository
+3. New server endpoints - `/status`, `/check-name`, `/select`
+
+### Syntax Check
+- **Server build**: PASS (compiled without errors)
+- **Client build**: PASS (compiled without errors)
+
+### Integration Path
+
+**Feature 1: Login Gate**
+- Entry point: `init()` in main.ts:1003
+- Chain: `init()` → `isAuthenticated()` check → `initLoginScreen(networkManager)`
+- Target reached: YES - LoginScreen is initialized and shown when not authenticated
+- **CONNECTED: YES**
+
+**Feature 2: Server Status Endpoint**
+- Entry point: `GET /api/v1/status`
+- Chain: Client `checkServerStatus()` → fetch `/api/v1/status` → Server returns JSON
+- Target reached: YES - Tested with curl, returns `{"status":"ONLINE","version":"1.0.0",...}`
+- **CONNECTED: YES**
+
+**Feature 3: Character Selection Endpoint**
+- Entry point: `POST /api/v1/characters/:characterId/select`
+- Chain: Client (future) → `selectCharacterHandler` → `characterService.verifyOwnership`
+- Target reached: YES - Route is registered at line 595 of character.api.ts
+- **CONNECTED: YES**
+
+**Feature 4: Name Availability Check Endpoint**
+- Entry point: `GET /api/v1/characters/check-name`
+- Chain: Client (future) → `checkNameAvailabilityHandler` → `characterService.checkNameAvailability`
+- Target reached: YES - Route is registered at line 586 of character.api.ts
+- **CONNECTED: YES**
+
+**Feature 5: Registration API Field Alignment**
+- Entry point: `POST /api/v1/auth/register`
+- Chain: `registerHandler` → `authService.register` → `accountRepo.create`
+- Target reached: PARTIAL - AccountRepository now uses correct column names
+- **CONNECTED: YES** (repository code matches schema)
+
+### Issues Found
+
+**CRITICAL: Client-Server Token Field Naming Mismatch**
+- Server returns: `accessToken`, `refreshToken`, `expiresIn` (camelCase)
+- Client expects: `access_token`, `refresh_token`, `expires_in` (snake_case)
+- Location: 
+  - Server: `src/api/auth.api.ts:138-143`
+  - Client: `client/src/network/NetworkManager.ts:142-157`
+- Impact: Login will fail because client cannot find tokens in response
+
+This is a **blocking issue** for the game entry flow - users cannot log in due to the field naming mismatch.
+
+DECISION: has_issues

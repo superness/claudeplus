@@ -156,10 +156,12 @@ Generate the complete HTML report now:`;
       const fullPrompt = `${narratorAgent.systemPrompt}\n\n---\n\n${prompt}`;
 
       // Spawn Claude Code process - using proven pattern from server.js:1668
+      // IMPORTANT: Strip ANTHROPIC_API_KEY so Claude CLI uses subscription login, not API key
+      const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
       const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
         cwd: this.runDir,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: process.env
+        env: cleanEnv
       });
 
       let output = '';

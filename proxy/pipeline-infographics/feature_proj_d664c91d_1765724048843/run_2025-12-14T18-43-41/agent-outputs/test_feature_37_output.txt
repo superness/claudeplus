@@ -1,0 +1,40 @@
+The `RefreshTokenRequest` expects `refreshToken` (camelCase), and looking at the client code:
+- Line 190: `body: JSON.stringify({ refreshToken: this.refreshToken })` - matches server expectation
+- Lines 199-202: Reads `data.accessToken`, `data.refreshToken`, `data.expiresIn` - matches server response
+
+## Test Results: Game Entry Flow After Character Creation (Token Field Naming Fix)
+
+### Feature Being Tested
+Client-server token field naming mismatch in login and refresh token flows. The previous implementation had the client expecting snake_case fields (`access_token`, `refresh_token`, `expires_in`) while the server returns camelCase fields (`accessToken`, `refreshToken`, `expiresIn`).
+
+### Syntax Check
+- **Server build**: PASS (compiled successfully)
+- **Client build**: PASS (compiled successfully, bundle generated)
+
+### Integration Path
+
+**Login Flow:**
+- Entry point: User submits login form → `NetworkManager.login()`
+- Chain: `NetworkManager.login()` → POST `/api/v1/auth/login` → `loginHandler()` → returns `LoginResponse`
+- Server response fields: `accessToken`, `refreshToken`, `expiresIn` (account.model.ts:120-125)
+- Client expected fields: `accessToken`, `refreshToken`, `expiresIn` (NetworkManager.ts:142-156)
+- **CONNECTED: YES** ✓
+
+**Refresh Token Flow:**
+- Entry point: Token expires → `NetworkManager.refreshAccessToken()`
+- Chain: `refreshAccessToken()` → POST `/api/v1/auth/refresh` with `{ refreshToken }` → `refreshHandler()` → returns `RefreshTokenResponse`
+- Server expects request: `refreshToken` (account.model.ts:137-138)
+- Client sends request: `refreshToken` (NetworkManager.ts:190)
+- Server response fields: `accessToken`, `refreshToken`, `expiresIn` (account.model.ts:141-144)
+- Client expected fields: `accessToken`, `refreshToken`, `expiresIn` (NetworkManager.ts:199-202)
+- **CONNECTED: YES** ✓
+
+**New Server Endpoints (from implement_server stage):**
+- `GET /api/v1/status`: ✓ Registered (index.ts:450), tested and returns `{"status":"ONLINE",...}`
+- `GET /api/v1/characters/check-name`: ✓ Registered (character.api.ts:586)
+- `POST /api/v1/characters/:characterId/select`: ✓ Registered (character.api.ts:595)
+
+### Issues Found
+None that affect THIS FEATURE. The internal server error on login is a database/infrastructure issue (PostgreSQL connection), not a code bug in the token field naming changes.
+
+DECISION: working

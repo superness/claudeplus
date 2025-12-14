@@ -1,0 +1,157 @@
+Now I have a complete understanding of the codebase. The user says "character creation just completed - there are flow issues getting into the game." Based on my analysis, I can now provide the design requirements extraction.
+
+## Feature: Game Entry Flow Fixes (Post-Character Creation)
+
+### Design Documentation Status: FOUND
+
+The design docs provide extensive specifications for the game entry flow. Let me extract the exact requirements.
+
+### Specifications from Design Docs
+
+#### From game-entry-flow-design.md - Post-Creation Flow (Section IV.B)
+
+```
+POST-CREATION TRANSITION
+
+OPTION A: Cinematic Intro (Recommended)
+├── Trigger: Character created successfully
+├── Duration: 30-60 seconds
+├── Content: Faction-specific cinematic
+│   ├── Imperial: Shrine World preparation for crusade
+│   ├── Tau: Sept Colony deployment briefing
+│   ├── Ork: Rok crash site chaos + WAAAGH! rally
+├── Purpose: Establish war context (player-experience.md:54)
+├── Skippable: Yes (for alt characters)
+├── Transition: Fade from cinematic to game world
+└── Audio: Faction-specific dramatic music
+
+GAME WORLD ENTRY:
+├── Spawn Location: Faction-specific starting zone
+│   ├── Imperial: Shrine World Sanctus (cathedral courtyard)
+│   ├── Tau: Dal'yth Sept Colony (deployment bay)
+│   ├── Ork: Rok Crash Site Alpha (scrap field)
+├── Tutorial NPC: Immediately nearby (glowing marker)
+├── Tutorial Quest: Auto-accepts "First Contact"
+├── Camera: Pulls back from character spawn
+├── UI: Fades in (skill bar, health, minimap)
+└── Audio: Zone ambient music + tutorial VO begins
+```
+
+#### From game-entry-flow-design.md - Loading Screen (Section IV.D)
+
+```
+LOADING SCREEN SPECIFICATIONS
+
+Duration: Minimum 3 seconds display, 0.5s fade transition
+Progress bar: 60% width, faction-colored
+Character preview: 200x300px rotating silhouette
+Tips: Rotate every 5 seconds
+Cancel button: Bottom-right, Escape hotkey
+
+Progressive UI Fade-In Order:
+├── First: Health bar, energy bar (0ms delay)
+├── Then: Skill bar (300ms delay)
+├── Then: Minimap, quest tracker (300ms delay)
+└── Last: Full UI complete (300ms delay)
+```
+
+#### From progression-design.md - Tutorial Flow
+
+```
+TUTORIAL PHASE (Levels 1-5, ~3-5 hours)
+├── Learn: Movement, Skills, Combat Basics
+├── Level 3: "The Weight of Choice" tutorial quest
+│   ├── Forces selection of 4 skills from 6
+│   ├── Teaches: "Preparation defines success"
+│   └── Critical for GW1 philosophy understanding
+├── Level 5: Second Profession TRIAL begins
+├── Milestone: Hub City Access, Group Content Enabled
+└── Engagement Score: 9/10
+```
+
+#### From systems-integration.md - Player Experience Timeline
+
+```
+HOUR 1 STATE
+├── Level: 2-3
+├── Skills: 3-4 available
+├── Currency: ~200-400 Thrones
+├── Key Moment: First combat victory, first skill unlock
+├── Philosophy: NOT YET TAUGHT (comes at Level 3)
+└── Engagement: Want to continue (9/10)
+```
+
+### Implementation Analysis - Issues Identified
+
+Based on reading the code (`main.ts`, `LoginScreen.ts`, `CharacterCreation.ts`, `Game.ts`, `GameStates.ts`), the following flow issues exist:
+
+#### Issue 1: No CHARACTER_SELECT State Implementation
+The flow has `CHARACTER_SELECT` as a valid state but goes directly to game or character creation:
+- Design doc: LOGIN → CHARACTER_SELECT (list existing characters) → GAME
+- Current: LOGIN → CHARACTER_CREATE or GAME (no character selection screen)
+
+#### Issue 2: Guest Mode Creates "Ghost" Characters
+When clicking "Create Account" → "Entering as guest...", the character data is stored locally but:
+- No actual account created
+- No auth tokens stored
+- On page refresh, isAuthenticated() returns false
+- Player sent back to login, losing progress
+
+#### Issue 3: Missing Tutorial NPC and Quest Auto-Accept
+Design doc specifies:
+- "Tutorial NPC: Immediately nearby (glowing marker)"  
+- "Tutorial Quest: Auto-accepts 'First Contact'"
+Current implementation has no tutorial NPC or auto-accept quest.
+
+#### Issue 4: No "Weight of Choice" Tutorial at Level 3
+Design doc emphasizes this is CRITICAL:
+- `WeightOfChoiceTutorial.ts` exists but is not integrated into gameplay
+- Should trigger at Level 3 to teach build philosophy
+
+#### Issue 5: Secondary Profession Flow Not Connected
+- `SecondaryProfession.ts` exists
+- Design doc: Level 5 TRIAL begins, Level 8 COMMITMENT
+- Not integrated into actual level-up flow
+
+### Implementation Checklist
+
+[ ] **Flow Fix 1**: Add Character Selection Screen
+    - Implement actual CHARACTER_SELECT state with character list UI
+    - Show existing characters with 3D preview
+    - "Create New" button goes to CHARACTER_CREATE
+    - Select character goes to LOADING → GAME
+
+[ ] **Flow Fix 2**: Fix Guest Mode Authentication
+    - Create proper guest account flow
+    - Store guest credentials that persist
+    - Or: Make guest mode clearly temporary with warning
+
+[ ] **Flow Fix 3**: Add Tutorial NPC at Spawn
+    - Create tutorial NPC entity near spawn point (0,0)
+    - Add glowing marker/indicator
+    - NPC triggers "First Contact" quest on interaction
+    - Quest auto-accepts per design doc
+
+[ ] **Flow Fix 4**: Integrate Weight of Choice Tutorial
+    - Hook `WeightOfChoiceTutorial.ts` to level-up event
+    - Trigger at Level 3
+    - Force skill selection (4 from 6)
+    - Show philosophy message
+
+[ ] **Flow Fix 5**: Integrate Secondary Profession System
+    - Hook `SecondaryProfession.ts` to level-up
+    - Level 5: Show TRIAL selection UI
+    - Level 8: Show COMMITMENT decision
+    - Level 15: Enable FREE respec
+
+[ ] **Flow Fix 6**: Verify Progressive UI Fade-In Timing
+    - Current implementation exists in `progressiveUIFadeIn()`
+    - Verify timing matches design doc (0ms, 300ms, 300ms, 300ms)
+
+### Related Systems in Docs
+- **player-experience.md**: First-hour experience, dopamine timing
+- **progression-design.md**: Skill unlocking schedule, level milestones
+- **character-creation-ui-design.md**: Post-creation flow specification
+- **systems-integration.md**: Complete timeline hour-by-hour
+
+DECISION: requirements_extracted
