@@ -1,0 +1,125 @@
+Now I have a complete picture. Let me compile the comprehensive requirements extraction:
+
+## Feature: 3D Health Bars Above Enemies (Billboard Health Bars)
+
+### Specifications from Design Docs
+
+#### Technical/Visual Requirements (visual-combat-design.md)
+
+From the design doc Line 616-645:
+> "Enemy health bars should be **above enemy head**, always visible during combat"
+> "Size scales by threat tier (Minoris 80x8, Majoris 100x10, Extremis 120x12, Terminus 150x15, Apex 200x20)"
+> "**Visibility Range: 30 meters**"
+> "**Fade: Alpha reduces with distance**"
+> "Color matches threat tier (White/Blue/Yellow/Purple/Gold)"
+> "Border thickness and glow effect for elite+ enemies"
+
+#### Threat Tier Color Specifications (from design docs vs implementation)
+
+**Design Doc (visual-combat-design.md Lines 573-575):**
+- Minoris: White `#FFFFFF`
+- Majoris: Blue `#00BFFF` 
+- Extremis: Yellow `#FFD700`
+- Terminus: Purple `#9400D3`
+- Apex: Gold `#FFD700` with glow
+
+**Current Implementation (EnemyThreatTiers.ts Lines 36-88):**
+- Minoris: White `#ffffff` ✓ MATCH
+- Majoris: Blue `#4a90d9` ✗ MISMATCH (should be `#00BFFF`)
+- Extremis: Yellow `#ffcc00` ✓ CLOSE (design says `#FFD700`)
+- Terminus: Purple `#9932cc` ✗ CLOSE (design says `#9400D3`)
+- Apex: Gold `#ffd700` ✓ MATCH
+
+#### Health Bar Sizes by Threat Tier
+
+**From Design Doc:**
+| Tier | Size (WxH pixels) |
+|------|-------------------|
+| Minoris | 80x8 |
+| Majoris | 100x10 |
+| Extremis | 120x12 |
+| Terminus | 150x15 |
+| Apex | 200x20 |
+
+#### Current Implementation Problem (Enemy.ts Lines 1051-1054)
+
+```typescript
+// Position above head
+this.healthBarContainer.position.y = (2.8 + (scale - 1) * 0.5) * scale;
+this.healthBarContainer.visible = false; // Hidden until selected or damaged
+this.mesh.add(this.healthBarContainer);
+```
+
+**Problem:** Health bars are hidden by default (`visible = false`) and only show when:
+1. Enemy is selected (Line 1443-1444)
+2. Enemy takes damage (Line 1080-1082) - briefly
+
+**Design doc says:** Health bars should be **always visible** within 30m range with distance-based alpha fade.
+
+#### Specifications for Billboard Behavior
+
+The health bar needs to:
+1. Always face the camera (billboard)
+2. Be visible within 30m range
+3. Fade alpha based on distance
+4. Maintain consistent apparent size regardless of distance
+
+#### What's Already Implemented
+
+From **Enemy.ts** code review:
+- [x] Health bar container created (Line 960)
+- [x] Health fill mesh with threat tier color (Lines 983-991)
+- [x] Border with threat tier styling (Lines 994-1006)
+- [x] Glow effect for elite+ enemies (Lines 1009-1019)
+- [x] Corner decorations for EXTREMIS+ (Lines 1021-1041)
+- [x] Health percentage calculation (Lines 1204-1215)
+- [x] Threat tier-based coloring (Lines 1061-1065)
+- [ ] **MISSING: Always-visible behavior**
+- [ ] **MISSING: 30m visibility range check**
+- [ ] **MISSING: Distance-based alpha fade**
+- [ ] **MISSING: Billboard rotation facing camera**
+
+#### Related Combat Systems Already Implemented
+
+From code review:
+- **SkillEffects.ts**: Full particle system (melee slashes, projectiles, cones, explosions, heals, buffs, auras) ✓
+- **CombatValidation.ts**: Complete skill validation (range, LoS, energy, cooldowns, status effects) ✓
+- **CombatFeedback.ts**: Floating damage numbers with size tiers, critical effects ✓
+- **EnemyAI**: 5 behavior types attacking back ✓
+- **AudioSystem.ts**: Faction-specific sounds, procedural audio, music layers ✓
+- **SkillBar.ts**: Circular cooldown overlays, skill ready flash, level-locked slots ✓
+- **Death animations**: By damage type (KINETIC, THERMAL, EXPLOSIVE, WARP, ELECTRIC, PIERCING, RENDING, PHOTON) ✓
+
+### Implementation Checklist
+
+**Health Bar Always-Visible System:**
+[ ] Remove `visible = false` default from health bar creation (Line 1053)
+[ ] Add distance-based visibility check in update loop
+[ ] Implement 30m visibility range cutoff
+[ ] Implement alpha fade formula: `alpha = 1.0 - (distance / 30) * 0.7` (fade from 1.0 at 0m to 0.3 at 30m)
+[ ] Add billboard rotation to face camera each frame
+[ ] Maintain consistent apparent pixel size regardless of distance
+
+**Color Correction:**
+[ ] Update Majoris color from `#4a90d9` to `#00BFFF` 
+[ ] Update Terminus color from `#9932cc` to `#9400D3`
+
+**Health Bar Size Implementation:**
+[ ] Calculate world-space sizes from pixel specifications:
+  - Minoris: 80x8px → ~0.8 x 0.08 world units
+  - Majoris: 100x10px → ~1.0 x 0.10 world units
+  - Extremis: 120x12px → ~1.2 x 0.12 world units  
+  - Terminus: 150x15px → ~1.5 x 0.15 world units
+  - Apex: 200x20px → ~2.0 x 0.20 world units
+
+**Billboard Implementation in EntityManager:**
+[ ] Get camera reference in entity manager
+[ ] Each frame, for each visible enemy health bar:
+  - Calculate distance to camera
+  - If distance > 30m, hide health bar
+  - If distance <= 30m:
+    - Show health bar
+    - Set alpha based on distance
+    - Make health bar face camera (billboard)
+
+DECISION: requirements_extracted

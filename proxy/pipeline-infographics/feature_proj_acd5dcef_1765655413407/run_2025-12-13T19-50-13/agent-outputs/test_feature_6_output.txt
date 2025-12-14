@@ -1,0 +1,151 @@
+I found the issue. Let me trace through the full integration path carefully:
+
+## Test Results
+
+### Syntax Check
+**Pass** - JavaScript has valid syntax, no obvious errors.
+
+### Integration Path Verification
+
+**User Click → Piece Selection → Move Execution:**
+
+1. **Entry point**: `InputSystem.handleClick()` at line 427
+2. **Click handler registration**: Line 424 - `this.canvas.addEventListener('click', this.handleClick.bind(this))` ✅
+3. **Coordinate calculation**: Lines 428-439 ✅ (Correctly calculates x, y with CSS scaling)
+4. **Y-coordinate flip**: Line 439 - `const y = 7 - Math.floor(clickY / CONFIG.tileSize)` ✅
+
+**CRITICAL ISSUE FOUND:**
+
+Looking at the CSS (lines 261-264):
+```css
+#game-canvas {
+    max-width: 100%;
+    height: auto;
+}
+```
+
+Combined with the RenderingSystem at lines 492-493:
+```javascript
+this.canvas.width = CONFIG.boardSize * CONFIG.tileSize;  // 512
+this.canvas.height = CONFIG.boardSize * CONFIG.tileSize; // 512
+```
+
+**The canvas has NO explicit width/height in CSS for desktop.** The canvas sets internal dimensions (512x512) but the CSS does NOT set a display size. This means `rect.width` and `rect.height` in `getBoundingClientRect()` will return the INTRINSIC canvas size (512x512), making the scale factors always 1.0 - which is actually correct behavior.
+
+Let me re-examine the click handler more carefully by checking if there's an issue with how the game initializes:
+
+**Checking DOMContentLoaded initialization**: Line 773-774:
+```javascript
+document.addEventListener('DOMContentLoaded', () => {
+    new GameController();
+});
+```
+
+**Checking canvas retrieval**: Line 616:
+```javascript
+this.canvas = document.getElementById('game-canvas');
+```
+
+Wait - I need to verify if there's a **pointer-events** issue or z-index issue. Let me check if any overlay is blocking clicks:
+
+Looking at the modal (lines 163-180 in CSS), the modal has `z-index: 1000` but starts with `display: none` via `.modal.hidden`.
+
+**ACTUAL BUG FOUND:**
+
+Looking at the piece positions and the Y-flip logic:
+
+In `handleClick()` line 439:
+```javascript
+const y = 7 - Math.floor(clickY / CONFIG.tileSize); // Flip Y for board coordinates
+```
+
+In `RenderingSystem.drawBoard()` line 505:
+```javascript
+const screenY = 7 - y; // Flip Y for screen coordinates
+```
+
+In `PieceSystem.setupInitialPieces()` lines 104-116:
+- Red pieces are at y=0, 1, 2 (bottom of data model)
+- Black pieces are at y=5, 6, 7 (top of data model)
+
+But in rendering:
+- `screenY = 7 - y` means y=0 renders at screenY=7 (bottom of screen)
+- `screenY = 7 - y` means y=7 renders at screenY=0 (top of screen)
+
+So RED pieces at y=0,1,2 appear at BOTTOM of screen (screenY=7,6,5).
+Black pieces at y=5,6,7 appear at TOP of screen (screenY=2,1,0).
+
+In the click handler:
+- Click at top of canvas → `clickY` is small → `Math.floor(clickY / 64)` is 0-2
+- `y = 7 - 0` = 7, `y = 7 - 1` = 6, `y = 7 - 2` = 5 → y=5,6,7 (BLACK pieces' y coordinates)
+
+So clicking on the BLACK pieces at top of screen would try to get pieces at y=5,6,7, which is CORRECT.
+
+Clicking on RED pieces at bottom → `clickY` is large → `Math.floor(clickY/64)` is 5,6,7
+`y = 7 - 5` = 2, `y = 7 - 6` = 1, `y = 7 - 7` = 0 → y=0,1,2 (RED pieces' y coordinates) ✅
+
+**THE LOGIC IS CORRECT!**
+
+But wait - the user says "Red's Turn" is indicated and they can't click anything. Let me check if maybe the game controller isn't properly being instantiated.
+
+Let me check if there's an issue with how `turnSystem.currentPlayer` is checked:
+
+Line 456: `if (clickedPiece && clickedPiece.owner === this.turnSystem.currentPlayer)`
+
+Since `currentPlayer` starts as `'red'`, clicking on a red piece SHOULD work.
+
+**POTENTIAL ISSUE: JavaScript error during initialization?**
+
+There's no error handling. If `document.getElementById('game-canvas')` returns null (script runs before DOM is ready?), the game breaks silently.
+
+But DOMContentLoaded should prevent that...
+
+**WAIT - I see a CSS responsive issue:**
+
+Lines 261-264:
+```css
+#game-canvas {
+    max-width: 100%;
+    height: auto;
+}
+```
+
+When `height: auto` is used on a canvas WITHOUT an explicit CSS height, and the canvas sets `this.canvas.height = 512` programmatically, the canvas should display at 512x512. But `height: auto` on canvas can behave unexpectedly.
+
+**THE ACTUAL BUG:** The canvas IS NOT being rendered properly because the JS sets `width` and `height` attributes, but the CSS `height: auto` for responsive may collapse the height to 0 or cause aspect ratio issues.
+
+### Disconnected Systems Found
+None - all systems are properly wired together.
+
+### Placeholder Code Found
+None - no TODOs, FIXMEs, or stubs found.
+
+### Issues Found
+
+**CRITICAL: CSS `height: auto` on canvas with responsive design**
+
+The CSS at lines 261-264 sets `height: auto` for the canvas in responsive mode. This can cause the canvas height to collapse or behave unexpectedly because:
+1. Canvas doesn't have an intrinsic aspect ratio like images
+2. When only `max-width: 100%` is set without explicit height handling, clicks may not map correctly
+
+**Additionally**: The canvas has no explicit CSS width/height for non-responsive viewport, relying entirely on the JavaScript-set width/height attributes. While this usually works, it can cause issues in certain browser/CSS combinations.
+
+**Recommended Fix:** Add explicit CSS dimensions or aspect-ratio handling:
+```css
+#game-canvas {
+    width: 512px;
+    height: 512px;
+}
+
+@media (max-width: 550px) {
+    #game-canvas {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 1 / 1;
+    }
+}
+```
+
+Or verify the canvas is actually receiving click events by checking if any other element is intercepting them.
+
+DECISION: has_issues

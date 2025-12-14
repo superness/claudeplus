@@ -1,0 +1,100 @@
+## Test Results
+
+### Syntax Check
+**FAIL** - Multiple critical TypeScript errors found:
+
+### Critical Errors Found
+
+#### 1. DATA REFERENCE ID MISMATCH (SILENT FAILURE - CRITICAL!)
+**Location**: `src/api/combat.api.ts:351-352`
+- Code references `skill.appliesConditions` and `skill.removesConditions`
+- **Actual property names**: `appliesEffects` and `removesEffects` (verified in src/data/seeds/skill-definitions.seed.ts:53-54)
+- **Impact**: Complete failure of buff/debuff tracking - conditions will NEVER be sent to client because wrong properties are accessed
+
+#### 2. CONDITION TYPE NAME MISMATCHES (DATA REFERENCE FAILURE)
+**Location**: `src/services/combat.service.ts:1244-1285`
+
+Code references conditions that **DO NOT EXIST** in ConditionType enum:
+- Line 1244: `STUNNED` (actual: `STUN`)
+- Line 1245: `DAZED` (actual: `DAZE`)  
+- Line 1262: `POISONED` (actual: `POISON`)
+- Line 1263: `CRIPPLED` (doesn't exist)
+- Line 1264: `WEAKNESS` (doesn't exist)
+- Line 1265: `BLINDED` (actual: `BLIND`)
+- Line 1266: `STUNNED` (actual: `STUN`)
+- Line 1267: `DAZED` (actual: `DAZE`)
+- Line 1270: `IMMOBILIZED` (actual: `IMMOBILIZE`)
+- Line 1271: `CHILLED` (doesn't exist)
+- Line 1272: `VULNERABILITY` (doesn't exist)
+- Line 1273: `TORMENT` (doesn't exist)
+- Line 1274: `CONFUSION` (doesn't exist)
+- Line 1275: `RETALIATION` (doesn't exist)
+- Line 1282: `VIGOR` (doesn't exist)
+- Line 1283: `STABILITY` (doesn't exist)
+- Line 1284: `RESISTANCE` (doesn't exist)
+- Line 1285: `QUICKNESS` (doesn't exist)
+
+**Actual ConditionType enum** (from src/models/enums.ts:97-129):
+- Damaging: BLEEDING, BURNING, POISON, CORRUPTION, SHOCK
+- Control: STUN, KNOCKDOWN, FEAR, SLOW, BLIND, IMMOBILIZE, DAZE, SILENCE, TAUNT
+- Beneficial: REGENERATION, PROTECTION, SWIFTNESS, AEGIS, FURY, MIGHT, IRON_WILL, INSPIRED
+- Immunity: RECENTLY_STUNNED, RECENTLY_FEARED, RECENTLY_KNOCKED_DOWN, RECENTLY_INSPIRED, IN_COMBAT
+
+#### 3. VARIABLE REDECLARATION
+**Location**: `src/services/combat.service.ts:921 and 1067`
+- Variable `now` declared twice in same scope
+- TypeScript compilation error
+
+### Integration Path Verification
+
+**Entry point**: Client sends `USE_SKILL` WebSocket message
+**Handler**: `src/api/websocket/combat.handler.ts:577` (handleUseSkill)
+**Calls**: `combatService.useSkill()`
+**Target**: `src/services/combat.service.ts:910` (useSkill method)
+
+#### Path 1: Skill Error Feedback
+- ✅ Handler calls combatService.useSkill()
+- ✅ Service validates cooldown/energy/range and throws errors
+- ✅ Handler catches errors and sends ERROR message with details
+- ❌ **BROKEN**: Variable `now` redeclaration will crash at runtime (line 921)
+
+#### Path 2: Buff/Debuff Tracking  
+- ✅ Service applies conditions via `applyCondition()` (line 1007)
+- ✅ Creates `BuffEventMessage` (line 1019)
+- ✅ Broadcasts via `combat.handler.ts:620`
+- ❌ **COMPLETELY BROKEN**: 
+  - `categorizeCondition()` references 18+ non-existent condition types → will ALWAYS return 'debuff' even for buffs
+  - `getConditionIconCode()` has incomplete Record<> causing TypeScript error
+  - Handler at line 351-352 reads wrong property names (`appliesConditions`/`removesConditions` instead of `appliesEffects`/`removesEffects`) → conditions from skill definitions will NEVER be read
+
+#### Path 3: Range Validation
+- ✅ Service validates range in `useSkill()` (line 944)
+- ✅ Throws error with maxRange and currentRange
+- ✅ Handler catches and sends to client
+- ✅ **CONNECTED**: Yes (but will crash before reaching due to `now` redeclaration)
+
+#### Path 4: Energy State Sync
+- ✅ Service builds casterState with energy/cooldowns (line 1077)
+- ✅ Returns in SkillResult
+- ✅ Handler sends in SKILL_RESULT message
+- ❌ **BROKEN**: Second `now` declaration at line 1067 will cause compilation failure
+
+### Disconnected Systems Found
+None - all systems are imported and called. The problems are **DATA REFERENCE FAILURES**, not disconnected systems.
+
+### Placeholder Code Found
+None - code is fully implemented but uses **wrong identifiers**.
+
+### Issues Summary (Priority Order)
+
+1. **CRITICAL - DATA MISMATCH**: `appliesConditions`/`removesConditions` should be `appliesEffects`/`removesEffects` → Buff system completely non-functional
+2. **CRITICAL - COMPILATION FAILURE**: Variable `now` declared twice → Code won't compile or run
+3. **CRITICAL - DATA MISMATCH**: 18+ condition type names don't exist in enum → Buff categorization always wrong, icon map incomplete
+4. **BLOCKING**: TypeScript Record<> incomplete causing compilation error
+
+### Root Cause
+The implementer **invented** property names and condition types without checking the actual codebase definitions. This is the classic "code compiles but doesn't work" anti-pattern - except it doesn't even compile!
+
+**CONNECTED**: NO - Multiple critical integration path failures due to wrong data references
+
+DECISION: has_issues

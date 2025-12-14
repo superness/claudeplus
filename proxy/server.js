@@ -3,6 +3,11 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+
+// Load environment variables from ai-game-studio/.env
+require('dotenv').config({ path: path.join(__dirname, '..', 'ai-game-studio', '.env') });
+
+const Anthropic = require('@anthropic-ai/sdk');
 const InfographicGenerator = require('./infographic-generator');
 const InfographicNarrator = require('./infographic-narrator');
 const BrowserAutomationService = require('./browser-automation-service');
@@ -27,6 +32,18 @@ class ClaudeProxy {
 
     // Attach WebSocket server to HTTP server
     this.wss = new WebSocket.Server({ server: this.httpServer });
+
+    // Anthropic client for direct API calls (ONLY for commentary feature)
+    // IMPORTANT: API key is NOT passed to Claude CLI processes - they use subscription login
+    if (process.env.ANTHROPIC_API_KEY) {
+      this.anthropic = new Anthropic();
+      console.log('[PROXY] Anthropic SDK initialized for commentary feature ONLY');
+      console.log('[PROXY] Claude CLI processes will use subscription login (API key excluded from env)');
+    } else {
+      this.anthropic = null;
+      console.log('[PROXY] No ANTHROPIC_API_KEY - commentary will be disabled');
+      console.log('[PROXY] Claude CLI processes will use subscription login');
+    }
 
     this.claudeProcess = null;
     this.clients = new Set();
@@ -1921,12 +1938,15 @@ Note: The reviewer stage would have decisions: [{"choice": "APPROVED", ...}, {"c
 Generate the complete pipeline system now:`;
 
         // Execute Claude Code to generate the pipeline
-        const response = await this.executeClaudeWithMCP(
+        const { output: response, usage } = await this.executeClaudeWithMCP(
           'pipeline_generator',
           systemPrompt,
           message.userPrompt,
           process.cwd()
         );
+
+        // Emit usage event
+        this.broadcastUsageEvent(usage, ws);
 
         console.log(`[PROXY] Claude Code response received, length: ${response.length}`);
 
@@ -2006,10 +2026,12 @@ Generate the complete pipeline system now:`;
 
       return new Promise((resolve, reject) => {
         console.log('[PROXY] Spawning claude process...');
+        // Create env without ANTHROPIC_API_KEY so Claude CLI uses subscription login, not API key
+        const { ANTHROPIC_API_KEY, ...cleanEnv } = process.env;
         const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
           cwd: process.cwd(),
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: process.env
+          env: cleanEnv
         });
 
         let output = '';
@@ -2485,9 +2507,10 @@ Your job now: Review the pipeline output and provide a helpful, conversational r
     }
   }
 
-  async generateCommentary(context, workingDir) {
+  async generateCommentary(context, workingDir, pipelineId = null) {
+    const startTime = Date.now();
     try {
-      const commentatorPrompt = `You are providing real-time status updates for a pipeline execution system.
+      const prompt = `You are providing real-time status updates for a pipeline execution system.
 
 Current context: ${context}
 
@@ -2495,7 +2518,7 @@ Provide engaging, concise commentary (1-2 sentences max) about what's happening.
 
 STYLE OPTIONS:
 - [STYLE:EXCITED] - For positive progress, breakthroughs
-- [STYLE:FOCUSED] - For intense work, analysis  
+- [STYLE:FOCUSED] - For intense work, analysis
 - [STYLE:CONCERNED] - For issues, retries, problems
 - [STYLE:TRIUMPHANT] - For completions, successes
 - [STYLE:CRITICAL] - For failures, serious issues
@@ -2504,13 +2527,42 @@ Example: [STYLE:EXCITED] The Lore Architect just awakened and is ready to craft 
 
 Your commentary:`;
 
-      const commentary = await this.executeClaudeWithMCP('commentator', commentatorPrompt, context, workingDir);
-      const rawCommentary = commentary.trim();
-      
+      // Use direct Anthropic API call - much cheaper than Claude Code CLI
+      const response = await this.anthropic.messages.create({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 150,
+        messages: [{ role: 'user', content: prompt }]
+      });
+
+      const durationMs = Date.now() - startTime;
+      const rawCommentary = response.content[0].text.trim();
+
+      // Extract usage from response
+      const inputTokens = response.usage?.input_tokens || 0;
+      const outputTokens = response.usage?.output_tokens || 0;
+      // Haiku pricing: $0.80/1M input, $4.00/1M output
+      const cost = (inputTokens / 1000000) * 0.80 + (outputTokens / 1000000) * 4.00;
+
+      const usageData = {
+        agentName: 'commentator',
+        model: 'claude-3-5-haiku-20241022',
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        durationMs,
+        estimatedCostUsd: cost,
+        pipelineId
+      };
+
+      console.log(`[PROXY] [COMMENTARY] Direct API: ${inputTokens}/${outputTokens} tokens, $${cost.toFixed(6)}, ${durationMs}ms`);
+      this.broadcastUsageEvent({ ...usageData, actionType: 'commentary' });
+
+      console.log(`[PROXY] [COMMENTARY] Raw output: "${rawCommentary.substring(0, 200)}..."`);
+
       // Parse styling directive if present
       const styleMatch = rawCommentary.match(/^\[STYLE:(\w+)\]\s*(.*)$/);
       let cleanCommentary, styleChoice;
-      
+
       if (styleMatch) {
         styleChoice = styleMatch[1].toLowerCase();
         cleanCommentary = styleMatch[2];
@@ -2518,7 +2570,7 @@ Your commentary:`;
         styleChoice = 'neutral';
         cleanCommentary = rawCommentary;
       }
-      
+
       return {
         content: cleanCommentary,
         style: styleChoice
@@ -2532,11 +2584,52 @@ Your commentary:`;
     }
   }
 
-  async sendCommentaryUpdate(ws, context, workingDir) {
+  // Broadcast AI usage event to connected clients
+  broadcastUsageEvent(usageData, targetWs = null) {
+    const usageMessage = JSON.stringify({
+      type: 'ai-usage',
+      content: {
+        timestamp: usageData.timestamp || new Date().toISOString(),
+        agentName: usageData.agentName,
+        actionType: usageData.actionType || 'agent_execution',
+        model: usageData.model,
+        inputTokens: usageData.inputTokens,
+        outputTokens: usageData.outputTokens,
+        totalTokens: usageData.totalTokens,
+        inputCharCount: usageData.inputCharCount,
+        outputCharCount: usageData.outputCharCount,
+        durationMs: usageData.durationMs,
+        estimatedCostUsd: usageData.estimatedCostUsd,
+        pipelineId: usageData.pipelineId,
+        stageId: usageData.stageId,
+        stageName: usageData.stageName
+      }
+    });
+
+    // If we have a target WebSocket, send to it
+    if (targetWs && targetWs.readyState === 1) {
+      targetWs.send(usageMessage);
+    }
+
+    // Also broadcast to all connected clients
+    this.clients.forEach(client => {
+      if (client.readyState === 1) {
+        try {
+          client.send(usageMessage);
+        } catch (err) {
+          console.error('[PROXY] Failed to send usage event to client:', err.message);
+        }
+      }
+    });
+
+    console.log(`[PROXY] [USAGE] Broadcasted usage event: ${usageData.agentName}, ${usageData.totalTokens} tokens, $${usageData.estimatedCostUsd?.toFixed(6) || '0.000000'}`);
+  }
+
+  async sendCommentaryUpdate(ws, context, workingDir, pipelineId = null) {
     // Run commentary generation in background without blocking pipeline
     setImmediate(async () => {
       try {
-        const commentary = await this.generateCommentary(context, workingDir);
+        const commentary = await this.generateCommentary(context, workingDir, pipelineId);
 
         const commentaryMessage = JSON.stringify({
           type: 'pipeline-commentary', // Different type so it doesn't interfere with status
@@ -2810,7 +2903,7 @@ Your commentary:`;
     console.log(`[PROXY] Execution count: ${executionCount}`);
 
     // Send resume notification
-    await this.sendCommentaryUpdate(ws, `Resuming pipeline "${pipelineState.name}" from stage "${currentStageId}". ${executionCount} stages already completed.`, workingDir);
+    await this.sendCommentaryUpdate(ws, `Resuming pipeline "${pipelineState.name}" from stage "${currentStageId}". ${executionCount} stages already completed.`, workingDir, pipelineState.id);
 
     // Continue the execution loop from where it left off
     while (currentStageId && executionCount < maxExecutions) {
@@ -2850,6 +2943,10 @@ Your commentary:`;
           }
         }));
 
+        // Send commentary for stage start
+        const inputSummary = (stage.inputs || []).length > 0 ? `Inputs: ${stage.inputs.join(', ')}` : 'No specific inputs';
+        await this.sendCommentaryUpdate(ws, `Stage "${stage.name}" starting. Agent: ${stage.agent}. Task: ${stage.description}. ${inputSummary}`, workingDir, pipelineState.id);
+
         // Build input for this stage
         let stageInput = userContext;
         const stageInputs = stage.inputs || stage.config?.inputs || [];
@@ -2871,6 +2968,50 @@ Your commentary:`;
               stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
             }
           });
+        }
+
+        // CHECK FOR PENDING USER FEEDBACK (persists until acknowledged)
+        try {
+          const feedbackStatePath = path.join(__dirname, 'pipeline-states', `${pipelineState.id}.json`);
+          if (fs.existsSync(feedbackStatePath)) {
+            const latestState = JSON.parse(fs.readFileSync(feedbackStatePath, 'utf8'));
+            const pendingFeedback = (latestState.userFeedback || []).filter(f => !f.consumed);
+
+            if (pendingFeedback.length > 0) {
+              stageInput += '\n\n=== USER FEEDBACK (REQUIRES ACKNOWLEDGMENT) ===\n';
+              stageInput += 'The user has provided feedback that must be addressed.\n';
+              stageInput += 'If you have ADDRESSED this feedback, include "FEEDBACK_ADDRESSED" in your response.\n';
+              stageInput += 'If this feedback is not relevant to your task, include "FEEDBACK_PASS" to pass it to the next agent.\n\n';
+
+              pendingFeedback.forEach((feedback, idx) => {
+                const shownToList = feedback.shownTo || [];
+                const showCount = shownToList.length;
+                stageInput += `[Feedback ${idx + 1}] (shown to ${showCount} prior agents):\n`;
+                stageInput += `${feedback.message}\n`;
+                stageInput += `(Submitted at: ${feedback.timestamp})\n\n`;
+
+                // Track that we showed this feedback to this stage
+                if (!shownToList.includes(stage.id)) {
+                  shownToList.push(stage.id);
+                  feedback.shownTo = shownToList;
+                }
+              });
+
+              console.log(`[PROXY] (Resume) Showing ${pendingFeedback.length} user feedback items to stage ${stage.id}`);
+
+              // Save the updated shownTo tracking
+              latestState.userFeedback = latestState.userFeedback.map(f => {
+                const matching = pendingFeedback.find(pf => pf.timestamp === f.timestamp);
+                return matching || f;
+              });
+              fs.writeFileSync(feedbackStatePath, JSON.stringify(latestState, null, 2));
+
+              // Track that we need to check for acknowledgment after this stage
+              pipelineState.pendingFeedbackCheck = pendingFeedback.map(f => f.id || f.timestamp);
+            }
+          }
+        } catch (feedbackError) {
+          console.error('[PROXY] Error loading user feedback in resume:', feedbackError.message);
         }
 
         // CHECK FOR SUB-PIPELINE EXECUTION
@@ -2948,8 +3089,16 @@ Your commentary:`;
         }
 
         // Execute Claude
-        const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
+        const { output: result, usage } = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
         results[stage.id] = result;
+
+        // Emit usage event for this stage
+        this.broadcastUsageEvent({
+          ...usage,
+          actionType: 'pipeline_stage',
+          stageName: stage.name,
+          stageId: stage.id
+        }, ws);
 
         // Log and save
         this.logPipelineExecution(pipelineState.id, 'stage_completed', {
@@ -2958,7 +3107,8 @@ Your commentary:`;
           stageName: stage.name,
           agent: stage.agent,
           output: result,
-          completedStagesCount: completedStages.length + 1
+          completedStagesCount: completedStages.length + 1,
+          usage: usage  // Include usage data in execution log
         });
 
         pipelineState.results = results;
@@ -2966,9 +3116,69 @@ Your commentary:`;
         pipelineState.completedStages = completedStages;
         await this.savePipelineState(pipelineState);
 
+        // Send stage complete notification with full result
+        ws.send(JSON.stringify({
+          type: 'pipeline-status',
+          pipelineId: pipelineState.id,
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: stage.agent.toUpperCase(),
+            stageName: stage.name,
+            type: 'stage-complete',
+            message: `${stage.name} completed`,
+            result: result || '',  // Include full agent output
+            style: 'triumphant'
+          }
+        }));
+
         // Determine next stage (build temporary pipeline object for routing)
         const tempPipeline = { stages, connections };
         const decision = this.extractDecision(result);
+
+        // Check if agent acknowledged user feedback
+        if (pipelineState.pendingFeedbackCheck && pipelineState.pendingFeedbackCheck.length > 0) {
+          const feedbackAddressed = result?.includes('FEEDBACK_ADDRESSED');
+          const feedbackPassed = result?.includes('FEEDBACK_PASS');
+
+          if (feedbackAddressed) {
+            // Mark feedback as consumed - agent addressed it
+            try {
+              const feedbackStatePath = path.join(__dirname, 'pipeline-states', `${pipelineState.id}.json`);
+              if (fs.existsSync(feedbackStatePath)) {
+                const latestState = JSON.parse(fs.readFileSync(feedbackStatePath, 'utf8'));
+                latestState.userFeedback = (latestState.userFeedback || []).map(f => ({
+                  ...f,
+                  consumed: true,
+                  consumedBy: stage.id,
+                  consumedAt: new Date().toISOString(),
+                  resolution: 'addressed'
+                }));
+                fs.writeFileSync(feedbackStatePath, JSON.stringify(latestState, null, 2));
+                const currentPath = path.join(__dirname, 'pipeline-states', 'current.json');
+                fs.writeFileSync(currentPath, JSON.stringify(latestState, null, 2));
+
+                console.log(`[PROXY] (Resume) User feedback ADDRESSED by ${stage.id}`);
+                this.logPipelineExecution(pipelineState.id, 'user_feedback_addressed', {
+                  stageId: stage.id,
+                  stageName: stage.name
+                });
+              }
+            } catch (e) {
+              console.error('[PROXY] Error marking feedback addressed in resume:', e.message);
+            }
+            pipelineState.pendingFeedbackCheck = [];
+          } else if (feedbackPassed) {
+            console.log(`[PROXY] (Resume) User feedback PASSED by ${stage.id} - will show to next agent`);
+          } else {
+            console.log(`[PROXY] (Resume) User feedback shown to ${stage.id} but not explicitly acknowledged - continuing to next agent`);
+          }
+        }
+
+        // Send commentary update for stage completion
+        const resultPreview = result?.substring(0, 500) || '';
+        const contextInfo = `Stage "${stage.name}" (${stage.agent}) completed. Decision: ${decision || 'none'}. Output preview: ${resultPreview}`;
+        await this.sendCommentaryUpdate(ws, contextInfo, workingDir, pipelineState.id);
+
         const nextStageId = this.determineNextStage(tempPipeline, stage.id, result);
 
         this.logPipelineExecution(pipelineState.id, 'stage_routed', {
@@ -3089,7 +3299,7 @@ Your commentary:`;
     }));
 
     // Send initial commentary
-    await this.sendCommentaryUpdate(ws, `A new pipeline execution is starting: "${pipeline.name}" with ${pipeline.stages?.length || 0} stages. The system is about to begin processing.`, workingDir);
+    await this.sendCommentaryUpdate(ws, `A new pipeline execution is starting: "${pipeline.name}" with ${pipeline.stages?.length || 0} stages. The system is about to begin processing.`, workingDir, pipelineState.id);
 
     // Copy MCP config to working directory
     const sourceMcpConfig = '/mnt/c/github/spaceship-simulator/.mcp.json';
@@ -3211,7 +3421,9 @@ Your commentary:`;
             if (pendingFeedback.length > 0) {
               stageInput += '\n\n=== USER FEEDBACK (IMPORTANT - Address these concerns) ===\n';
               stageInput += 'The user has provided the following feedback during pipeline execution.\n';
-              stageInput += 'You MUST incorporate this feedback into your work:\n\n';
+              stageInput += 'You MUST incorporate this feedback into your work.\n';
+              stageInput += 'If you have ADDRESSED this feedback, include "FEEDBACK_ADDRESSED" in your response.\n';
+              stageInput += 'If this feedback is NOT relevant to your role, include "FEEDBACK_PASS" to pass it to the next agent.\n\n';
 
               pendingFeedback.forEach((feedback, idx) => {
                 stageInput += `[Feedback ${idx + 1} - ${new Date(feedback.timestamp).toLocaleTimeString()}]\n`;
@@ -3220,28 +3432,35 @@ Your commentary:`;
 
               stageInput += '=== END USER FEEDBACK ===\n';
 
-              // Mark feedback as consumed
-              latestState.userFeedback = latestState.userFeedback.map(f => ({
-                ...f,
-                consumed: true,
-                consumedBy: stage.id,
-                consumedAt: new Date().toISOString()
-              }));
+              // Track that this stage received feedback (but don't mark consumed yet)
+              latestState.userFeedback = latestState.userFeedback.map(f => {
+                if (!f.consumed) {
+                  return {
+                    ...f,
+                    shownTo: [...(f.shownTo || []), stage.id],
+                    lastShownAt: new Date().toISOString()
+                  };
+                }
+                return f;
+              });
 
               // Save updated state
               fs.writeFileSync(feedbackStatePath, JSON.stringify(latestState, null, 2));
               const currentPath = path.join(__dirname, 'pipeline-states', 'current.json');
               fs.writeFileSync(currentPath, JSON.stringify(latestState, null, 2));
 
-              console.log(`[PROXY] Injected ${pendingFeedback.length} user feedback items into stage ${stage.id}`);
+              console.log(`[PROXY] Showing ${pendingFeedback.length} user feedback items to stage ${stage.id} (persists until acknowledged)`);
 
-              // Log feedback consumption
-              this.logPipelineExecution(pipelineState.id, 'user_feedback_consumed', {
+              // Log feedback shown (not consumed)
+              this.logPipelineExecution(pipelineState.id, 'user_feedback_shown', {
                 stageId: stage.id,
                 stageName: stage.name,
                 feedbackCount: pendingFeedback.length,
                 feedbackMessages: pendingFeedback.map(f => f.message)
               });
+
+              // Store pending feedback IDs to check for acknowledgment after stage completes
+              pipelineState.pendingFeedbackCheck = pendingFeedback.map(f => f.id || f.timestamp);
             }
           }
         } catch (feedbackErr) {
@@ -3250,25 +3469,8 @@ Your commentary:`;
 
         // Send commentator update for stage start with inputs context
         const inputSummary = stageInput ? `Input preview: ${stageInput.substring(0, 400)}...` : 'No input context';
-        await this.sendCommentaryUpdate(ws, `Stage "${stage.name}" starting. Agent: ${stage.agent}. Task: ${stage.description}. ${inputSummary}`, workingDir);
+        await this.sendCommentaryUpdate(ws, `Stage "${stage.name}" starting. Agent: ${stage.agent}. Task: ${stage.description}. ${inputSummary}`, workingDir, pipelineState.id);
         
-        // DEBUG: Log what input each agent is receiving
-        console.log(`[PROXY] [DEBUG] Agent ${stage.agent} receiving input (${stageInput.length} chars): ${stageInput.substring(0, 200)}...`);
-        console.log(`[PROXY] [DEBUG] Available results for ${stage.agent}:`, Object.keys(results));
-        console.log(`[PROXY] [DEBUG] Resolved stage inputs:`, stageInputs);
-        console.log(`[PROXY] [DEBUG] Raw stage.inputs:`, stage.inputs);
-        console.log(`[PROXY] [DEBUG] Raw stage.config.inputs:`, stage.config?.inputs);
-        
-        // DEBUG: Log detailed input content for validators
-        if (stage.agent === 'proof_validator') {
-          console.log(`[PROXY] [DEBUG] VALIDATOR INPUT DETAILS:`);
-          stageInputs.forEach(inputStage => {
-            if (results[inputStage]) {
-              console.log(`[PROXY] [DEBUG] - ${inputStage}: ${results[inputStage].substring(0, 300)}...`);
-            }
-          });
-        }
-
         // CHECK FOR SUB-PIPELINE EXECUTION
         if (stage.type === 'sub_pipeline' && stage.config && stage.config.pipeline) {
           console.log(`[PROXY] Sub-pipeline detected: ${stage.config.pipeline}`);
@@ -3296,7 +3498,7 @@ Your commentary:`;
             }
           }));
 
-          await this.sendCommentaryUpdate(ws, `🔀 Entering sub-pipeline: "${subPipelineTemplate.name}". This pipeline has ${subPipelineTemplate.stages.length} stages and will execute nested within the current pipeline.`, workingDir);
+          await this.sendCommentaryUpdate(ws, `🔀 Entering sub-pipeline: "${subPipelineTemplate.name}". This pipeline has ${subPipelineTemplate.stages.length} stages and will execute nested within the current pipeline.`, workingDir, pipelineState.id);
 
           // Execute the sub-pipeline with context determined by inheritContext flag
           // If inheritContext is true, use the full user context
@@ -3326,7 +3528,7 @@ Your commentary:`;
             }
           }));
 
-          await this.sendCommentaryUpdate(ws, `✅ Sub-pipeline "${subPipelineTemplate.name}" completed successfully. Returning to meta-pipeline.`, workingDir);
+          await this.sendCommentaryUpdate(ws, `✅ Sub-pipeline "${subPipelineTemplate.name}" completed successfully. Returning to meta-pipeline.`, workingDir, pipelineState.id);
 
           // Log sub-pipeline execution
           this.logPipelineExecution(pipelineState.id, 'sub_pipeline_completed', {
@@ -3426,8 +3628,17 @@ Your commentary:`;
         console.log(`[PROXY] [DEBUG] Agent ${stage.agent} final prompt (${agentPrompt.length} chars): ${agentPrompt.substring(0, 300)}...`);
 
         // Execute Claude with MCP, passing pipeline state to save PID
-        const result = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
+        const { output: result, usage } = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
         results[stage.id] = result;
+
+        // Emit usage event for this stage
+        const usageWs = this.getPipelineWebSocket(pipelineState.id, ws);
+        this.broadcastUsageEvent({
+          ...usage,
+          actionType: 'pipeline_stage',
+          stageName: stage.name,
+          stageId: stage.id
+        }, usageWs);
 
         // Log stage completion with full output and prompt
         this.logPipelineExecution(pipelineState.id, 'stage_completed', {
@@ -3440,7 +3651,8 @@ Your commentary:`;
           outputLength: result?.length || 0,
           output: result,  // Full output stored for analysis
           completedStagesCount: pipelineState.completedStages.length + 1,
-          totalExecutions: executionCount
+          totalExecutions: executionCount,
+          usage: usage  // Include usage data in execution log
         });
 
         // Send agent output to UI (use current WebSocket)
@@ -3461,15 +3673,18 @@ Your commentary:`;
         pipelineState.completedStages.push(stage.id);
         await this.savePipelineState(pipelineState);
 
-        // Send stage complete notification (use current WebSocket)
+        // Send stage complete notification with full result (use current WebSocket)
         const stageCompleteWs = this.getPipelineWebSocket(pipelineState.id, ws);
         stageCompleteWs.send(JSON.stringify({
           type: 'pipeline-status',
+          pipelineId: pipelineState.id,
           content: {
             timestamp: new Date().toISOString(),
             agent: stage.agent.toUpperCase(),
+            stageName: stage.name,
             type: 'stage-complete',
             message: `${stage.name} completed`,
+            result: result || '',  // Include full agent output
             style: 'triumphant'
           }
         }));
@@ -3502,10 +3717,49 @@ Your commentary:`;
 
         const decision = this.extractDecision(result);
 
+        // Check if agent acknowledged user feedback
+        if (pipelineState.pendingFeedbackCheck && pipelineState.pendingFeedbackCheck.length > 0) {
+          const feedbackAddressed = result?.includes('FEEDBACK_ADDRESSED');
+          const feedbackPassed = result?.includes('FEEDBACK_PASS');
+
+          if (feedbackAddressed) {
+            // Mark feedback as consumed - agent addressed it
+            try {
+              const feedbackStatePath = path.join(__dirname, 'pipeline-states', `${pipelineState.id}.json`);
+              if (fs.existsSync(feedbackStatePath)) {
+                const latestState = JSON.parse(fs.readFileSync(feedbackStatePath, 'utf8'));
+                latestState.userFeedback = (latestState.userFeedback || []).map(f => ({
+                  ...f,
+                  consumed: true,
+                  consumedBy: stage.id,
+                  consumedAt: new Date().toISOString(),
+                  resolution: 'addressed'
+                }));
+                fs.writeFileSync(feedbackStatePath, JSON.stringify(latestState, null, 2));
+                const currentPath = path.join(__dirname, 'pipeline-states', 'current.json');
+                fs.writeFileSync(currentPath, JSON.stringify(latestState, null, 2));
+
+                console.log(`[PROXY] User feedback ADDRESSED by ${stage.id}`);
+                this.logPipelineExecution(pipelineState.id, 'user_feedback_addressed', {
+                  stageId: stage.id,
+                  stageName: stage.name
+                });
+              }
+            } catch (e) {
+              console.error('[PROXY] Error marking feedback addressed:', e.message);
+            }
+            pipelineState.pendingFeedbackCheck = [];
+          } else if (feedbackPassed) {
+            console.log(`[PROXY] User feedback PASSED by ${stage.id} - will show to next agent`);
+          } else {
+            console.log(`[PROXY] User feedback shown to ${stage.id} but not explicitly acknowledged - continuing to next agent`);
+          }
+        }
+
         // Send commentator update for stage completion with actual content
         const resultPreview = result?.substring(0, 500) || '';
         const contextInfo = `Stage "${stage.name}" (${stage.agent}) completed. Decision: ${decision || 'none'}. Output preview: ${resultPreview}`;
-        await this.sendCommentaryUpdate(ws, contextInfo, workingDir);
+        await this.sendCommentaryUpdate(ws, contextInfo, workingDir, pipelineState.id);
         const nextStageId = this.determineNextStage(pipeline, stage.id, result);
         console.log(`[PROXY] [FLOW] Next stage determined: ${nextStageId}`);
 
@@ -3756,11 +4010,25 @@ Your commentary:`;
 
   async executeClaudeWithMCP(agentName, prompt, input, workingDir, pipelineState = null) {
     return new Promise((resolve, reject) => {
-      const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
+      const startTime = Date.now();
+      const fullPrompt = `${prompt}\n\nUser Input: ${input}`;
+      const inputCharCount = fullPrompt.length;
+
+      // Use stream-json for real-time feedback (requires --print --verbose --include-partial-messages)
+      // IMPORTANT: Exclude ANTHROPIC_API_KEY so Claude CLI uses subscription login, not API key
+      const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
+      const claude = spawn('claude', [
+        '--permission-mode', 'bypassPermissions',
+        '--print',
+        '--verbose',
+        '--output-format', 'stream-json',
+        '--include-partial-messages',
+        '-'  // Read from stdin
+      ], {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
-          ...process.env,
+          ...cleanEnv,
           PWD: workingDir,
           AGENT_NAME: agentName.toUpperCase()
         }
@@ -3775,13 +4043,280 @@ Your commentary:`;
         console.log(`[PROXY] Saved PID ${claude.pid} for pipeline ${pipelineState.id}`);
       }
 
-      let output = '';
+      let lineBuffer = '';
       let errorOutput = '';
+      let streamingText = '';
+      let workLog = [];
+      let usageData = {
+        agentName,
+        model: 'unknown',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        inputCharCount,
+        outputCharCount: 0,
+        durationMs: 0,
+        estimatedCostUsd: 0,
+        timestamp: new Date().toISOString(),
+        pipelineId: pipelineState?.id || null,
+        stageId: pipelineState?.currentStage || null,
+        modelBreakdown: {}
+      };
+      let currentToolBlock = null;
+      let lastBroadcast = 0;
+
+      // Broadcast real-time event to all connected clients
+      const broadcastStreamEvent = (eventType, data) => {
+        const message = JSON.stringify({
+          type: 'agent-stream',
+          content: {
+            timestamp: new Date().toISOString(),
+            agent: agentName.toUpperCase(),
+            pipelineId: pipelineState?.id || null,
+            eventType,
+            ...data
+          }
+        });
+        this.clients.forEach(client => {
+          if (client.readyState === 1) {
+            try { client.send(message); } catch (e) {}
+          }
+        });
+      };
 
       claude.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        console.log(`[PROXY] [${agentName}] stdout: ${chunk.trim()}`);
-        output += chunk;
+        lineBuffer += data.toString();
+
+        // Process complete lines
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop(); // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            let event = JSON.parse(line);
+
+            // Unwrap stream_event wrapper if present
+            if (event.type === 'stream_event' && event.event) {
+              event = event.event;
+            }
+
+            // Handle different event types
+            if (event.type === 'content_block_start') {
+              const block = event.content_block;
+              if (block?.type === 'tool_use') {
+                currentToolBlock = { name: block.name, id: block.id, input: '' };
+                workLog.push({
+                  type: 'tool_start',
+                  tool: block.name,
+                  timestamp: new Date().toISOString()
+                });
+                broadcastStreamEvent('tool_start', { tool: block.name });
+                console.log(`[PROXY] [${agentName}] 🔧 Tool: ${block.name}`);
+              }
+            }
+
+            else if (event.type === 'content_block_delta') {
+              const delta = event.delta;
+
+              // Text streaming (thinking/reasoning commentary)
+              if (delta?.type === 'text_delta' && delta.text) {
+                streamingText += delta.text;
+
+                // Throttle broadcasts to avoid flooding (every 300ms for more real-time feel)
+                const now = Date.now();
+                if (now - lastBroadcast > 300) {
+                  // Send more context - last 500 chars for better visibility
+                  broadcastStreamEvent('text_delta', {
+                    text: delta.text,
+                    accumulated: streamingText.slice(-500),
+                    totalLength: streamingText.length
+                  });
+                  lastBroadcast = now;
+                }
+              }
+
+              // Thinking block content (if Claude exposes this)
+              else if (delta?.type === 'thinking_delta' && delta.thinking) {
+                broadcastStreamEvent('thinking', {
+                  text: delta.thinking,
+                  type: 'reasoning'
+                });
+              }
+
+              // Tool input being constructed
+              else if (delta?.type === 'input_json_delta' && currentToolBlock) {
+                currentToolBlock.input += delta.partial_json || '';
+              }
+            }
+
+            // Handle thinking blocks if they appear as content blocks
+            else if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
+              broadcastStreamEvent('thinking_start', { type: 'reasoning' });
+              console.log(`[PROXY] [${agentName}] 💭 Thinking...`);
+            }
+
+            else if (event.type === 'content_block_stop') {
+              if (currentToolBlock) {
+                // Try to parse the accumulated input
+                let parsedInput = currentToolBlock.input;
+                try {
+                  parsedInput = JSON.parse(currentToolBlock.input);
+                } catch (e) {}
+
+                workLog.push({
+                  type: 'tool_call',
+                  tool: currentToolBlock.name,
+                  input: parsedInput,
+                  timestamp: new Date().toISOString()
+                });
+
+                // Special handling for TodoWrite - broadcast the full todo list
+                if (currentToolBlock.name === 'TodoWrite' && parsedInput?.todos) {
+                  broadcastStreamEvent('todo_update', {
+                    tool: 'TodoWrite',
+                    todos: parsedInput.todos
+                  });
+                  console.log(`[PROXY] [${agentName}] 📋 Todo update: ${parsedInput.todos.length} items`);
+                }
+                // Special handling for planning tools
+                else if (currentToolBlock.name === 'EnterPlanMode') {
+                  broadcastStreamEvent('plan_start', { tool: 'EnterPlanMode' });
+                  console.log(`[PROXY] [${agentName}] 📝 Entering plan mode`);
+                }
+                else if (currentToolBlock.name === 'ExitPlanMode') {
+                  broadcastStreamEvent('plan_complete', {
+                    tool: 'ExitPlanMode',
+                    launchSwarm: parsedInput?.launchSwarm
+                  });
+                  console.log(`[PROXY] [${agentName}] ✅ Exiting plan mode`);
+                }
+                // Special handling for file operations - show what's being read/written
+                else if (['Read', 'Write', 'Edit'].includes(currentToolBlock.name)) {
+                  const filePath = parsedInput?.file_path || parsedInput?.path || '';
+                  broadcastStreamEvent('file_operation', {
+                    tool: currentToolBlock.name,
+                    file: filePath.split('/').pop() || filePath,
+                    fullPath: filePath
+                  });
+                }
+                // Default tool_call broadcast
+                else {
+                  broadcastStreamEvent('tool_call', {
+                    tool: currentToolBlock.name,
+                    input: typeof parsedInput === 'string' ? parsedInput.slice(0, 200) : JSON.stringify(parsedInput).slice(0, 200)
+                  });
+                }
+                currentToolBlock = null;
+              }
+            }
+
+            // Tool result
+            else if (event.type === 'tool_result') {
+              const result = event.content || event.result || '';
+              const resultPreview = typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result).slice(0, 200);
+              workLog.push({
+                type: 'tool_result',
+                tool_use_id: event.tool_use_id,
+                content: resultPreview,
+                timestamp: new Date().toISOString()
+              });
+              broadcastStreamEvent('tool_result', { result: resultPreview });
+            }
+
+            // Message complete - extract usage
+            else if (event.type === 'message_stop' || event.type === 'message') {
+              if (event.message?.usage || event.usage) {
+                const usage = event.message?.usage || event.usage;
+                usageData.inputTokens = usage.input_tokens || 0;
+                usageData.outputTokens = usage.output_tokens || 0;
+                usageData.cacheReadTokens = usage.cache_read_input_tokens || 0;
+                usageData.cacheWriteTokens = usage.cache_creation_input_tokens || 0;
+                usageData.totalTokens = usageData.inputTokens + usageData.outputTokens;
+              }
+              if (event.message?.model) {
+                usageData.model = event.message.model;
+              }
+            }
+
+            // Handle assistant messages (completed tool calls)
+            else if (event.type === 'assistant' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'tool_use') {
+                  workLog.push({
+                    type: 'tool_call',
+                    tool: block.name,
+                    input: block.input,
+                    timestamp: new Date().toISOString()
+                  });
+                  broadcastStreamEvent('tool_start', { tool: block.name });
+                  console.log(`[PROXY] [${agentName}] 🔧 Tool: ${block.name}`);
+                } else if (block.type === 'text' && block.text) {
+                  // Skip - this text was already streamed via content_block_delta events
+                  // Broadcasting again would cause duplicate messages
+                }
+              }
+              // Extract usage from assistant message
+              if (event.message.usage) {
+                usageData.inputTokens = event.message.usage.input_tokens || usageData.inputTokens;
+                usageData.outputTokens = event.message.usage.output_tokens || usageData.outputTokens;
+                usageData.totalTokens = usageData.inputTokens + usageData.outputTokens;
+              }
+              if (event.message.model) {
+                usageData.model = event.message.model;
+              }
+            }
+
+            // Handle user messages (tool results)
+            else if (event.type === 'user' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'tool_result') {
+                  const resultPreview = typeof block.content === 'string'
+                    ? block.content.slice(0, 200)
+                    : JSON.stringify(block.content).slice(0, 200);
+                  workLog.push({
+                    type: 'tool_result',
+                    tool_use_id: block.tool_use_id,
+                    content: resultPreview,
+                    is_error: block.is_error || false,
+                    timestamp: new Date().toISOString()
+                  });
+                  broadcastStreamEvent('tool_result', {
+                    result: resultPreview,
+                    is_error: block.is_error || false
+                  });
+                }
+              }
+            }
+
+            // Result event (final output)
+            else if (event.type === 'result') {
+              if (event.result) {
+                streamingText = event.result;
+              }
+              if (event.usage) {
+                usageData.inputTokens = event.usage.input_tokens || usageData.inputTokens;
+                usageData.outputTokens = event.usage.output_tokens || usageData.outputTokens;
+                usageData.totalTokens = usageData.inputTokens + usageData.outputTokens;
+              }
+              if (event.total_cost_usd !== undefined) {
+                usageData.estimatedCostUsd = event.total_cost_usd;
+              }
+              if (event.model) {
+                usageData.model = event.model;
+              }
+            }
+
+          } catch (parseErr) {
+            // Not JSON, might be plain text output
+            if (line.trim()) {
+              streamingText += line + '\n';
+            }
+          }
+        }
       });
 
       claude.stderr.on('data', (data) => {
@@ -3791,10 +4326,28 @@ Your commentary:`;
       });
 
       claude.on('close', (code) => {
+        const endTime = Date.now();
+        usageData.durationMs = endTime - startTime;
+        usageData.outputCharCount = streamingText.length;
+
+        // Broadcast completion
+        broadcastStreamEvent('complete', {
+          duration: usageData.durationMs,
+          workLogCount: workLog.length
+        });
+
+        // Log usage
+        console.log(`[PROXY] [USAGE] Agent: ${agentName}, Model: ${usageData.model}, Input: ${usageData.inputTokens} tokens, Output: ${usageData.outputTokens} tokens, Duration: ${usageData.durationMs}ms, Cost: $${usageData.estimatedCostUsd.toFixed(6)}`);
+        console.log(`[PROXY] [${agentName}] Work log: ${workLog.length} entries`);
+
         if (code !== 0) {
           reject(new Error(`Claude exited with code ${code}: ${errorOutput}`));
         } else {
-          resolve(output.trim());
+          resolve({
+            output: streamingText.trim(),
+            usage: usageData,
+            workLog
+          });
         }
       });
 
@@ -3802,8 +4355,7 @@ Your commentary:`;
         reject(error);
       });
 
-      // Send prompt and input to Claude
-      const fullPrompt = `${prompt}\n\nUser Input: ${input}`;
+      // Send prompt to Claude via stdin
       console.log(`[PROXY] [${agentName}] Sending prompt: ${fullPrompt.substring(0, 200)}...`);
       claude.stdin.write(fullPrompt);
       claude.stdin.end();

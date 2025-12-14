@@ -1,0 +1,32 @@
+**Bug Fix Summary**
+
+**Bug**: Enemy attacks execute 80+ times per attack cycle instead of once
+
+**Root Cause**: The EnemyAI caches attack decisions for 0.5 seconds (AI_TICK_RATE) and returns the same decision every frame. EntityManager executes this cached attack decision on each frame, causing 30-80+ rapid-fire damage hits at 60+ FPS instead of a single attack. The attack was designed as a one-shot action but treated as a continuous action like movement.
+
+**Fix**: Added `clearCurrentDecision()` method to EnemyAI and called it immediately after executing ATTACK actions in EntityManager. This ensures attack decisions execute exactly once while preserving cached behavior for continuous actions (MOVE, IDLE, FLEE).
+
+**Files Modified**:
+- `client/src/game/entities/EnemyAI.ts`: Added `clearCurrentDecision()` method (lines 344-346) to nullify cached decision
+- `client/src/game/entities/EntityManager.ts`: Inserted `enemy.getAI().clearCurrentDecision()` call after ATTACK execution (lines 522-523)
+
+**Impact**:
+- **Fixed**: Combat damage now scales correctly per design (baseDPS × ATTACK_COOLDOWN × DAMAGE_SCALE)
+- **Fixed**: Combat is now FPS-independent (previously 60 FPS = 30 hits, 144 FPS = 72 hits)
+- **Preserved**: Continuous AI actions (movement, idle, flee) still cache correctly for 0.5 seconds
+- **Preserved**: 5-second attack cooldown mechanics unchanged
+- **Improved**: Combat log no longer spams 80+ identical messages per attack
+- **Improved**: Game balance restored - enemies deal intended damage instead of 80x multiplier
+
+**Testing Notes**:
+1. Enter combat zone (e.g., Damocles Gulf Sector)
+2. Engage enemy (e.g., Cultist) and observe combat log
+3. **Expected**: Single "[Combat] Cultist's Attack hits for X" message per 5-second cooldown cycle
+4. **Expected**: Player health decreases gradually instead of rapid chunks
+5. **Verify**: Enemy movement/positioning still smooth (cached MOVE actions working)
+6. **Verify**: Attack cooldown timing remains 5 seconds between attacks
+
+**Comments Added**:
+- None required - the fix is self-documenting. The method name `clearCurrentDecision()` and its placement immediately after attack execution clearly communicates intent without needing explanatory comments.
+
+DECISION: documentation_complete

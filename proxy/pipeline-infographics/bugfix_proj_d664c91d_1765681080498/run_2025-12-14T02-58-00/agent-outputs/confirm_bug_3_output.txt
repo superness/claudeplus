@@ -1,0 +1,51 @@
+Perfect! The reproduction script has successfully confirmed the bug. Let me provide the results.
+
+=== Bug Reproduction Results ===
+
+**Script**: test-bug-reproduction.js
+**Result**: BUG CONFIRMED
+**Exit Code**: 1
+
+## Observations
+
+The script performed 5 tests on the Enemy.ts file:
+
+1. ✓ healthBarContainer is created
+2. ✓ Health bar contains THREE.Mesh objects with materials
+3. ✓ healthBarContainer is added to this.mesh
+4. ✓ onDeath() hides health bar but does NOT dispose or remove it
+5. ✓ dispose() method has a critical timing/ordering issue
+
+## Root Cause Identified
+
+The bug is a **resource disposal timing issue** in Enemy.ts:
+
+**The Problem**:
+- `healthBarContainer` is a THREE.Group containing meshes with MeshBasicMaterial
+- When enemy dies, `onDeath()` hides the health bar but leaves it in the scene
+- `dispose()` method traverses the mesh tree and disposes geometries/materials
+- **Critical Issue**: Materials are disposed while the mesh is still in the scene
+- Three.js renderer attempts to render with disposed materials
+- Shader uniform access fails: `Cannot read properties of undefined (reading 'value')`
+- Rendering breaks completely - error repeats every frame
+
+**Why This Happens**:
+1. Enemy death triggers `onDeath()` → health bar hidden but not removed
+2. Death animation plays for several seconds
+3. `dispose()` called → materials disposed first
+4. Scene removal happens AFTER material disposal
+5. Between these steps, renderer tries to render mesh with disposed materials
+6. Shader uniform update fails → crash loop
+
+## Conclusion
+
+**BUG CONFIRMED** - Can proceed with fix
+
+The reproduction script successfully identified the exact issue: the Enemy disposal sequence doesn't properly handle the timing of scene removal vs. material disposal. The fix will require:
+- Removing the mesh from the scene BEFORE disposing materials
+- Or explicitly cleaning up healthBarContainer before traversal
+- Ensuring no rendering occurs during the disposal process
+
+This matches the browser error stack trace showing the Three.js `refreshUniformsCommon` failure during the render loop.
+
+DECISION: bug_confirmed

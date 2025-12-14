@@ -1,0 +1,47 @@
+Now I have enough information. The Three.js error `Cannot read properties of undefined (reading 'value')` in `refreshUniformsCommon` indicates that a shader uniform is trying to access a property that no longer exists. This is a classic symptom of incomplete resource disposal. Let me analyze the complete picture.
+
+**Bug Summary**: Three.js rendering crash after enemy death due to incomplete disposal of health bar materials
+
+**Expected Behavior**: When an enemy dies and loot drops are created, all enemy resources (including health bar meshes and materials) should be properly disposed to prevent dangling references that cause Three.js shader uniform errors.
+
+**Actual Behavior**: After enemy death, the game continues to render for a few frames, then crashes with `TypeError: Cannot read properties of undefined (reading 'value')` in Three.js's `refreshUniformsCommon` function. This error repeats continuously, breaking all rendering and making enemies invisible.
+
+**Affected Systems**: 
+- Rendering system (Three.js WebGL renderer)
+- Loot visualization system (creates loot orbs after enemy death)
+- Enemy lifecycle management (death animation and disposal)
+- Combat system (continues to function but visuals break)
+
+**Severity**: HIGH
+
+**Reproduction Steps**:
+1. Start combat with enemies (e.g., Gretchin, Shoota Boys)
+2. Kill an enemy using skills like "Holy Strike"
+3. Loot orb is created at enemy position
+4. Enemy begins death animation (fade and particle effects)
+5. Three.js throws `Cannot read properties of undefined (reading 'value')` error
+6. Rendering breaks - enemies become invisible, game is unplayable
+
+**Likely Source Files**: 
+- `/mnt/c/github/40kgw/output/client/src/game/entities/Enemy.ts` (lines 1233-1256: `onDeath()`, lines 1641-1660: `dispose()`)
+- `/mnt/c/github/40kgw/output/client/src/combat/LootVisualization.ts` (lines 53-89: LootOrb constructor, lines 335-354: dispose method)
+- `/mnt/c/github/40kgw/output/client/src/game/Game.ts` (lines 676-690: enemy death callback, lines 936-941: render loop)
+
+**Initial Hypothesis**: 
+
+The root cause is that the Enemy's `dispose()` method (lines 1641-1660) does **not** properly dispose of the `healthBarContainer` and its child meshes. When an enemy dies:
+
+1. `onDeath()` is called, which hides the health bar but doesn't remove it from the scene
+2. Death animation plays for several seconds (varies by threat tier)
+3. Eventually `dispose()` is called, which traverses `this.mesh` to dispose geometries/materials
+4. **BUT**: `healthBarContainer` is a child of `this.mesh` (line 1060), and contains THREE.Mesh objects with materials
+5. The disposal loop only checks for `THREE.Mesh` and `THREE.Points` but doesn't handle the nested Group structure properly
+6. Materials in the health bar remain in GPU memory with active shader programs
+7. When Three.js tries to render the next frame, it encounters materials whose textures or uniforms have been partially cleaned up
+8. The shader uniform update fails because the uniform's value property is undefined
+
+**Critical Finding**: Enemy.ts line 1660 only removes `this.mesh` from the scene, but the `healthBarContainer` and its materials are not explicitly disposed. The traverse loop at line 1644 may not properly handle the THREE.Group structure of the health bar, leaving dangling material references that cause shader uniform access errors during rendering.
+
+**Additional Evidence**: The error occurs repeatedly in the game loop (line 877 calls render at line 940), suggesting that the problematic material is still in the scene or renderer's active material list, causing the uniform refresh to fail on every frame.
+
+DECISION: analysis_complete

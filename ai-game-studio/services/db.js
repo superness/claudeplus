@@ -72,6 +72,31 @@ class DatabaseService {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects(id)
       );
+
+      CREATE TABLE IF NOT EXISTS ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT,
+        pipeline_id TEXT,
+        stage_id TEXT,
+        agent_name TEXT,
+        action_type TEXT NOT NULL,
+        model TEXT DEFAULT 'claude-sonnet-4-20250514',
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_write_tokens INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_project ON ai_usage(project_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_pipeline ON ai_usage(pipeline_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action_type);
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at);
     `);
 
     // Migration: Add design_complexity column if it doesn't exist
@@ -425,6 +450,236 @@ class DatabaseService {
   clearChatHistory(projectId) {
     const stmt = this.db.prepare('DELETE FROM chat_history WHERE project_id = ?');
     return stmt.run(projectId);
+  }
+
+  // ============================================
+  // AI Usage Tracking Methods
+  // ============================================
+
+  // Pricing per 1M tokens (as of Dec 2024)
+  static PRICING = {
+    'claude-sonnet-4-20250514': { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 },
+    'claude-3-5-sonnet-20241022': { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 },
+    'claude-3-5-haiku-20241022': { input: 0.80, output: 4.00, cacheRead: 0.08, cacheWrite: 1.00 },
+    'claude-3-opus-20240229': { input: 15.00, output: 75.00, cacheRead: 1.50, cacheWrite: 18.75 },
+    'default': { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+  };
+
+  /**
+   * Calculate cost from token counts
+   */
+  calculateCost(model, inputTokens, outputTokens, cacheReadTokens = 0, cacheWriteTokens = 0) {
+    const pricing = DatabaseService.PRICING[model] || DatabaseService.PRICING['default'];
+    const cost = (
+      (inputTokens / 1000000) * pricing.input +
+      (outputTokens / 1000000) * pricing.output +
+      (cacheReadTokens / 1000000) * pricing.cacheRead +
+      (cacheWriteTokens / 1000000) * pricing.cacheWrite
+    );
+    return Math.round(cost * 1000000) / 1000000; // Round to 6 decimal places
+  }
+
+  /**
+   * Record AI usage
+   */
+  recordAiUsage(data) {
+    const {
+      projectId = null,
+      pipelineId = null,
+      stageId = null,
+      agentName = null,
+      actionType,
+      model = 'claude-sonnet-4-20250514',
+      inputTokens = 0,
+      outputTokens = 0,
+      cacheReadTokens = 0,
+      cacheWriteTokens = 0,
+      durationMs = 0,
+      metadata = null,
+      costUsd: providedCost = null  // Accept actual cost from Claude CLI
+    } = data;
+
+    const totalTokens = inputTokens + outputTokens;
+    // Use provided cost from Claude CLI if available, otherwise calculate
+    const costUsd = providedCost !== null ? providedCost : this.calculateCost(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO ai_usage (
+        project_id, pipeline_id, stage_id, agent_name, action_type, model,
+        input_tokens, output_tokens, total_tokens, cache_read_tokens, cache_write_tokens,
+        cost_usd, duration_ms, metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      projectId, pipelineId, stageId, agentName, actionType, model,
+      inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens,
+      costUsd, durationMs, metadata ? JSON.stringify(metadata) : null
+    );
+
+    return { id: result.lastInsertRowid, costUsd, totalTokens };
+  }
+
+  /**
+   * Get AI usage for a project
+   */
+  getProjectUsage(projectId, options = {}) {
+    const { limit = 100, offset = 0, actionType = null, startDate = null, endDate = null } = options;
+
+    let query = 'SELECT * FROM ai_usage WHERE project_id = ?';
+    const params = [projectId];
+
+    if (actionType) {
+      query += ' AND action_type = ?';
+      params.push(actionType);
+    }
+    if (startDate) {
+      query += ' AND created_at >= ?';
+      params.push(startDate);
+    }
+    if (endDate) {
+      query += ' AND created_at <= ?';
+      params.push(endDate);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const stmt = this.db.prepare(query);
+    return stmt.all(...params).map(row => ({
+      ...row,
+      metadata: row.metadata ? JSON.parse(row.metadata) : null
+    }));
+  }
+
+  /**
+   * Get usage summary for a project
+   */
+  getProjectUsageSummary(projectId) {
+    const stmt = this.db.prepare(`
+      SELECT
+        action_type,
+        COUNT(*) as call_count,
+        SUM(input_tokens) as total_input_tokens,
+        SUM(output_tokens) as total_output_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cache_read_tokens) as total_cache_read,
+        SUM(cache_write_tokens) as total_cache_write,
+        SUM(cost_usd) as total_cost,
+        AVG(duration_ms) as avg_duration_ms
+      FROM ai_usage
+      WHERE project_id = ?
+      GROUP BY action_type
+    `);
+    return stmt.all(projectId);
+  }
+
+  /**
+   * Get usage summary for a pipeline
+   */
+  getPipelineUsageSummary(pipelineId) {
+    const stmt = this.db.prepare(`
+      SELECT
+        stage_id,
+        agent_name,
+        action_type,
+        COUNT(*) as call_count,
+        SUM(input_tokens) as total_input_tokens,
+        SUM(output_tokens) as total_output_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost_usd) as total_cost,
+        AVG(duration_ms) as avg_duration_ms
+      FROM ai_usage
+      WHERE pipeline_id = ?
+      GROUP BY stage_id, agent_name
+      ORDER BY MIN(created_at)
+    `);
+    return stmt.all(pipelineId);
+  }
+
+  /**
+   * Get global usage summary (all projects)
+   */
+  getGlobalUsageSummary(options = {}) {
+    const { startDate = null, endDate = null } = options;
+
+    let query = `
+      SELECT
+        action_type,
+        COUNT(*) as call_count,
+        SUM(input_tokens) as total_input_tokens,
+        SUM(output_tokens) as total_output_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost_usd) as total_cost,
+        AVG(duration_ms) as avg_duration_ms
+      FROM ai_usage
+    `;
+    const params = [];
+
+    if (startDate || endDate) {
+      query += ' WHERE 1=1';
+      if (startDate) {
+        query += ' AND created_at >= ?';
+        params.push(startDate);
+      }
+      if (endDate) {
+        query += ' AND created_at <= ?';
+        params.push(endDate);
+      }
+    }
+
+    query += ' GROUP BY action_type';
+
+    const stmt = this.db.prepare(query);
+    return stmt.all(...params);
+  }
+
+  /**
+   * Get total cost across all usage
+   */
+  getTotalCost(projectId = null) {
+    let query = 'SELECT SUM(cost_usd) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count FROM ai_usage';
+    const params = [];
+
+    if (projectId) {
+      query += ' WHERE project_id = ?';
+      params.push(projectId);
+    }
+
+    const stmt = this.db.prepare(query);
+    const result = stmt.get(...params);
+    return {
+      totalCost: result.total_cost || 0,
+      totalTokens: result.total_tokens || 0,
+      callCount: result.call_count || 0
+    };
+  }
+
+  /**
+   * Get daily usage breakdown
+   */
+  getDailyUsage(projectId = null, days = 30) {
+    let query = `
+      SELECT
+        DATE(created_at) as date,
+        action_type,
+        COUNT(*) as call_count,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost_usd) as total_cost
+      FROM ai_usage
+      WHERE created_at >= DATE('now', '-' || ? || ' days')
+    `;
+    const params = [days];
+
+    if (projectId) {
+      query += ' AND project_id = ?';
+      params.push(projectId);
+    }
+
+    query += ' GROUP BY DATE(created_at), action_type ORDER BY date DESC, action_type';
+
+    const stmt = this.db.prepare(query);
+    return stmt.all(...params);
   }
 }
 

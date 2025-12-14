@@ -1,0 +1,41 @@
+Perfect! The fix has been implemented. Let me summarize what was done:
+
+---
+
+**Changes Made**:
+
+**File: `/mnt/c/github/40kgw/output/client/src/game/entities/EnemyAI.ts:341-346`**
+- Added `clearCurrentDecision()` method that sets `this.currentDecision = null`
+- This method allows external code to clear cached AI decisions
+
+**File: `/mnt/c/github/40kgw/output/client/src/game/entities/EntityManager.ts:522-523`**
+- Added call to `enemy.getAI().clearCurrentDecision()` after executing an ATTACK action
+- This ensures the attack decision is cleared immediately after execution, preventing re-execution in subsequent frames
+
+---
+
+**Why This Fixes It**:
+
+The root cause was that the EnemyAI caches decisions every 0.5 seconds and returns the cached decision on every frame in between AI ticks (EnemyAI.ts:129-130). This is fine for continuous actions like MOVE or IDLE, but catastrophic for one-shot actions like ATTACK.
+
+At 60 FPS, this meant an ATTACK decision would execute ~30 times (once per frame) during the 0.5 second window, causing the "100 hits at once" bug.
+
+The fix:
+1. After executing an ATTACK action in `EntityManager.executeEnemyAIDecision()`, we now immediately clear the cached decision
+2. On the next frame, `EnemyAI.update()` returns `null` (the cleared decision) instead of the cached ATTACK
+3. The enemy continues returning `null` until the next AI tick (0.5 seconds later), when a new decision is made
+4. MOVE, IDLE, and FLEE actions are unaffected - they remain cached as intended for smooth continuous behavior
+
+---
+
+**Testing Suggestion**:
+
+1. Start the game and spawn enemies near the player
+2. Wait for enemies to attack
+3. Verify that each enemy attack deals damage only ONCE, not 30-100 times
+4. Check the combat log - should see one "[Combat] Cultist's Attack hits for X" message per attack, not dozens
+5. Verify that enemy movement and idle behavior still work smoothly (they should, since only ATTACK decisions are cleared)
+6. Test with different enemy types (melee and ranged) to ensure the fix works universally
+7. Monitor frame rate and attack cooldown timing to ensure the 5-second cooldown still functions correctly
+
+DECISION: fix_implemented

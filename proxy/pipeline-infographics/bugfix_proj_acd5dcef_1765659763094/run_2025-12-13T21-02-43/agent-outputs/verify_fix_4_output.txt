@@ -1,0 +1,46 @@
+---
+
+## Fix Review
+
+**Summary of What Was Fixed**:
+A guard check was added at the beginning of `executeAIMove()` (lines 1238-1243) that verifies `this.turnSystem.currentPlayer === 'black'` before allowing the AI to execute any move. If it's not black's turn, the method resets `aiThinking` to false and returns early, preventing stale `setTimeout` callbacks from executing AI moves during the player's turn.
+
+---
+
+## Completeness Check
+
+- [x] **Root cause addressed**: The guard check at the entry point of `executeAIMove()` prevents all stale `setTimeout` callbacks from executing moves when it's not the AI's turn. This directly addresses the race condition where callbacks scheduled during one turn could fire after the turn switched.
+
+- [x] **Edge cases handled**: 
+  - The guard protects both initial AI moves (from `scheduleAIMove`) and multi-jump continuations (recursive calls at line 1296)
+  - Since the guard is at the entry of `executeAIMove()`, any path that calls this method is protected
+  - The `aiThinking = false` reset ensures the flag is properly cleared even when early-returning
+
+- [x] **Defensive coding applied**: The fix is defensive - it checks the authoritative source of truth (`turnSystem.currentPlayer`) rather than relying on flags or timing assumptions
+
+- [x] **All call sites covered**: There are exactly 2 places that call `executeAIMove()`:
+  1. Line 1233: Initial call from `scheduleAIMove()` - protected
+  2. Line 1296: Recursive call for multi-jumps - also protected by the guard
+
+---
+
+## Regression Analysis
+
+**No regressions detected.** The fix is safe because:
+
+1. **Normal AI behavior preserved**: When it IS black's turn, the guard passes and AI moves execute normally
+2. **Multi-jump still works**: The guard checks `currentPlayer`, which remains 'black' throughout the AI's multi-jump sequence until `endTurn()` is called
+3. **No behavioral change for valid scenarios**: The guard only blocks invalid scenarios where a stale callback fires after the turn changed
+4. **Human player unaffected**: The guard is purely in AI code and doesn't touch human move handling
+5. **Game state consistency**: The fix ensures `aiThinking` is always reset correctly, preventing lock-up scenarios
+6. **No performance impact**: A simple property comparison adds negligible overhead
+
+---
+
+## Verdict
+
+The fix is **complete and well-implemented**. It correctly addresses the race condition by adding a defensive check at the single entry point for AI move execution. The solution is minimal, surgical, and doesn't introduce any side effects.
+
+The bug occurred because `setTimeout` callbacks from `scheduleAIMove()` could fire after the turn had already switched (due to other callbacks or timing). The guard ensures that regardless of when the callback fires, the AI only executes moves when it's actually the AI's turn.
+
+DECISION: FIX_VERIFIED

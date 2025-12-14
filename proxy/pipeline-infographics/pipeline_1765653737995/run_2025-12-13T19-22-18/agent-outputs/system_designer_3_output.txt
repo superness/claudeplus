@@ -1,0 +1,386 @@
+CORE_CONCEPT: A classic American Checkers (8x8) two-player board game where players capture opponent pieces through diagonal jumps until one player wins by eliminating all enemy pieces or blocking all moves.
+
+PLAYER_EXPERIENCE: Strategic turn-based gameplay with simple rules but deep tactics - players feel the tension of forced captures, the satisfaction of multi-jump sequences, and the triumph of promoting pieces to kings.
+
+SYSTEMS_REQUIRED:
+
+1. Board System
+   PURPOSE: Represent the 8x8 checkerboard and track piece positions
+   DEPENDENCIES: None (foundational system)
+   CORE_MECHANICS: 
+   - 8x8 grid with alternating dark/light squares
+   - Only dark squares (32 total) are playable
+   - Coordinate system: x (0-7 left-to-right), y (0-7 bottom-to-top for red, top-to-bottom for black)
+   - Dark square validation: `(x + y) % 2 === 1`
+   DATA_REQUIREMENTS:
+   ```javascript
+   Board: {
+     tiles: Tile[8][8],  // 2D array indexed [y][x]
+     getPiece(x, y): Piece | null,
+     setPiece(x, y, piece): void,
+     removePiece(x, y): void,
+     isDarkSquare(x, y): boolean  // (x + y) % 2 === 1
+   }
+   
+   Tile: {
+     x: number,           // 0-7 column
+     y: number,           // 0-7 row
+     isDark: boolean,     // only dark tiles hold pieces
+     piece: Piece | null
+   }
+   ```
+
+2. Piece System
+   PURPOSE: Define piece entities, ownership, and king status
+   DEPENDENCIES: Board System
+   CORE_MECHANICS:
+   - Two piece types: regular and king
+   - Two owners: red (starts bottom, rows 0-2) and black (starts top, rows 5-7)
+   - Regular pieces move forward only; kings move forward or backward
+   - Forward direction: red moves toward y=7, black moves toward y=0
+   DATA_REQUIREMENTS:
+   ```javascript
+   Piece: {
+     id: string,                    // unique identifier e.g. "red-1", "black-5"
+     owner: 'red' | 'black',
+     isKing: boolean,
+     x: number,                     // current position
+     y: number
+   }
+   
+   INITIAL_SETUP: {
+     red: [                         // 12 pieces on dark squares of rows 0-2
+       {x:1,y:0}, {x:3,y:0}, {x:5,y:0}, {x:7,y:0},
+       {x:0,y:1}, {x:2,y:1}, {x:4,y:1}, {x:6,y:1},
+       {x:1,y:2}, {x:3,y:2}, {x:5,y:2}, {x:7,y:2}
+     ],
+     black: [                       // 12 pieces on dark squares of rows 5-7
+       {x:0,y:5}, {x:2,y:5}, {x:4,y:5}, {x:6,y:5},
+       {x:1,y:6}, {x:3,y:6}, {x:5,y:6}, {x:7,y:6},
+       {x:0,y:7}, {x:2,y:7}, {x:4,y:7}, {x:6,y:7}
+     ]
+   }
+   ```
+
+3. Movement System
+   PURPOSE: Validate and execute piece movements
+   DEPENDENCIES: Board System, Piece System
+   CORE_MECHANICS:
+   - Regular move: one square diagonally forward to empty square
+   - Diagonal validation formula: `Math.abs(targetX - currentX) === 1 && Math.abs(targetY - currentY) === 1`
+   - Direction validation (regular pieces):
+     - Red: `targetY > currentY` (moving toward row 7)
+     - Black: `targetY < currentY` (moving toward row 0)
+   - Kings: both directions allowed (`targetY !== currentY` suffices)
+   - Target must be empty and on dark square
+   DATA_REQUIREMENTS:
+   ```javascript
+   Move: {
+     piece: Piece,
+     fromX: number,
+     fromY: number,
+     toX: number,
+     toY: number,
+     isJump: boolean,
+     capturedPiece: Piece | null
+   }
+   
+   isValidMove(piece, toX, toY): boolean {
+     const dx = Math.abs(toX - piece.x);
+     const dy = Math.abs(toY - piece.y);
+     
+     // Must be diagonal by 1
+     if (dx !== 1 || dy !== 1) return false;
+     
+     // Target must be empty dark square
+     if (!board.isDarkSquare(toX, toY)) return false;
+     if (board.getPiece(toX, toY) !== null) return false;
+     
+     // Direction check for non-kings
+     if (!piece.isKing) {
+       if (piece.owner === 'red' && toY <= piece.y) return false;
+       if (piece.owner === 'black' && toY >= piece.y) return false;
+     }
+     
+     return true;
+   }
+   ```
+
+4. Capture System
+   PURPOSE: Handle jump captures and multi-jump sequences
+   DEPENDENCIES: Board System, Piece System, Movement System
+   CORE_MECHANICS:
+   - Jump: move 2 squares diagonally, capturing enemy piece in between
+   - Jump validation: `Math.abs(dx) === 2 && Math.abs(dy) === 2`
+   - Jumped piece position: `((fromX + toX) / 2, (fromY + toY) / 2)`
+   - Mandatory capture: if jump available, player MUST jump
+   - Multi-jump: after a jump, if same piece can jump again, it MUST continue
+   - Cannot jump own pieces
+   - Cannot jump empty squares
+   DATA_REQUIREMENTS:
+   ```javascript
+   isValidJump(piece, toX, toY): boolean {
+     const dx = toX - piece.x;
+     const dy = toY - piece.y;
+     
+     // Must be diagonal by 2
+     if (Math.abs(dx) !== 2 || Math.abs(dy) !== 2) return false;
+     
+     // Target must be empty dark square
+     if (!board.isDarkSquare(toX, toY)) return false;
+     if (board.getPiece(toX, toY) !== null) return false;
+     
+     // Direction check for non-kings
+     if (!piece.isKing) {
+       if (piece.owner === 'red' && dy <= 0) return false;
+       if (piece.owner === 'black' && dy >= 0) return false;
+     }
+     
+     // Check jumped piece exists and is enemy
+     const jumpedX = piece.x + dx / 2;
+     const jumpedY = piece.y + dy / 2;
+     const jumpedPiece = board.getPiece(jumpedX, jumpedY);
+     
+     if (!jumpedPiece) return false;
+     if (jumpedPiece.owner === piece.owner) return false;
+     
+     return true;
+   }
+   
+   getAvailableJumps(piece): Move[] {
+     // Returns all valid jump moves for a piece
+     // Used for mandatory capture enforcement
+   }
+   
+   hasAnyJump(player): boolean {
+     // Check if any piece of player has available jump
+     // If true, player must jump
+   }
+   ```
+
+5. Turn System
+   PURPOSE: Manage player turns and enforce turn order
+   DEPENDENCIES: Capture System, Movement System
+   CORE_MECHANICS:
+   - Red always moves first
+   - Turns alternate between red and black
+   - Turn ends after: single move, or completion of all mandatory jumps
+   - During multi-jump, only the jumping piece can move
+   DATA_REQUIREMENTS:
+   ```javascript
+   TurnState: {
+     currentPlayer: 'red' | 'black',
+     isMultiJumpInProgress: boolean,
+     multiJumpPiece: Piece | null,     // piece that must continue jumping
+     turnNumber: number
+   }
+   
+   endTurn(): void {
+     currentPlayer = currentPlayer === 'red' ? 'black' : 'red';
+     isMultiJumpInProgress = false;
+     multiJumpPiece = null;
+     turnNumber++;
+   }
+   
+   getValidMoves(): Move[] {
+     if (isMultiJumpInProgress) {
+       return getAvailableJumps(multiJumpPiece);
+     }
+     if (hasAnyJump(currentPlayer)) {
+       return getAllJumpsForPlayer(currentPlayer);  // forced capture
+     }
+     return getAllMovesForPlayer(currentPlayer);
+   }
+   ```
+
+6. King Promotion System
+   PURPOSE: Promote pieces that reach the opposite end
+   DEPENDENCIES: Board System, Piece System, Movement System
+   CORE_MECHANICS:
+   - Red piece reaching row 7 becomes king
+   - Black piece reaching row 0 becomes king
+   - Promotion happens immediately upon reaching back row
+   - If promoted during multi-jump, turn ends (American rules)
+   DATA_REQUIREMENTS:
+   ```javascript
+   checkPromotion(piece): boolean {
+     if (piece.isKing) return false;  // already king
+     
+     if (piece.owner === 'red' && piece.y === 7) {
+       piece.isKing = true;
+       return true;
+     }
+     if (piece.owner === 'black' && piece.y === 0) {
+       piece.isKing = true;
+       return true;
+     }
+     return false;
+   }
+   
+   // Called after each move/jump
+   // If promotion occurs during multi-jump, ends the sequence
+   ```
+
+7. Win Condition System
+   PURPOSE: Detect game end states
+   DEPENDENCIES: Board System, Piece System, Turn System
+   CORE_MECHANICS:
+   - Win: opponent has no pieces remaining
+   - Win: opponent has no legal moves on their turn
+   - Draw: 40 consecutive moves (by both players) without capture
+   DATA_REQUIREMENTS:
+   ```javascript
+   GameResult: {
+     status: 'ongoing' | 'red_wins' | 'black_wins' | 'draw',
+     reason: string | null   // "no pieces", "no moves", "40 move rule"
+   }
+   
+   movesWithoutCapture: number  // reset to 0 on any capture
+   
+   checkGameEnd(): GameResult {
+     const redPieces = getPieceCount('red');
+     const blackPieces = getPieceCount('black');
+     
+     if (redPieces === 0) return { status: 'black_wins', reason: 'no pieces' };
+     if (blackPieces === 0) return { status: 'red_wins', reason: 'no pieces' };
+     
+     const currentMoves = getValidMoves();
+     if (currentMoves.length === 0) {
+       return {
+         status: currentPlayer === 'red' ? 'black_wins' : 'red_wins',
+         reason: 'no moves'
+       };
+     }
+     
+     if (movesWithoutCapture >= 80) {  // 40 moves each = 80 half-moves
+       return { status: 'draw', reason: '40 move rule' };
+     }
+     
+     return { status: 'ongoing', reason: null };
+   }
+   ```
+
+8. Input System
+   PURPOSE: Handle player input for piece selection and move execution
+   DEPENDENCIES: Board System, Movement System, Turn System
+   CORE_MECHANICS:
+   - Click to select piece (must be current player's piece)
+   - Click destination to move (if valid)
+   - Highlight valid moves for selected piece
+   - Enforce mandatory captures (only show jumps if available)
+   DATA_REQUIREMENTS:
+   ```javascript
+   InputState: {
+     selectedPiece: Piece | null,
+     highlightedMoves: Move[],
+     lastClickedTile: {x, y} | null
+   }
+   
+   handleTileClick(x, y): void {
+     const clickedPiece = board.getPiece(x, y);
+     
+     if (selectedPiece && isValidMoveTarget(x, y)) {
+       executeMove(selectedPiece, x, y);
+       clearSelection();
+     } else if (clickedPiece && clickedPiece.owner === currentPlayer) {
+       if (!isMultiJumpInProgress || clickedPiece === multiJumpPiece) {
+         selectPiece(clickedPiece);
+       }
+     } else {
+       clearSelection();
+     }
+   }
+   
+   selectPiece(piece): void {
+     selectedPiece = piece;
+     highlightedMoves = getValidMovesForPiece(piece);
+   }
+   ```
+
+9. Rendering System
+   PURPOSE: Display board state and visual feedback
+   DEPENDENCIES: All systems (observer pattern)
+   CORE_MECHANICS:
+   - Draw 8x8 board with alternating colors
+   - Render pieces at positions (red/black circles)
+   - Indicate kings (crown or double-stack visual)
+   - Highlight selected piece
+   - Highlight valid move destinations
+   - Display current player indicator
+   - Show captured piece counts
+   DATA_REQUIREMENTS:
+   ```javascript
+   RenderConfig: {
+     tileSize: number,           // pixels per tile (e.g., 64)
+     lightColor: '#FFCE9E',      // cream/tan
+     darkColor: '#D18B47',       // brown
+     redPieceColor: '#C41E3A',
+     blackPieceColor: '#1C1C1C',
+     highlightColor: 'rgba(0, 255, 0, 0.4)',
+     selectedColor: 'rgba(255, 255, 0, 0.5)'
+   }
+   
+   render(): void {
+     drawBoard();
+     drawPieces();
+     drawHighlights();
+     drawUI();  // current player, captured counts
+   }
+   ```
+
+SYSTEM_INTERACTIONS:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         GAME FLOW                                │
+└─────────────────────────────────────────────────────────────────┘
+
+Input System ──click──▶ Board System ──position──▶ Piece System
+      │                      │                          │
+      │                      ▼                          ▼
+      │               ┌──────────────┐          ┌─────────────┐
+      └──────────────▶│Movement System│◀────────│Capture System│
+                      └──────────────┘          └─────────────┘
+                             │                        │
+                             ▼                        │
+                      ┌──────────────┐                │
+                      │ Turn System  │◀───────────────┘
+                      └──────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+      ┌─────────────┐ ┌───────────┐ ┌───────────────┐
+      │King Promotion│ │Win Check  │ │Rendering System│
+      └─────────────┘ └───────────┘ └───────────────┘
+
+EVENT FLOW:
+1. Input.click → selectPiece OR executeMove
+2. executeMove → Movement.validate OR Capture.validate
+3. Capture.execute → removes enemy piece, checks multi-jump
+4. Movement.complete → Turn.checkPromotion
+5. Promotion → piece.isKing = true, (if mid-jump: end turn)
+6. Turn.end → WinCondition.check
+7. Any state change → Rendering.update
+```
+
+DESIGN_PRIORITIES:
+
+1. **Board System** (Foundation) - No dependencies, everything builds on this
+2. **Piece System** - Defines entities placed on board
+3. **Movement System** - Basic piece movement validation
+4. **Capture System** - Jumping and mandatory capture logic
+5. **Turn System** - Coordinates flow between players
+6. **King Promotion System** - Reward for reaching back row
+7. **Win Condition System** - Detects game end
+8. **Input System** - Player interaction layer
+9. **Rendering System** - Visual presentation (can be developed in parallel)
+
+GAME VARIANT SPECIFICATION: American Checkers
+- 8x8 board, 64 squares (32 playable dark squares)
+- 12 pieces per player (24 total)
+- Mandatory capture rule enforced
+- Multi-jump continuation required
+- Promotion ends multi-jump sequence
+- Draw after 40 moves without capture
+
+DECISION: design_complete

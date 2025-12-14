@@ -1,0 +1,75 @@
+Excellent! I have all the information I need. The root cause is crystal clear.
+
+---
+
+**Investigation Summary**:
+
+I've traced through the enemy AI attack execution flow and found the exact root cause. The bug occurs because attack decisions are cached and continuously returned every frame for 0.5 seconds, causing the attack to execute 30-80+ times instead of once.
+
+**Root Cause**:
+
+**File**: `/mnt/c/github/40kgw/output/client/src/game/entities/EnemyAI.ts`  
+**Line(s)**: 129-130  
+**Issue**: Attack decisions are cached and returned every frame until the next AI tick
+
+```typescript
+if (this.lastDecisionTime < AI_TICK_RATE) {
+  return this.currentDecision;  // <-- Returns cached ATTACK decision every frame!
+}
+```
+
+**Why**: The EnemyAI makes decisions every 0.5 seconds (AI_TICK_RATE), but in between those ticks, it returns the cached `this.currentDecision` (line 130). This is fine for continuous actions like MOVE or IDLE, but catastrophic for one-shot actions like ATTACK.
+
+**Execution Flow**:
+1. **Frame 1**: AI tick occurs → `makeDecision()` creates ATTACK decision → stored in `this.currentDecision` (line 136)
+2. **EntityManager:569-570**: Calls `enemy.updateAI()` every frame → receives the cached ATTACK decision
+3. **EntityManager:513-520**: `executeEnemyAIDecision()` executes the ATTACK action → fires `onEnemyAttack` callback
+4. **CombatManager:1196-1268**: `handleEnemyAttack()` processes full damage → logs "[Combat] Cultist's Attack hits for 1"
+5. **Frames 2-30**: Steps 2-4 repeat every frame for 0.5 seconds (30+ times at 60 FPS)
+6. **Frame 31**: Next AI tick → new decision made
+
+At 60 FPS, this results in ~30 executions per attack. At higher frame rates or variable deltaTime, this can easily be 80-100+ executions, matching the bug report.
+
+**Fix Strategy**:
+
+The fix requires distinguishing between **continuous actions** (MOVE, IDLE) and **one-shot actions** (ATTACK). Two approaches:
+
+**Option A - Clear attack decisions after first execution** (Recommended):
+- Modify `EntityManager.executeEnemyAIDecision()` to track if an ATTACK was already executed
+- Clear the enemy's `currentDecision` after executing an ATTACK action
+- This preserves the caching behavior for MOVE/IDLE while preventing attack spam
+
+**Option B - Mark decisions as consumed**:
+- Add a `consumed: boolean` flag to `EnemyAIDecision` type
+- Mark ATTACK decisions as consumed after first execution
+- Check this flag before executing decisions
+
+**Recommended implementation (Option A)**:
+```typescript
+// In EntityManager.executeEnemyAIDecision()
+case 'ATTACK':
+  if (decision.targetId && decision.targetType && decision.damage && this.onEnemyAttack) {
+    this.onEnemyAttack(...);
+  }
+  // Clear the decision so it doesn't execute again
+  enemy.clearCurrentDecision();  // New method to add to Enemy class
+  break;
+```
+
+**Risks/Considerations**:
+
+1. **Risk**: If MOVE actions are also being over-executed, clearing decisions might cause stuttering movement
+   - **Mitigation**: Only clear ATTACK decisions, leave MOVE/IDLE/FLEE cached
+
+2. **Risk**: Attack animations might not play correctly if decision is cleared too early
+   - **Mitigation**: Animation triggering happens in the same frame as damage, so clearing after execution is safe
+
+3. **Risk**: Multi-phase attacks (e.g., charge-up attacks) might break
+   - **Analysis**: Current codebase shows simple single-hit attacks, no multi-phase attacks exist yet
+
+4. **Side effect**: Need to add `clearCurrentDecision()` method to Enemy/EnemyAI classes
+   - This is a minimal change: `public clearCurrentDecision() { this.currentDecision = null; }`
+
+5. **Testing consideration**: Need to verify that attack cooldowns still work correctly (they should, since cooldown is separate from decision caching)
+
+DECISION: root_cause_found

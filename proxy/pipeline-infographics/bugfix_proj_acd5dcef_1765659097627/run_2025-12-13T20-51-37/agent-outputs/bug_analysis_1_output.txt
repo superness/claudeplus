@@ -1,0 +1,72 @@
+I've found the issue. Let me analyze this American Checkers game where the AI is controlling both players after the human makes one move.
+
+---
+
+**Bug Summary**: AI takes control of both red and black pieces after human's first move
+
+**Expected Behavior**: After the human player (Red) makes a move, the AI (Black) should make exactly one move (or a multi-jump sequence), then control should return to the human player for Red's next turn.
+
+**Actual Behavior**: After the human makes 1 move as Red, the AI executes multiple turns for both Black AND Red before eventually returning control to the human.
+
+**Affected Systems**: Turn System, AI System, Game Controller
+
+**Severity**: CRITICAL - This fundamentally breaks the game and removes player agency
+
+**Reproduction Steps**:
+1. Start a new game of American Checkers
+2. Make one move as Red (drag and drop a red piece)
+3. Observe that the AI plays for Black, then immediately plays for Red, then Black again, etc.
+4. After several AI-controlled turns, control eventually returns to the human
+
+**Likely Source Files**: 
+- `client/game.js` (lines 1226-1297: `scheduleAIMove()` and `executeAIMove()` methods)
+
+**Initial Hypothesis**: 
+
+The bug is in the `executeAIMove()` method at lines 1237-1297. The core issue is that **the AI does not call `this.turnSystem.endTurn()` during multi-jump sequences**, but after completing its turn, when `endTurn()` is finally called at line 1293, the turn switches to Red. 
+
+However, the real problem is that `executeAIMove()` bypasses the normal move validation in `executeMove()`. Looking at line 1292-1296:
+
+```javascript
+if (continueJumping) {
+    setTimeout(() => {
+        this.executeAIMove(move.piece);
+    }, 400);
+} else {
+    this.turnSystem.endTurn();  // <-- Turn ends here, switches to 'red'
+    this.aiThinking = false;
+    this.updateUI();
+}
+```
+
+After AI ends turn, `currentPlayer` becomes `'red'`. But `executeAIMove()` never checks `this.turnSystem.currentPlayer` - it always calls `this.aiSystem.getAllMoves()` which hardcodes `'black'` (see line 855: `const pieces = this.pieceSystem.getPiecesForPlayer('black')`).
+
+The issue is likely a race condition or the AI triggering again when it shouldn't. The `scheduleAIMove()` method at line 1211 is called after **every** human move, and if the move processing or timing is off, the AI could be retriggered inappropriately.
+
+Looking more closely at `executeMove()` lines 1206-1213:
+```javascript
+if (!continueJumping) {
+    this.turnSystem.endTurn();  // Switches to black
+    
+    if (this.isAIEnabled && this.turnSystem.currentPlayer === 'black') {
+        this.scheduleAIMove();  // Schedules AI
+    }
+}
+```
+
+And in `executeAIMove()` lines 1291-1296:
+```javascript
+} else {
+    this.turnSystem.endTurn();  // Switches to red
+    this.aiThinking = false;
+    this.updateUI();
+}
+```
+
+The AI correctly ends its turn which should switch to Red. However, `updateUI()` calls `checkGameEnd()` again... no wait, that's not it.
+
+The actual bug: In `executeAIMove()`, when the AI's turn ends, **there's no guard against the AI triggering again**. If somehow `scheduleAIMove()` gets called when `aiThinking` is being set to false (race condition with setTimeout), or if there's a multi-jump continuation issue, the AI could run multiple cycles.
+
+Most likely cause: The **continuation jump logic in `executeAIMove()`** doesn't properly track whose turn it is. When checking for `continueJumping`, it checks if the *piece that just moved* has more jumps, but it should also verify it's still the AI's turn and that the piece belongs to black.
+
+DECISION: analysis_complete

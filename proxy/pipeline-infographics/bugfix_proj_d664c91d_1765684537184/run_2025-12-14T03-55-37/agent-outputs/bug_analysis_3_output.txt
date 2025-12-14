@@ -1,0 +1,70 @@
+## Bug Analysis
+
+### Summary
+Three.js rendering error triggered when killing a Cultist enemy during combat with multiple enemies present
+
+### Expected Behavior
+When an enemy dies in combat:
+- The enemy's death animation should play
+- Loot orbs should spawn at the enemy's position
+- The scene should continue rendering without errors
+- All visual effects (burning status, combat effects) should display correctly
+
+### Actual Behavior
+After killing a Cultist enemy, the game throws continuous Three.js rendering errors in the render loop. The error occurs in `refreshUniformsCommon` when attempting to read `.value` property of an undefined uniform. The errors spam continuously every frame, causing potential performance degradation and visual glitches.
+
+### Trigger Condition
+The bug triggers specifically when:
+1. A Cultist enemy is killed in combat (specifically mentioned as "purple guy")
+2. Multiple other enemies are present (Chaos Marines, Possessed, Slugga Boys, Nobs, Meganobs)
+3. Status effects are active (BURNING status on multiple enemies)
+4. Loot orbs are generated after the kill
+5. Combat continues after the death
+
+The key sequence from logs:
+- `Holy Strike` kills Cultist (70 damage, 69→0 HP)
+- Loot system generates 2 drops (CURRENCY + MATERIAL)
+- `LootVisualization.ts` creates loot orbs
+- Immediately after: Three.js error in `refreshUniformsCommon`
+
+### Error Messages
+```
+Uncaught TypeError: Cannot read properties of undefined (reading 'value')
+    at refreshUniformsCommon (three.js:16544:25)
+    at Object.refreshMaterialUniforms (three.js:16497:7)
+    at setProgram (three.js:18074:19)
+    at WebGLRenderer.renderBufferDirect (three.js:17369:23)
+    at renderObject (three.js:17809:15)
+    at renderObjects (three.js:17791:11)
+    at renderScene (three.js:17710:37)
+    at WebGLRenderer.render (three.js:17621:9)
+    at Game.render (Game.ts:940)
+    at gameLoop (Game.ts:877)
+```
+
+### Affected Systems
+- **3D Rendering**: Three.js WebGLRenderer material uniform system
+- **Enemy System**: Enemy death handling and cleanup
+- **Loot System**: Loot orb spawning and visualization
+- **Material Management**: Shader uniform lifecycle during entity removal
+- **Combat System**: Ongoing combat effects while enemy dies
+- **Visual Effects**: Status effect rendering (BURNING stacks)
+
+### Reproduction Approach
+A test should:
+1. Start combat with multiple enemies including at least one Cultist
+2. Apply status effects (BURNING) to multiple enemies
+3. Reduce a Cultist's health to near-death
+4. Deal a killing blow that triggers loot drops
+5. Monitor render loop during the frame cycles immediately after death
+6. Check for Three.js errors related to undefined uniform values
+7. Verify if enemy mesh/material is properly disposed when removed from scene
+8. Check if loot orb materials share references with enemy materials
+
+**Key investigation areas:**
+- Enemy.ts cleanup/disposal on death
+- LootVisualization.ts material creation and references
+- Material uniform lifecycle when objects are removed mid-render
+- Potential race condition between enemy removal and render frame
+
+DECISION: analysis_complete

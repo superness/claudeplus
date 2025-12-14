@@ -1,0 +1,45 @@
+The property names match:
+- `characterData.character_id` - main.ts line 60
+- `characterData.faction_code` - main.ts lines 68, 73
+- `characterData.class_code` - main.ts line 69
+- `characterData.character_name` - main.ts lines 70, 73
+
+And from CharacterCreation.ts:
+- `character_name` - line 1726
+- `faction_code` - line 1727
+- `class_code` - line 1728
+
+The fix ensures that in all 4 code paths (response.ok, else/HTTP-error, catch/network-error, no-network), `onComplete` is called with `characterData` which contains these required fields. The integration path is complete.
+
+## Test Results: Character Creation to Game Transition Flow
+
+### Feature Being Tested
+The fix ensures that when character creation API calls fail (HTTP errors like 401 Unauthorized or network errors), the game continues in offline mode by calling `onComplete(characterData)` instead of stopping. Previously, only network exceptions triggered offline mode; HTTP errors would show an alert and halt.
+
+### Syntax Check
+**PASS** - Build completed successfully with no TypeScript errors.
+
+### Integration Path
+- **Entry point**: User completes character creation form and clicks submit → `submitCharacter()` in `CharacterCreation.ts:1724`
+- **Chain**: 
+  1. `submitCharacter()` creates `characterData` object with `character_name`, `faction_code`, `class_code`
+  2. Attempts fetch to `/api/v1/characters`
+  3. On success: calls `this.onComplete(result)` with server response
+  4. On HTTP error (401, etc): calls `this.onComplete(characterData)` ✅ **FIXED**
+  5. On network error: calls `this.onComplete(characterData)` (already worked)
+  6. No network manager: calls `this.onComplete(characterData)` (already worked)
+- **Target reached**: `onComplete` callback in `main.ts:56-87` receives character data
+- **Downstream effect**: 
+  1. Stores character ID (or generates temp ID for offline mode)
+  2. Stores faction, class, name in localStorage
+  3. Shows transition screen
+  4. Disposes character creation
+  5. Calls `initGame(networkManager)`
+- **CONNECTED: YES**
+
+### Issues Found
+None - The fix properly handles all code paths:
+1. Line 1763: Added `.catch(() => ({}))` to handle invalid JSON in error responses
+2. Lines 1764-1768: Changed from alert-and-stop to console.warn and call `onComplete(characterData)`
+
+DECISION: working

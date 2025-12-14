@@ -30,58 +30,73 @@ class QueueService {
     console.log('[QueueService] Checking for incomplete pipelines...');
 
     try {
-      // Check proxy's current.json for a running pipeline
+      // First, ask the proxy directly if any pipelines are running
+      // This is the authoritative source - the proxy knows for sure
+      const activeResult = await pipelineBridge.checkActivePipelines();
+      const activePipelineIds = new Set((activeResult.pipelines || []).map(p => p.id));
+      console.log(`[QueueService] Proxy reports ${activePipelineIds.size} active pipeline(s)`);
+
+      // Check proxy's current.json for a pipeline that can be resumed
       const currentStatePath = path.join(PROXY_STATES_DIR, 'current.json');
       if (fs.existsSync(currentStatePath)) {
         const currentState = JSON.parse(fs.readFileSync(currentStatePath, 'utf8'));
 
-        if (currentState.status === 'running' || currentState.status === 'paused') {
-          // Check if we're already processing this pipeline
+        // Check for any incomplete pipeline (running, paused, failed, or error that can be resumed)
+        if (currentState.status === 'running' || currentState.status === 'paused' || currentState.status === 'error' || currentState.status === 'failed') {
+          // Check if we're already processing this pipeline locally
           const projectMatch = currentState.workingDir?.match(/proj_([a-f0-9]+)/i);
           if (projectMatch) {
             const projectId = 'proj_' + projectMatch[1].toLowerCase();
-            // Check both processingProjects AND activePipelines (progress polling)
             if (this.processingProjects.has(projectId) || activePipelines.has(projectId)) {
-              console.log(`[QueueService] Pipeline ${currentState.id} is already being processed (processingProjects: ${this.processingProjects.has(projectId)}, activePipelines: ${activePipelines.has(projectId)})`);
+              console.log(`[QueueService] Pipeline ${currentState.id} is already being processed locally`);
               return { found: false, reason: 'already_processing' };
             }
           }
 
-          // Check execution log for recent activity (pipeline actively running even if server restarted)
-          const logPath = this.findLatestPipelineLog();
-          if (logPath) {
-            const progress = this.parsePipelineProgress(logPath);
-            if (progress?.lastEventTime) {
-              const timeSinceLastEvent = Date.now() - progress.lastEventTime.getTime();
-              const fiveMinutes = 5 * 60 * 1000;
-              if (timeSinceLastEvent < fiveMinutes) {
-                console.log(`[QueueService] Pipeline ${currentState.id} has recent activity (${Math.round(timeSinceLastEvent / 1000)}s ago) - actively running`);
-                return { found: false, reason: 'actively_running' };
-              }
-            }
+          // Check if proxy says this pipeline is actively running
+          if (activePipelineIds.has(currentState.id)) {
+            console.log(`[QueueService] Pipeline ${currentState.id} is actively running according to proxy`);
+            return { found: false, reason: 'actively_running' };
           }
 
-          console.log(`[QueueService] Found incomplete pipeline: ${currentState.id}`);
+          // Proxy says it's not running - this pipeline can be resumed
+          console.log(`[QueueService] Found incomplete pipeline: ${currentState.id} (not running according to proxy)`);
           console.log(`[QueueService]   Name: ${currentState.name}`);
           console.log(`[QueueService]   Stage: ${currentState.currentStage} (${currentState.completedStages?.length || 0}/${currentState.stages?.length || 0})`);
           console.log(`[QueueService]   Working Dir: ${currentState.workingDir}`);
 
-          // Try to match this to a project (reuse projectMatch from above)
+          // Try to match this to a project - check working dir first, then pipeline ID
+          let projectId = null;
           if (projectMatch) {
-            const projectId = 'proj_' + projectMatch[1].toLowerCase();
+            projectId = 'proj_' + projectMatch[1].toLowerCase();
+          } else {
+            // Try to extract from pipeline ID (e.g., bugfix_proj_d664c91d_1765682973555)
+            const pipelineIdMatch = currentState.id?.match(/proj_([a-f0-9]+)/i);
+            if (pipelineIdMatch) {
+              projectId = 'proj_' + pipelineIdMatch[1].toLowerCase();
+              console.log(`[QueueService] Extracted project ID from pipeline ID: ${projectId}`);
+            }
+          }
+
+          if (projectId) {
             const project = db.getProject(projectId);
 
             if (project) {
               console.log(`[QueueService] Matched to project: ${project.name} (${projectId})`);
 
+              // The pipeline is NOT running according to proxy - it's dead
+              // Mark any stuck "in_progress" work items as failed for this project
+              const currentWork = db.getCurrentWork(projectId);
+              if (currentWork && currentWork.status === 'in_progress') {
+                console.log(`[QueueService] Marking work item ${currentWork.id} as error (pipeline died)`);
+                db.updateWorkStatus(currentWork.id, 'error');
+                this.emit('work-failed', { projectId, item: currentWork, error: 'Pipeline died unexpectedly' });
+              }
+
               // Store mapping
               this.pipelineProjectMap.set(currentState.id, projectId);
 
-              // Update project's pipeline ID if not set
-              if (!project.design_pipeline_id) {
-                db.setDesignPipelineId(projectId, currentState.id);
-              }
-
+              // Return the state so user can resume
               return {
                 found: true,
                 pipelineId: currentState.id,
@@ -429,8 +444,32 @@ class QueueService {
     // Check if there's current work in progress
     const currentWork = db.getCurrentWork(projectId);
     if (currentWork) {
-      console.log(`[QueueService] Project ${projectId} has work in progress`);
-      return;
+      // Check if this work item's pipeline is actually still running
+      console.log(`[QueueService] Project ${projectId} has work in progress (${currentWork.id}), checking if still alive...`);
+
+      try {
+        const activeResult = await pipelineBridge.checkActivePipelines();
+        const activePipelineIds = (activeResult.pipelines || []).map(p => p.id);
+
+        // Check if our pipeline is in the active list
+        const isStillRunning = activePipelineIds.some(id =>
+          id === currentWork.pipeline_id ||
+          (currentWork.pipeline_id && id.includes(projectId))
+        );
+
+        if (!isStillRunning) {
+          console.log(`[QueueService] Work item ${currentWork.id} pipeline is NOT running - marking as error`);
+          db.updateWorkStatus(currentWork.id, 'error');
+          this.emit('work-failed', { projectId, item: currentWork, error: 'Pipeline died unexpectedly' });
+          // Continue to process next item
+        } else {
+          console.log(`[QueueService] Work item ${currentWork.id} pipeline is still running`);
+          return;
+        }
+      } catch (err) {
+        console.log(`[QueueService] Could not check pipeline status: ${err.message}, assuming still running`);
+        return;
+      }
     }
 
     // Get next queued item
@@ -560,6 +599,7 @@ class QueueService {
       let totalStages = 24;
       let lastEventTime = null;
       let pipelineName = null;
+      let pipelineCompleted = false;
 
       for (const event of events) {
         if (event.eventType === 'pipeline_initialized') {
@@ -577,9 +617,17 @@ class QueueService {
             timestamp: event.timestamp
           });
         }
+        if (event.eventType === 'pipeline_completed') {
+          pipelineCompleted = true;
+        }
         if (event.timestamp) {
           lastEventTime = new Date(event.timestamp);
         }
+      }
+
+      // Pipeline is NOT active if it has completed
+      if (pipelineCompleted) {
+        return { active: false, completed: true, pipelineName, completedStages, progress: 100 };
       }
 
       // Check if pipeline is actively running (had activity in last 5 min)

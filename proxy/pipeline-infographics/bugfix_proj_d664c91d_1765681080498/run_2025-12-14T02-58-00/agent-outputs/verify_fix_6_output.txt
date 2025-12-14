@@ -1,0 +1,100 @@
+Good! The fix IS correctly applied in Enemy.ts (scene.remove is on line 1645, BEFORE the traverse that disposes materials). However, I discovered a **REGRESSION** - the LootVisualization.ts file has the EXACT SAME BUG pattern and will cause the same crash! Let me verify this is the issue:
+
+Looking at LootVisualization.ts lines 335-354:
+```typescript
+dispose(scene: THREE.Scene): void {
+    this.coreMesh.geometry.dispose();
+    (this.coreMesh.material as THREE.Material).dispose();
+    // ... more material disposals ...
+    scene.remove(this.group);  // Line 353 - AFTER disposals!
+}
+```
+
+This is the exact same bug! Materials are disposed BEFORE removing from the scene, which means the renderer can still try to render these meshes with disposed materials.
+
+Now let me provide my verification report.
+
+**Fix Review**:
+The Enemy.ts dispose() method was correctly fixed by moving `this.scene.remove(this.mesh)` to line 1645, BEFORE the material disposal loop (lines 1647-1660). This prevents Three.js WebGLRenderer from attempting to render meshes with disposed materials, which was causing the `TypeError: Cannot read properties of undefined (reading 'value')` error in `refreshUniformsCommon`.
+
+**Completeness Check**:
+- [x] Root cause addressed in Enemy.ts
+- [x] Edge cases handled (traverse visits all nested meshes including healthBarContainer)
+- [x] Defensive coding applied (comment explains why scene removal must happen first)
+- [ ] **Issue: REGRESSION DETECTED** - LootVisualization.ts has the identical bug
+
+**Regression Analysis**:
+
+**CRITICAL REGRESSION DETECTED** in `/mnt/c/github/40kgw/output/client/src/combat/LootVisualization.ts:335-354`
+
+The LootOrb dispose() method has the EXACT SAME BUG that was fixed in Enemy.ts:
+
+```typescript
+dispose(scene: THREE.Scene): void {
+    this.coreMesh.geometry.dispose();           // Line 336-337
+    (this.coreMesh.material as THREE.Material).dispose();
+    
+    this.glowMesh.geometry.dispose();           // Line 339-340
+    (this.glowMesh.material as THREE.Material).dispose();
+    
+    this.glowRing.geometry.dispose();           // Line 342-343
+    (this.glowRing.material as THREE.Material).dispose();
+    
+    this.particles.geometry.dispose();          // Line 345-346
+    (this.particles.material as THREE.Material).dispose();
+    
+    if (this.beamLine) {                        // Line 348-351
+      this.beamLine.geometry.dispose();
+      (this.beamLine.material as THREE.Material).dispose();
+    }
+    
+    scene.remove(this.group);                   // Line 353 - AFTER DISPOSALS!
+}
+```
+
+**Why This Causes the Bug**:
+1. Enemy dies → LootOrb is created at enemy position (Game.ts:687)
+2. LootOrb has 5 meshes with materials (core, glow, glowRing, particles, beamLine)
+3. When LootOrb.dispose() is called, materials are disposed FIRST (lines 336-351)
+4. Then `scene.remove(this.group)` happens LAST (line 353)
+5. Between disposal and removal, the game render loop runs at 60fps
+6. WebGLRenderer tries to render the loot orb with disposed materials
+7. Shader uniform access fails → `TypeError: Cannot read properties of undefined (reading 'value')`
+
+**Timing Sequence**:
+```
+Game.ts:689: Generate loot drops after enemy death
+LootVisualization.ts:88: Create loot orb with materials
+... later when loot is picked up or times out ...
+LootVisualization.ts:336-351: Dispose ALL materials
+Game render loop (60fps): Tries to render loot orb
+Three.js:16544: CRASH - disposed material uniforms are undefined
+LootVisualization.ts:353: Finally removes from scene (too late!)
+```
+
+**Evidence from Bug Report**:
+The user's logs show:
+```
+Game.ts:689 [Loot] Generated 1 drops
+...
+three.js:16544 Uncaught TypeError: Cannot read properties of undefined (reading 'value')
+```
+
+The crash happens AFTER loot generation, which strongly suggests the LootOrb materials are the culprit, not the Enemy materials (which were already fixed).
+
+**Verdict**:
+
+The Enemy.ts fix is **CORRECT and COMPLETE**, but the fix introduced awareness of an **IDENTICAL BUG** in LootVisualization.ts that was likely the actual cause of the user's reported crashes (since the crashes happen "after we kill an enemy" and "loot rendering breaks it").
+
+The bug still reproduces because:
+1. Enemy dies correctly now (fix works)
+2. Loot orb spawns (has same disposal bug)
+3. Loot orb gets disposed when picked up or times out
+4. **CRASH** - same error, different source file
+
+**Additional Concerns**:
+- Are there other classes with this pattern? (should search codebase for `.dispose()` methods)
+- Should there be a linting rule or helper function to enforce "remove from scene before dispose"?
+- Does the LootOrb dispose get called frequently enough to cause repeated crashes?
+
+DECISION: REGRESSION_DETECTED

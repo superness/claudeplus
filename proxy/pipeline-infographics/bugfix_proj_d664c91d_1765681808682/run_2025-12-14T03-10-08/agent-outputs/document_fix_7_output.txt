@@ -1,0 +1,36 @@
+Perfect! Now I have all the information I need to document this fix. Let me create the comprehensive documentation.
+
+---
+
+**Bug Fix Summary**:
+
+**Bug**: Three.js rendering crash when enemy dies - `TypeError: Cannot read properties of undefined (reading 'value')` at `refreshUniformsCommon`
+
+**Root Cause**: Enemy mesh materials were created without the `transparent: true` flag. When death animations attempted to modify material opacity (lines 1395 and 1432 in Enemy.ts), Three.js tried to access transparency-related shader uniform variables that were never initialized during material/shader compilation. This caused undefined property access errors that repeated every frame during the death animation.
+
+**Fix**: Added `transparent: true` and `opacity: 1.0` to all 31 `MeshStandardMaterial` instances in Enemy.ts during material creation. This ensures Three.js compiles the WebGL shaders WITH the necessary transparency uniform variables from the start, allowing death animations to safely modify opacity without triggering shader errors.
+
+**Files Modified**:
+- `/mnt/c/github/40kgw/output/client/src/game/entities/Enemy.ts`: Added `transparent: true` and `opacity: 1.0` properties to all MeshStandardMaterial instantiations for enemy body parts (body, head, shoulders, weapons, armor, legs, etc.) across all faction models (Imperial Space Marines, Tau Battlesuits, Ork units, Tyranid bio-forms, Chaos units, and generic fallback models).
+
+**Impact**:
+- **Visual**: No change to normal enemy appearance. Enemies render fully opaque at `opacity: 1.0` until death animations begin.
+- **Performance**: Negligible impact. Transparent materials with full opacity render in the same pass as opaque materials. Minor additional shader uniforms (31 total) are trivial for modern GPUs.
+- **Render order**: Transparent materials render in a separate pass after opaque objects, but this is necessary for proper opacity animations and shouldn't cause z-sorting issues since each enemy is a discrete entity.
+- **Death animations**: Both THERMAL (burn/disintegrate fade) and PHOTON (flash/vaporize) death types now work correctly without console errors. Other death types (KINETIC, EXPLOSIVE, WARP, ELECTRIC) remain unaffected as they don't modify opacity.
+
+**Testing Notes**:
+To verify the fix is working:
+1. Start the game and enter combat
+2. Kill enemies using different damage types (especially THERMAL and PHOTON)
+3. Observe the death animations play smoothly
+4. Check browser console - should see NO Three.js errors related to `refreshUniformsCommon` or undefined uniform values
+5. Verify enemies fade out properly during THERMAL death (burn/disintegrate)
+6. Verify enemies flash and vaporize during PHOTON death
+7. Confirm enemy cleanup completes after animation (no lingering meshes)
+
+**Comments Added**: None. The fix is self-documenting - adding transparency support to materials that require opacity animations is a standard Three.js pattern and doesn't require additional code comments.
+
+---
+
+DECISION: documentation_complete

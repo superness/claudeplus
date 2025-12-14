@@ -1,0 +1,60 @@
+I've found the root cause. Let me trace through the code path to confirm my understanding.
+
+**Investigation Summary**:
+
+The bug occurs in the `executeAIMove()` function. When the AI makes a move, there's a critical issue with how multi-jump continuation is handled: the AI always calls `this.aiSystem.chooseBestMove()` which gets ALL valid moves for black, not specifically continuation jumps from the current piece. This causes the AI to potentially make additional moves even when it shouldn't be continuing a multi-jump.
+
+**Root Cause**:
+
+File: `client/game.js`
+Line(s): 1237-1265
+Issue: When `executeAIMove()` is called during a multi-jump, it calls `this.aiSystem.chooseBestMove()` which returns ANY valid move for black (line 1238), not specifically a continuation jump from the piece that just jumped. The `chooseBestMove()` method calls `getAllMoves()` (line 1051) which gets moves for ALL black pieces.
+
+Why: The logic flow is:
+1. AI makes a jump (line 1245)
+2. Checks for continuation jumps (lines 1260-1265)
+3. If `continueJumping` is true, it schedules another `executeAIMove()` (line 1281)
+4. BUT `executeAIMove()` calls `chooseBestMove()` again, which picks ANY black move, not just continuation jumps from the jumping piece
+
+This creates a situation where the AI can:
+- Make multiple independent moves instead of continuing a specific multi-jump sequence
+- The turn never ends properly because `endTurn()` is only called when `continueJumping` is false
+
+Additionally, there's a secondary issue: after `continueJumping` is set to true and `executeAIMove()` is recursively called, if the new move happens to be a non-jump move (since `chooseBestMove()` returns any move), the AI keeps playing as long as it has moves.
+
+**Fix Strategy**:
+
+The fix should modify `executeAIMove()` to:
+1. Track when the AI is in a multi-jump sequence
+2. When continuing a jump, use `getContinuationJumps(piece)` instead of `chooseBestMove()` to get only valid continuation jumps from the same piece
+3. Only call `chooseBestMove()` for the initial AI move, not for multi-jump continuations
+
+The fixed code should:
+```javascript
+executeAIMove(multiJumpPiece = null) {
+    let move;
+    if (multiJumpPiece) {
+        // Continuing a multi-jump - only get jumps for this specific piece
+        const continuationJumps = this.aiSystem.getContinuationJumps(multiJumpPiece);
+        move = continuationJumps.length > 0 ? continuationJumps[0] : null;
+    } else {
+        // Initial AI move - choose best move from all options
+        move = this.aiSystem.chooseBestMove();
+    }
+    // ... rest of function
+    
+    if (continueJumping) {
+        setTimeout(() => {
+            this.executeAIMove(move.piece); // Pass the piece for continuation
+        }, 400);
+    }
+}
+```
+
+**Risks/Considerations**:
+
+1. The fix requires passing the multi-jump piece through the recursive call chain
+2. Need to ensure the continuation jump selection still works correctly for complex multi-jump sequences
+3. The `scheduleAIMove()` call in `executeMove()` (line 1212) should continue to work normally since it's the initial AI move (not a multi-jump continuation)
+
+DECISION: root_cause_found

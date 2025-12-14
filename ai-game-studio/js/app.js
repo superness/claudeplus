@@ -89,18 +89,8 @@ async function checkIncompletePipelines() {
     if (result.found && !handledPipelines.has(result.pipelineId)) {
       console.log('Found incomplete pipeline:', result);
 
-      // Check if this pipeline is already actively running (recently started)
-      const startTime = new Date(result.state?.startTime);
-      const timeSinceStart = Date.now() - startTime.getTime();
-      const fiveMinutes = 5 * 60 * 1000;
-
-      // If pipeline started less than 5 minutes ago and is "running", it's probably active
-      if (result.state?.status === 'running' && timeSinceStart < fiveMinutes) {
-        console.log('Pipeline appears to be actively running, skipping resume prompt');
-        handledPipelines.add(result.pipelineId);
-        return;
-      }
-
+      // The backend already checks if the PID is still running
+      // If we get here with found=true, the pipeline is definitely orphaned and can be resumed
       // Show resume notification
       showResumeNotification(result);
     }
@@ -444,6 +434,9 @@ function openStudio(project) {
   currentProject = project;
   lastShownStage = null; // Reset progress tracking
 
+  // Reset UI state - ensure chat form is visible by default
+  hideProgress();
+
   // Update UI
   document.getElementById('project-name').textContent = project.name;
   document.getElementById('project-status').textContent = project.status;
@@ -562,11 +555,17 @@ async function startTrackingAndShowProgress(projectId) {
     // Fetch current progress
     const progress = await api(`/projects/${projectId}/pipeline-progress`);
 
-    if (progress.active && progress.completedStages) {
+    // Only show progress if there's actually something running with real progress
+    if (progress.active && progress.completedStages && progress.completedStages.length > 0) {
       showPipelineProgress(progress);
+    } else {
+      // No active pipeline or no progress yet - ensure chat form is visible
+      hideProgress();
     }
   } catch (err) {
     console.error('Failed to fetch pipeline progress:', err);
+    // On error, ensure chat form is visible
+    hideProgress();
   }
 }
 
@@ -787,6 +786,67 @@ async function loadChatHistory(projectId) {
             style: commentaryMeta.style
           }, true); // skipSave
           break;
+
+        case 'pipeline-commentary':
+          // Restore pipeline commentary (new format)
+          try {
+            const pipelineCommentary = JSON.parse(msg.content);
+            handlePipelineCommentary({
+              message: pipelineCommentary.message || pipelineCommentary.content?.message,
+              style: pipelineCommentary.style || pipelineCommentary.content?.style
+            }, true);
+          } catch (e) {
+            console.warn('Failed to parse pipeline-commentary:', e);
+          }
+          break;
+
+        case 'pipeline-progress':
+          // Restore pipeline progress message
+          try {
+            const progress = JSON.parse(msg.content);
+            if (progress.content?.type === 'stage-complete' || progress.content?.stageName) {
+              addStageMessage(
+                progress.content?.agent || progress.agent || 'Agent',
+                progress.content?.result || progress.content?.message || '',
+                true,
+                true // skipSave
+              );
+            }
+          } catch (e) {
+            console.warn('Failed to parse pipeline-progress:', e);
+          }
+          break;
+
+        case 'agent-output':
+          // Restore agent output
+          try {
+            const output = JSON.parse(msg.content);
+            addAgentMessage(
+              output.agent || 'Agent',
+              output.output || output.content || '',
+              output.completed || 0,
+              output.total || 0,
+              true // skipSave
+            );
+          } catch (e) {
+            console.warn('Failed to parse agent-output:', e);
+          }
+          break;
+
+        case 'work-started':
+        case 'work-completed':
+        case 'work-failed':
+        case 'design-started':
+        case 'design-completed':
+        case 'design-failed':
+          // Restore work/design status messages
+          try {
+            const status = JSON.parse(msg.content);
+            restoreSystemMessage(status.description || status.message || msg.message_type);
+          } catch (e) {
+            restoreSystemMessage(msg.message_type);
+          }
+          break;
       }
     });
 
@@ -934,8 +994,9 @@ function renderQueue({ currentWork, queued, completed }) {
     completedEl.innerHTML = '<div class="empty-queue">No completed items</div>';
   }
 
-  // Also load stories
+  // Also load stories and usage data
   loadStories();
+  loadUsageData();
 }
 
 // Load pipeline stories for the current project
@@ -957,7 +1018,10 @@ function renderStories(stories) {
     storiesEl.innerHTML = stories.map(story => {
       const date = new Date(story.timestamp.replace('T', ' ').replace(/-/g, (m, i) => i > 6 ? ':' : '-'));
       const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const icon = story.type === 'design' ? '📋' : '🔧';
+      // Different icons for different pipeline types
+      let icon = '🔧'; // default feature
+      if (story.type === 'design') icon = '📋';
+      else if (story.type === 'bugfix') icon = '🐛';
       const shortDesc = story.description.length > 40 ? story.description.substring(0, 40) + '...' : story.description;
 
       return `
@@ -972,6 +1036,123 @@ function renderStories(stories) {
     }).join('');
   } else {
     storiesEl.innerHTML = '<div class="empty-queue">No stories yet</div>';
+  }
+}
+
+// ============================================
+// AI Usage Tracking
+// ============================================
+
+let usageData = null;
+
+// Load usage data for the current project
+async function loadUsageData() {
+  if (!currentProject) return;
+
+  try {
+    const data = await api(`/projects/${currentProject.id}/usage/summary`);
+    usageData = data;
+    renderUsageSummary(data);
+  } catch (err) {
+    console.error('Failed to load usage data:', err);
+  }
+}
+
+// Render usage summary in the UI
+function renderUsageSummary(data) {
+  const totalCostEl = document.getElementById('usage-total-cost');
+  const inputTokensEl = document.getElementById('usage-input-tokens');
+  const outputTokensEl = document.getElementById('usage-output-tokens');
+  const breakdownEl = document.getElementById('usage-breakdown');
+
+  if (!totalCostEl) return;
+
+  // Calculate totals from summary
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  const breakdown = [];
+
+  if (data.summary && data.summary.length > 0) {
+    data.summary.forEach(item => {
+      totalInputTokens += item.total_input_tokens || 0;
+      totalOutputTokens += item.total_output_tokens || 0;
+      breakdown.push({
+        actionType: item.action_type,
+        count: item.usage_count,
+        cost: item.total_cost_usd,
+        tokens: (item.total_input_tokens || 0) + (item.total_output_tokens || 0)
+      });
+    });
+  }
+
+  // Update main stats
+  totalCostEl.textContent = `$${(data.totalCost || 0).toFixed(4)}`;
+  totalCostEl.classList.add('cost');
+  inputTokensEl.textContent = formatNumber(totalInputTokens);
+  outputTokensEl.textContent = formatNumber(totalOutputTokens);
+
+  // Render breakdown by action type
+  if (breakdown.length > 0) {
+    breakdownEl.innerHTML = breakdown.map(item => `
+      <div class="usage-breakdown-item">
+        <span class="usage-breakdown-label">${formatActionType(item.actionType)} (${item.count}x)</span>
+        <span class="usage-breakdown-value">$${item.cost.toFixed(4)}</span>
+      </div>
+    `).join('');
+  } else {
+    breakdownEl.innerHTML = '<div class="empty-queue">No usage data yet</div>';
+  }
+}
+
+// Format large numbers with commas
+function formatNumber(num) {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(2) + 'M';
+  } else if (num >= 1000) {
+    return (num / 1000).toFixed(1) + 'K';
+  }
+  return num.toString();
+}
+
+// Format action type for display
+function formatActionType(actionType) {
+  if (!actionType) return 'Unknown';
+  return actionType
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, l => l.toUpperCase());
+}
+
+// Handle live usage updates from WebSocket
+function handleUsageUpdate(usage) {
+  // Update totals incrementally
+  if (usageData) {
+    usageData.totalCost = (usageData.totalCost || 0) + (usage.estimatedCostUsd || 0);
+
+    // Find or create the action type in summary
+    let found = false;
+    if (usageData.summary) {
+      const existing = usageData.summary.find(s => s.action_type === usage.actionType);
+      if (existing) {
+        existing.total_input_tokens = (existing.total_input_tokens || 0) + (usage.inputTokens || 0);
+        existing.total_output_tokens = (existing.total_output_tokens || 0) + (usage.outputTokens || 0);
+        existing.total_cost_usd = (existing.total_cost_usd || 0) + (usage.estimatedCostUsd || 0);
+        existing.usage_count = (existing.usage_count || 0) + 1;
+        found = true;
+      }
+    }
+
+    if (!found) {
+      if (!usageData.summary) usageData.summary = [];
+      usageData.summary.push({
+        action_type: usage.actionType || 'agent_execution',
+        total_input_tokens: usage.inputTokens || 0,
+        total_output_tokens: usage.outputTokens || 0,
+        total_cost_usd: usage.estimatedCostUsd || 0,
+        usage_count: 1
+      });
+    }
+
+    renderUsageSummary(usageData);
   }
 }
 
@@ -1148,11 +1329,19 @@ function renderServerPanel() {
     uptimeEl.textContent = '';
   }
 
-  // Update URL
-  if (serverStatus?.url && status === 'running') {
+  // Update URL - show frontend URL if available, otherwise backend URL
+  if (status === 'running' && (serverStatus?.url || serverStatus?.frontendUrl)) {
     urlContainer.classList.remove('hidden');
-    urlEl.href = serverStatus.url;
-    urlEl.textContent = serverStatus.url;
+    // Prefer frontend URL for display
+    const displayUrl = serverStatus.frontendUrl || serverStatus.url;
+    urlEl.href = displayUrl;
+
+    // Show both URLs if we have both
+    if (serverStatus.frontendUrl && serverStatus.url) {
+      urlEl.innerHTML = `<span style="color: var(--success)">Frontend:</span> ${serverStatus.frontendUrl}<br><span style="color: var(--accent)">Backend:</span> ${serverStatus.url}`;
+    } else {
+      urlEl.textContent = displayUrl;
+    }
   } else {
     urlContainer.classList.add('hidden');
   }
@@ -1396,6 +1585,16 @@ function handleWebSocketMessage(msg) {
       handlePipelineCommentary(msg);
       break;
 
+    case 'ai-usage':
+      // Real-time AI usage update
+      handleUsageUpdate(msg);
+      break;
+
+    case 'agent-stream':
+      // Real-time streaming from agent (tool usage, text deltas)
+      handleAgentStream(msg);
+      break;
+
     case 'queue-updated':
       loadQueue();
       break;
@@ -1409,16 +1608,31 @@ function handleWebSocketMessage(msg) {
 
     // Server management events
     case 'server-started':
-      serverStatus = { ...serverStatus, status: 'running', pid: msg.pid, port: msg.port, url: msg.url };
+      serverStatus = {
+        ...serverStatus,
+        status: 'running',
+        pid: msg.pid,
+        port: msg.port,
+        url: msg.url,
+        frontendUrl: msg.frontendUrl,
+        clientPort: msg.clientPort
+      };
       renderServerPanel();
-      addSystemMessage(`Server started on ${msg.url}`);
+
+      // Show which servers started
+      if (msg.frontendUrl) {
+        addSystemMessage(`Backend started on ${msg.url}, Frontend on ${msg.frontendUrl}`);
+      } else {
+        addSystemMessage(`Server started on ${msg.url}`);
+      }
       clearServerLogs();
 
-      // Update game preview to use the server URL for full-stack projects
-      if (msg.url && currentProject?.custom_path) {
-        document.getElementById('game-url-link').href = msg.url;
-        document.getElementById('game-url-link').textContent = msg.url;
-        document.getElementById('game-iframe').src = msg.url;
+      // Update game preview - prefer frontend URL for projects with separate client
+      if (currentProject?.custom_path) {
+        const previewUrl = msg.frontendUrl || msg.url;
+        document.getElementById('game-url-link').href = previewUrl;
+        document.getElementById('game-url-link').textContent = previewUrl;
+        document.getElementById('game-iframe').src = previewUrl;
         document.getElementById('preview-placeholder').classList.add('hidden');
       }
       break;
@@ -1443,6 +1657,12 @@ function handleWebSocketMessage(msg) {
       serverStatus = { ...serverStatus, status: 'error' };
       renderServerPanel();
       addSystemMessage(`Server error: ${msg.error}`);
+      break;
+
+    case 'port-conflict':
+      // Port was in use, server manager is handling it
+      addSystemMessage(`⚠️ ${msg.message || 'Port conflict detected, clearing...'}`);
+      appendServerLog('warning', `Port ${msg.port} was in use - clearing stale process`);
       break;
 
     case 'script-output':
@@ -1489,6 +1709,319 @@ function handleAgentOutput(msg) {
   addAgentMessage(agentName, msg.output, msg.completedCount, msg.totalStages);
 }
 
+// Handle real-time agent streaming (tool usage, text deltas)
+let agentActivityPanel = null;
+let agentToolLog = [];
+
+// Todo list state for diffing
+let lastTodoState = [];
+
+// Tool list state for diffing
+let lastToolState = '';
+
+// Typing animation state
+let typingQueue = '';
+let typingTimer = null;
+let lastTotalLength = 0;
+let currentDisplayText = '';
+const CHARS_PER_TICK = 5;  // Fast typing to keep up
+const TYPING_DELAY = 10;   // ~100fps
+
+function handleAgentStream(msg) {
+  const content = msg.content || {};
+  const eventType = content.eventType;
+  const agentName = content.agent?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Agent';
+
+  // Create or get the activity panel
+  if (!agentActivityPanel || !document.body.contains(agentActivityPanel)) {
+    createAgentActivityPanel();
+  }
+
+  const panel = agentActivityPanel;
+  const toolList = panel.querySelector('.agent-tool-list');
+  const textPreview = panel.querySelector('.agent-text-preview');
+  const statusEl = panel.querySelector('.agent-status');
+  const todoPanel = panel.querySelector('.agent-todo-panel');
+  const thinkingPanel = panel.querySelector('.agent-thinking-panel');
+
+  // Update agent name
+  panel.querySelector('.agent-activity-name').textContent = agentName;
+
+  switch (eventType) {
+    case 'tool_start':
+      // Add tool to log with spinner
+      agentToolLog.push({ tool: content.tool, status: 'running' });
+      updateToolList(toolList);
+      statusEl.textContent = `Using ${content.tool}...`;
+      panel.classList.remove('hidden');
+      break;
+
+    case 'tool_call':
+      // Update the last tool with input preview
+      if (agentToolLog.length > 0) {
+        const last = agentToolLog[agentToolLog.length - 1];
+        last.input = content.input;
+      }
+      updateToolList(toolList);
+      break;
+
+    case 'tool_result':
+      // Mark last tool as complete
+      if (agentToolLog.length > 0) {
+        const last = agentToolLog[agentToolLog.length - 1];
+        last.status = 'complete';
+        last.result = content.result;
+      }
+      updateToolList(toolList);
+      statusEl.textContent = 'Processing...';
+      break;
+
+    case 'file_operation':
+      // Show file being read/written/edited
+      if (agentToolLog.length > 0) {
+        const last = agentToolLog[agentToolLog.length - 1];
+        last.input = content.file;
+      }
+      updateToolList(toolList);
+      statusEl.textContent = `${content.tool}ing ${content.file}...`;
+      break;
+
+    case 'todo_update':
+      // Show todo list updates with smart diffing (no flashing)
+      if (todoPanel && content.todos) {
+        updateTodoList(todoPanel, content.todos);
+        todoPanel.classList.remove('hidden');
+
+        // Only update status occasionally to reduce flicker
+        const inProgress = content.todos.filter(t => t.status === 'in_progress');
+        const completed = content.todos.filter(t => t.status === 'completed');
+        if (inProgress.length > 0) {
+          statusEl.textContent = `Working (${completed.length}/${content.todos.length} done)`;
+        } else {
+          statusEl.textContent = `Planning (${content.todos.length} tasks)`;
+        }
+      }
+      break;
+
+    case 'plan_start':
+      statusEl.textContent = '📝 Planning approach...';
+      if (thinkingPanel) {
+        thinkingPanel.textContent = 'Entering plan mode - analyzing requirements...';
+        thinkingPanel.classList.remove('hidden');
+      }
+      break;
+
+    case 'plan_complete':
+      statusEl.textContent = '✅ Plan ready';
+      break;
+
+    case 'thinking_start':
+    case 'thinking':
+      // Show thinking/reasoning
+      if (thinkingPanel) {
+        if (content.text) {
+          thinkingPanel.textContent = content.text.slice(-300);
+        }
+        thinkingPanel.classList.remove('hidden');
+      }
+      statusEl.textContent = '💭 Reasoning...';
+      break;
+
+    case 'text_delta':
+      // Show streaming text with typing animation
+      if (content.accumulated && content.totalLength) {
+        textPreview.classList.remove('hidden');
+
+        // Calculate new characters based on totalLength delta
+        const newChars = content.totalLength - lastTotalLength;
+        if (newChars > 0 && content.accumulated.length >= newChars) {
+          // Add new chars to queue
+          typingQueue += content.accumulated.slice(-newChars);
+        }
+        lastTotalLength = content.totalLength;
+
+        // Start typing animation if not running (runs until 'complete' event)
+        if (!typingTimer) {
+          typingTimer = setInterval(() => {
+            if (typingQueue.length > 0) {
+              // Type characters
+              const chars = typingQueue.slice(0, CHARS_PER_TICK);
+              typingQueue = typingQueue.slice(CHARS_PER_TICK);
+              currentDisplayText += chars;
+
+              // Keep display to last 500 chars
+              if (currentDisplayText.length > 500) {
+                currentDisplayText = currentDisplayText.slice(-500);
+              }
+
+              textPreview.innerHTML = renderMarkdown(currentDisplayText) + '<span class="stream-cursor"></span>';
+              textPreview.scrollTop = textPreview.scrollHeight;
+            }
+            // Don't stop - wait for more data or 'complete' event
+          }, TYPING_DELAY);
+        }
+      }
+      if (content.totalLength) {
+        statusEl.textContent = `Generating (${content.totalLength} chars)...`;
+      } else {
+        statusEl.textContent = 'Generating response...';
+      }
+      break;
+
+    case 'complete':
+      // Stop typing animation
+      if (typingTimer) {
+        clearInterval(typingTimer);
+        typingTimer = null;
+      }
+
+      // Reset state for next agent
+      lastTodoState = [];
+      lastToolState = '';
+      typingQueue = '';
+      lastTotalLength = 0;
+      currentDisplayText = '';
+
+      statusEl.textContent = `Done (${(content.duration / 1000).toFixed(1)}s, ${content.workLogCount} tools)`;
+      setTimeout(() => {
+        panel.classList.add('hidden');
+        agentToolLog = [];
+        textPreview.innerHTML = '';
+        textPreview.classList.add('hidden');
+        if (todoPanel) {
+          todoPanel.classList.add('hidden');
+          todoPanel.innerHTML = '';
+        }
+        if (thinkingPanel) thinkingPanel.classList.add('hidden');
+      }, 3000);
+      break;
+  }
+}
+
+// Smart todo list update - only changes what's different (no flashing)
+function updateTodoList(todoPanel, todos) {
+  // Check if we actually need to update
+  const todosJson = JSON.stringify(todos);
+  const lastJson = JSON.stringify(lastTodoState);
+  if (todosJson === lastJson) return; // No changes
+
+  const existingItems = todoPanel.querySelectorAll('.todo-item');
+
+  // If count changed significantly or first render, do full rebuild
+  if (existingItems.length === 0 || Math.abs(existingItems.length - todos.length) > 2) {
+    todoPanel.innerHTML = todos.map((t, i) => {
+      const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○';
+      const statusClass = t.status || 'pending';
+      return `<div class="todo-item ${statusClass}" data-index="${i}">
+        <span class="todo-icon">${icon}</span>
+        <span class="todo-text">${escapeHtml(t.content)}</span>
+      </div>`;
+    }).join('');
+    lastTodoState = todos.slice();
+    return;
+  }
+
+  // Otherwise, update items in place
+  todos.forEach((t, i) => {
+    const existing = existingItems[i];
+    const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○';
+    const statusClass = t.status || 'pending';
+
+    if (existing) {
+      // Update existing item only if changed
+      const oldStatus = lastTodoState[i]?.status;
+      if (oldStatus !== t.status) {
+        existing.className = `todo-item ${statusClass}`;
+        existing.querySelector('.todo-icon').textContent = icon;
+      }
+    } else {
+      // Add new item
+      const div = document.createElement('div');
+      div.className = `todo-item ${statusClass}`;
+      div.dataset.index = i;
+      div.innerHTML = `<span class="todo-icon">${icon}</span><span class="todo-text">${escapeHtml(t.content)}</span>`;
+      todoPanel.appendChild(div);
+    }
+  });
+
+  // Remove extra items if list shrunk
+  while (todoPanel.children.length > todos.length) {
+    todoPanel.lastChild.remove();
+  }
+
+  lastTodoState = todos.slice();
+}
+
+function createAgentActivityPanel() {
+  // Remove existing panel if any
+  const existing = document.querySelector('.agent-activity-panel');
+  if (existing) existing.remove();
+
+  const panel = document.createElement('div');
+  panel.className = 'agent-activity-panel hidden';
+  panel.innerHTML = `
+    <div class="agent-activity-header">
+      <span class="agent-activity-icon">🤖</span>
+      <span class="agent-activity-name">Agent</span>
+      <span class="agent-status">Working...</span>
+    </div>
+    <div class="agent-thinking-panel hidden"></div>
+    <div class="agent-todo-panel hidden"></div>
+    <div class="agent-tool-list"></div>
+    <div class="agent-text-preview hidden"></div>
+  `;
+
+  // Insert before chat messages
+  const chatContainer = document.querySelector('.chat-container') || document.querySelector('#chat-messages')?.parentElement;
+  if (chatContainer) {
+    chatContainer.insertBefore(panel, chatContainer.firstChild);
+  } else {
+    document.body.appendChild(panel);
+  }
+
+  agentActivityPanel = panel;
+}
+
+function updateToolList(toolList) {
+  if (!toolList) return;
+
+  // Show last 5 tools
+  const recentTools = agentToolLog.slice(-5);
+
+  // Create state string for comparison
+  const stateString = JSON.stringify(recentTools.map(t => ({ tool: t.tool, status: t.status })));
+
+  // Skip if nothing changed
+  if (stateString === lastToolState) return;
+  lastToolState = stateString;
+
+  // Update existing items or add new ones
+  recentTools.forEach((t, i) => {
+    const existing = toolList.children[i];
+    const icon = t.status === 'complete' ? '✓' : '⏳';
+    const inputPreview = t.input ? ` ${t.input.substring(0, 40)}` : '';
+
+    if (existing) {
+      // Update in place if status changed
+      if (!existing.classList.contains(t.status)) {
+        existing.className = `agent-tool-item ${t.status}`;
+        existing.querySelector('.tool-icon').textContent = icon;
+      }
+    } else {
+      // Add new item (no animation)
+      const div = document.createElement('div');
+      div.className = `agent-tool-item ${t.status}`;
+      div.innerHTML = `<span class="tool-icon">${icon}</span><span class="tool-name">${escapeHtml(t.tool)}</span><span class="tool-input">${escapeHtml(inputPreview)}</span>`;
+      toolList.appendChild(div);
+    }
+  });
+
+  // Remove extra items
+  while (toolList.children.length > recentTools.length) {
+    toolList.lastChild.remove();
+  }
+}
+
 // Add an agent commentator message to chat
 function addAgentMessage(agentName, output, completed, total, skipSave = false) {
   const messagesEl = document.getElementById('chat-messages');
@@ -1505,7 +2038,7 @@ function addAgentMessage(agentName, output, completed, total, skipSave = false) 
       <span class="agent-name">${escapeHtml(agentName)}</span>
       <span class="agent-progress">Step ${completed}</span>
     </div>
-    <div class="agent-content ${hasMore ? 'truncated' : ''}">${escapeHtml(shortOutput)}</div>
+    <div class="agent-content ${hasMore ? 'truncated' : ''}">${renderMarkdown(shortOutput)}</div>
     ${hasMore ? '<button class="expand-btn">Show full output</button>' : ''}
   `;
 
@@ -1516,7 +2049,7 @@ function addAgentMessage(agentName, output, completed, total, skipSave = false) 
     let expanded = false;
     btn.addEventListener('click', () => {
       expanded = !expanded;
-      content.textContent = expanded ? output : shortOutput;
+      content.innerHTML = renderMarkdown(expanded ? output : shortOutput);
       content.classList.toggle('truncated', !expanded);
       content.classList.toggle('expanded', expanded);
       btn.textContent = expanded ? 'Show less' : 'Show full output';
@@ -1590,10 +2123,22 @@ function handlePipelineProgress(msg) {
     'final_integrator': 'Final integration and polish'
   };
 
-  // Update progress bar
-  if (msg.progress !== undefined) {
+  // Check for stage-complete with full result
+  if (msg.content?.type === 'stage-complete' && msg.content?.result) {
+    const agent = msg.content.agent || msg.content.stageName || 'Agent';
+    const result = msg.content.result;
+    // Display the full agent output
+    addAgentMessage(agent, result, 1, 1, false);
+    return;
+  }
+
+  // Update progress bar - but only if actually running
+  if (msg.progress !== undefined && msg.progress > 0 && msg.progress < 100) {
     const desc = agentDescriptions[msg.currentStage] || msg.currentStage || 'Working...';
     showProgress(`${desc} (${msg.progress}%)`, msg.progress);
+  } else if (msg.progress === 100 || msg.status === 'completed') {
+    // Pipeline finished - show chat form
+    hideProgress();
   }
 
   // Show stage as a message if it's a new stage
@@ -1631,6 +2176,12 @@ function showProgress(text, percent) {
   if (feedbackEl) {
     feedbackEl.classList.remove('hidden');
   }
+
+  // Hide chat input while pipeline is running
+  const chatForm = document.getElementById('chat-form');
+  if (chatForm) {
+    chatForm.classList.add('hidden');
+  }
 }
 
 function hideProgress() {
@@ -1640,9 +2191,16 @@ function hideProgress() {
   const feedbackEl = document.getElementById('pipeline-feedback');
   if (feedbackEl) {
     feedbackEl.classList.add('hidden');
+    feedbackEl.classList.remove('expanded'); // Reset collapsed state
     // Clear any status messages
     const statusEl = document.getElementById('feedback-status');
     if (statusEl) statusEl.textContent = '';
+  }
+
+  // Show chat input when pipeline completes
+  const chatForm = document.getElementById('chat-form');
+  if (chatForm) {
+    chatForm.classList.remove('hidden');
   }
 }
 
@@ -1742,6 +2300,15 @@ function initFeedbackUI() {
     feedbackBtn.addEventListener('click', injectPipelineFeedback);
   }
 
+  // Toggle expand/collapse
+  const feedbackToggle = document.getElementById('feedback-toggle');
+  const feedbackPanel = document.getElementById('pipeline-feedback');
+  if (feedbackToggle && feedbackPanel) {
+    feedbackToggle.addEventListener('click', () => {
+      feedbackPanel.classList.toggle('expanded');
+    });
+  }
+
   // Also allow Enter key to submit (with Ctrl/Cmd)
   const feedbackInput = document.getElementById('feedback-input');
   if (feedbackInput) {
@@ -1762,6 +2329,52 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Simple markdown renderer for streaming output
+function renderMarkdown(text) {
+  if (!text) return '';
+
+  let html = escapeHtml(text);
+
+  // Code blocks (```...```) - must come before inline code
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="md-code-block"><code>$2</code></pre>');
+
+  // Inline code (`...`)
+  html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
+
+  // Bold (**...** or __...__)
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+
+  // Italic (*...* or _..._) - be careful not to match ** or __
+  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/(?<!_)_([^_]+)_(?!_)/g, '<em>$1</em>');
+
+  // Headers (# ... at start of line)
+  html = html.replace(/^### (.+)$/gm, '<span class="md-h3">$1</span>');
+  html = html.replace(/^## (.+)$/gm, '<span class="md-h2">$1</span>');
+  html = html.replace(/^# (.+)$/gm, '<span class="md-h1">$1</span>');
+
+  // Bullet lists (- or * at start of line)
+  html = html.replace(/^[\-\*] (.+)$/gm, '<span class="md-bullet">• $1</span>');
+
+  // Numbered lists
+  html = html.replace(/^(\d+)\. (.+)$/gm, '<span class="md-bullet">$1. $2</span>');
+
+  // Convert newlines to <br> for proper display
+  html = html.replace(/\n/g, '<br>');
+
+  // Add blank line after : followed by capital letter (new thought) - remove the colon
+  html = html.replace(/:([A-Z])/g, '<br><br>$1');
+
+  // Add blank line after . followed by capital letter (new sentence/thought)
+  html = html.replace(/\.([A-Z])/g, '.<br><br>$1');
+
+  // Remove trailing colon
+  html = html.replace(/:$/, '');
+
+  return html;
 }
 
 // ============================================

@@ -1,0 +1,119 @@
+Now let me create the comprehensive test report:
+
+## Test Results
+
+### Syntax Check
+**PASS** - TypeScript compilation succeeds with no errors.
+
+### Integration Path Verification
+
+#### 1. Range Indicators System
+**Entry Point**: `CombatManager.handleSkillUse()` (client/src/combat/CombatManager.ts:289-296)
+- ✅ Imports `RangeIndicatorSystem` and `RangeIndicatorUI` (line 25)
+- ✅ Instantiates in `init()` (lines 130-131)
+- ✅ Calls `getRangeStatus()` and `showRangeCircle()` when targeting enemies (lines 290-291)
+- ✅ Shows UI feedback when out of range (lines 294-296)
+- ✅ Shows telegraphs for cone/AoE/ranged attacks (lines 436-443)
+**CONNECTED: YES**
+
+#### 2. Buff/Debuff 3D Indicators
+**Entry Point**: Server broadcasts `BUFF_EVENT` → NetworkManager → Game.handleBuffEvent()
+- ✅ Server sends BUFF_EVENT (src/api/websocket/combat.handler.ts:596-610)
+- ✅ NetworkManager receives and routes (client/src/network/NetworkManager.ts:331-335)
+- ✅ Game.ts registers callback (client/src/game/Game.ts:168-170)
+- ❌ **CRITICAL DISCONNECT**: Message format mismatch
+  - **Server sends**: `{ type: 'BUFF_EVENT', data: { targetId, sourceId, action, effectType, effectName, duration, stacks, iconCode } }`
+  - **Client expects**: `{ entity_id, entity_type, event_type, effect_type, stacks, duration }`
+  - **Missing field**: `entity_type` (PLAYER/COMPANION/ENEMY) not sent by server
+  - **Field name mismatches**: `targetId` → `entity_id`, `action` → `event_type`, etc.
+- ✅ Player, Enemy, Companion all have `buffIndicator` property and `updateBuffIndicators()` method
+- ✅ CombatManager has `updatePlayerBuffIndicators()` and `updateEnemyBuffIndicators()` helper methods (lines 1386-1425)
+- ❌ **DISCONNECT**: Helper methods are called locally (lines 753, 765, 828, 841) but WebSocket BUFF_EVENT never reaches buff indicators due to message format mismatch
+
+**CONNECTED: NO** - WebSocket message format incompatible with client handler
+
+#### 3. Skill Visual Effects Enhancement
+**Entry Point**: `SkillEffectsManager.playEffect()` → `ConeEffect.play()`
+- ✅ ConeEffect class exists (client/src/combat/SkillEffects.ts:523)
+- ✅ Enhanced with muzzle flash at source (lines 552-569)
+- ✅ Increased particle count from 100 to 150 (line 550)
+- ✅ Faster particle velocity for visibility (line 576)
+- ✅ Called from SkillEffectsManager.playConeEffect() (line 193)
+**CONNECTED: YES**
+
+#### 4. DPS Meter Removal
+- ✅ `showDPSMeter()` is a no-op (client/src/combat/ProvingGrounds.ts:937-939)
+- ✅ Logs message saying UI removed (line 938)
+- ✅ DPS tracking still works internally (line 1098)
+**CONNECTED: YES** (feature properly disabled)
+
+#### 5. Hero/Henchman UI Labels
+**Entry Point**: `PartyUI.createMemberElement()` (client/src/ui/PartyUI.ts:393-409)
+- ✅ Adds "(Hero)" or "(Henchman)" label (line 400)
+- ✅ Shows numeric health/energy values (lines 405, 409)
+- ✅ Tooltips with exact values (lines 403, 407)
+- ✅ Called from `updateParty()` (line 341)
+**CONNECTED: YES**
+
+### Disconnected Systems Found
+
+1. **CRITICAL: BUFF_EVENT WebSocket Integration**
+   - **Location**: client/src/game/Game.ts:730-779
+   - **Issue**: Server message format doesn't match client expectations
+   - **Impact**: Buffs/debuffs from WebSocket will never display on 3D indicators or party UI
+   - **Server format**: `data: { targetId, sourceId, action, effectType, effectName, ... }`
+   - **Client expects**: `{ entity_id, entity_type, event_type, effect_type, ... }`
+   - **Missing**: `entity_type` field needed to distinguish PLAYER/COMPANION/ENEMY
+
+2. **BuffIndicator3D Never Updated from WebSocket**
+   - **Locations**: 
+     - client/src/game/entities/Player.ts:111 (buffIndicator instantiated)
+     - client/src/game/entities/Enemy.ts (buffIndicator instantiated)
+     - client/src/game/companions/Companion.ts:1046 (updateBuffIndicators method)
+   - **Issue**: CombatManager updates buff indicators locally, but WebSocket BUFF_EVENT never propagates to these systems due to message format mismatch
+   - **Impact**: Buffs applied by server won't show 3D indicators above entities
+
+### Placeholder Code Found
+
+1. **client/src/combat/CombatManager.ts:653**
+   - `const critChance = 5; // Base 5% crit chance - TODO: add initiative to PlayerStats`
+   - Impact: Low - critical hits work with hardcoded value
+
+2. **client/src/combat/CombatManager.ts:1336**
+   - `let effectiveArmor = 50; // Base armor - TODO: add armor to PlayerStats`
+   - Impact: Low - damage reduction works with hardcoded value
+
+3. **client/src/game/Game.ts:777-778**
+   - `// TODO: Update BuffIndicator3D for enemies when needed`
+   - Impact: Critical - this is part of the disconnected BUFF_EVENT system
+
+### Issues Found
+
+#### CRITICAL ISSUES:
+
+1. **WebSocket BUFF_EVENT Message Format Mismatch**
+   - **Severity**: CRITICAL
+   - **Description**: Server sends buff events with field names (`targetId`, `action`, `effectType`, `effectName`) that don't match what the client handler expects (`entity_id`, `event_type`, `effect_type`). Additionally, the server doesn't send the required `entity_type` field to distinguish between PLAYER, COMPANION, and ENEMY entities.
+   - **Files Affected**:
+     - src/api/websocket/combat.handler.ts:596-632 (server sender)
+     - client/src/game/Game.ts:730-779 (client receiver)
+   - **User Impact**: Buffs and debuffs applied via WebSocket (in real combat) will never display on 3D indicators or party UI. The visual feedback system is completely non-functional for multiplayer/server-driven combat.
+   - **Fix Required**: Either update server to send client-expected format OR update client to parse server format (including deriving entity_type from targetId)
+
+#### MINOR ISSUES:
+
+2. **Range Indicator Telegraph Not Cleared**
+   - **Severity**: Low
+   - **Description**: Telegraph indicators (cone, AoE, ranged) are shown but there's no explicit cleanup after skill execution
+   - **File**: client/src/combat/CombatManager.ts:430-443
+   - **User Impact**: Telegraph visuals might persist on screen briefly after skill fires
+   - **Fix**: Add telegraph cleanup after skill execution completes
+
+3. **Hardcoded Combat Stats**
+   - **Severity**: Low
+   - **Description**: Critical chance and armor are hardcoded instead of reading from PlayerStats
+   - **Files**: client/src/combat/CombatManager.ts:653, 1336
+   - **User Impact**: Players can't customize these stats through gear/attributes
+   - **Fix**: Add `critChance` and `armor` to PlayerStats interface
+
+DECISION: has_issues

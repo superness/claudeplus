@@ -1,0 +1,61 @@
+Perfect! I now have the complete picture. The issue is clear: **SkillBar UI clicks bypass the combat manager entirely**. Let me compile the test results:
+
+## Test Results
+
+### Syntax Check
+✅ **PASS** - TypeScript compilation successful, no errors
+
+### Integration Path Verification
+
+#### Path 1: Keyboard Hotkeys (1-8, 0) - **CONNECTED ✅**
+- **Entry point**: `InputManager.handleKeyDown()` (line 119)
+- **Calls**: `InputManager.executeSkill()` (line 320)
+- **Reaches target**: `CombatManager.executeSkill()` (line 330)
+- **Visual feedback**: Yes - `showSkillError()` called on validation failures (CombatManager.ts:328-340)
+- **Effects system**: Yes - `SkillEffects.playSkillEffect()` called (CombatManager.ts:475)
+- **Status**: **WORKING** - Full path connected with all visual feedback systems
+
+#### Path 2: SkillBar UI Clicks - **DISCONNECTED ❌**
+- **Entry point**: `SkillBar` click handler (SkillBar.ts:62)
+- **Calls**: `player.useSkill(index)` (SkillBar.ts:67)
+- **Reaches target**: **NO** - Player.useSkill() is a no-op (Player.ts:292-304)
+- **Comments in code**: "Don't check cooldowns or deduct energy here! The CombatManager handles all skill validation"
+- **Status**: **BROKEN** - Clicking skills in UI does nothing!
+
+### Disconnected Systems Found
+
+1. **CRITICAL: SkillBar UI completely bypasses combat system**
+   - SkillBar.ts:67 calls `player.useSkill()` which does nothing
+   - Should call `inputManager.executeSkill()` or expose a method to trigger skills through CombatManager
+   - User clicks on skill icons → nothing happens
+
+### Visual Feedback Systems Status
+
+✅ **Projectile Effects**: Implemented (ProjectileEffect class, CombatManager.ts:475)
+✅ **Cone Effects**: Implemented (ConeEffect class with 1.0s duration, SkillEffects.ts:539)
+✅ **Range Indicators**: Implemented (RangeIndicatorSystem initialized CombatManager.ts:130)
+✅ **Skill Error Messages**: Implemented (showSkillError() with colored messages, CombatManager.ts:1454)
+✅ **Buff 3D Indicators**: Implemented (updatePlayerBuffIndicators, CombatManager.ts:1407)
+✅ **Party UI Buffs**: Implemented (PartyUI.updateMemberBuffs, PartyUI.ts:534)
+✅ **DPS Meter Removed**: Confirmed (ProvingGrounds.ts:826-946 - replaced with no-op stubs)
+✅ **Ground Targeting**: Implemented (GroundTargetingSystem initialized with camera, Game.ts:209)
+
+### Issues Found
+
+**CRITICAL INTEGRATION FAILURE**:
+1. **SkillBar UI clicks don't work** - The UI skill bar click handler (SkillBar.ts:62-69) calls `player.useSkill()` which is a stub that does nothing. Only keyboard hotkeys (1-8, 0) work because they route through `InputManager.executeSkill()` → `CombatManager.executeSkill()`
+
+**Root Cause**: SkillBar was never connected to the InputManager or CombatManager. It directly calls Player.useSkill() which was intentionally made into a no-op with a comment saying CombatManager should handle validation.
+
+**Impact**: 
+- All visual effects systems are properly implemented
+- Range validation, energy checks, cooldowns all work
+- Visual effects (projectiles, cones, buffs) all work
+- **BUT** only when triggered via keyboard - UI clicks are completely non-functional
+
+**Required Fix**: SkillBar needs to be wired to either:
+- Option A: Call `InputManager.executeSkill()` 
+- Option B: Call `CombatManager.executeSkill()` directly
+- Option C: Expose a public method on InputManager that SkillBar can call
+
+DECISION: has_issues

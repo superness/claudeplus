@@ -1,0 +1,88 @@
+Good! DPS meter is only in ProvingGrounds (testing arena), not in the main UI. Now let me compile a comprehensive test report:
+
+## Test Results
+
+### Syntax Check
+**FAIL** - TypeScript compilation errors found:
+1. `client/src/game/Game.ts:900` - Missing property `frameCount` 
+2. `client/src/ui/UI.ts:283` - Duplicate function `getPartyUI()` (also at line 624)
+
+### Integration Path Verification
+
+#### 1. Floating Damage Numbers
+- **Entry point**: WebSocket `DAMAGE_EVENT` → `Game.setupCombatFeedback()` (line 359-420)
+- **Calls**: `combatFeedback.showDamageNumber(displayPos, damageResult)` at Game.ts:392
+- **Reaches target**: `CombatFeedback.showDamageNumber()` at CombatFeedback.ts:148
+- **Visual output**: Creates DOM element with z-index 10001, enhanced stroke, positioned in 3D space
+- **CONNECTED: YES** ✅
+
+#### 2. Party UI / Buff Displays  
+- **Entry point**: Game loop → `Game.updatePartyUI()` (line 351-354, called every 10 frames at line 900)
+- **Calls chain**: 
+  - `UI.updatePartyUI()` → `PartyUI.updateParty()` at UI.ts:599
+  - `UI.updatePartyMemberBuffs()` → `PartyUI.updateMemberBuffs()` at UI.ts:617
+- **Data source**: WebSocket `BUFF_EVENT` → `Game.handleBuffEvent()` (line 746-814)
+- **Reaches target**: Updates `entityBuffs` Map and calls `partyUI.updateMemberBuffs()` at line 808
+- **CONNECTED: YES** ✅
+- **BUT**: Line 900 references missing property `frameCount` - will crash at runtime
+
+#### 3. Range Indicators
+- **Entry point**: `CombatManager.executeSkill()` checks range (line 285-296)
+- **Calls**: 
+  - `rangeIndicator.getRangeStatus(dist, range)` 
+  - `rangeIndicator.showRangeCircle(playerPos, range, status)` at line 291
+  - `rangeIndicatorUI.show(status, dist, range)` at line 295
+- **System instantiated**: `new RangeIndicatorSystem(scene)` at CombatManager.ts:130
+- **Reaches target**: `RangeIndicatorSystem.showRangeCircle()` at RangeIndicators.ts:64
+- **CONNECTED: YES** ✅
+
+#### 4. Skill Visual Effects
+- **Entry point**: WebSocket `SKILL_RESULT` → `CombatManager.handleSkillResult()` (line 1263-1319)
+- **Calls**: `this.skillEffects.playSkillEffect(skill, sourcePos, targetPos)` at line 1319
+- **System instantiated**: `new SkillEffectSystem(scene)` at CombatManager.ts:127
+- **Reaches target**: `SkillEffectSystem.playSkillEffect()` exists in SkillEffects.ts
+- **CONNECTED: YES** ✅
+
+#### 5. Skill Error Feedback
+- **Entry point**: WebSocket `ERROR` message → `Game.handleNetworkError()` (line 820-841)
+- **Calls**: `combatFeedback.showSkillError(errorType, message)` at lines 828-836
+- **Reaches target**: `CombatFeedback.showSkillError()` at CombatFeedback.ts:580
+- **Local validation**: `CombatManager.executeSkill()` also calls `showSkillError()` at lines 331-338
+- **CONNECTED: YES** ✅
+
+#### 6. Target Selection Visuals
+- **Status**: Already fully implemented (per previous fix_issues report)
+- **CONNECTED: YES** ✅
+
+#### 7. DPS Meter Removal
+- **Status**: DPS meter only in `ProvingGrounds.ts` (testing arena)
+- **Not in main UI**: Confirmed via grep search
+- **CONNECTED: N/A - Already correct** ✅
+
+### Disconnected Systems Found
+**NONE** - All visual feedback systems are properly wired
+
+### Placeholder Code Found
+**NONE** - All implementations are complete
+
+### Issues Found
+
+#### CRITICAL: Compilation Errors
+1. **Missing `frameCount` property** in Game.ts
+   - Line 900 references `this.frameCount % 10` but property is never declared
+   - Will cause runtime crash when party UI update is attempted
+   - Fix: Add `private frameCount: number = 0;` to Game class properties
+   - Fix: Increment `this.frameCount++` in game loop
+
+2. **Duplicate `getPartyUI()` method** in UI.ts
+   - Defined at both line 283 and line 624
+   - Prevents TypeScript compilation
+   - Fix: Remove one of the duplicate methods
+
+#### Impact Assessment
+- **Visual feedback systems**: Fully implemented and connected
+- **WebSocket integration**: All message types properly routed
+- **Server support**: All backend changes are in place (per implement_server summary)
+- **Runtime failure**: Game will crash when trying to update party UI every 10 frames due to missing `frameCount`
+
+DECISION: has_issues

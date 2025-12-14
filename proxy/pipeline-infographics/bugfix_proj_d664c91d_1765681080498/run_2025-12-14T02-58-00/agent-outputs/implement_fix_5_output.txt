@@ -1,0 +1,32 @@
+**Changes Made**:
+
+File: client/src/game/entities/Enemy.ts:1641-1661
+- Moved `this.scene.remove(this.mesh)` from line 1659 to line 1645 (before material disposal)
+- Added explanatory comment about the order requirement
+
+**Why This Fixes It**:
+
+The original code had a dangerous race condition:
+1. Materials were disposed first (lines 1644-1657)
+2. Mesh was removed from scene second (line 1659)
+3. During the gap between steps 1-2, the game render loop (running at 60fps) would try to render the enemy mesh
+4. Three.js WebGLRenderer would access the disposed materials' uniforms
+5. The uniforms had `undefined` values after disposal → `TypeError: Cannot read properties of undefined (reading 'value')`
+
+The fix:
+1. Remove mesh from scene FIRST (line 1645) - stops rendering immediately
+2. Dispose materials SECOND (lines 1647-1660) - safe now that mesh won't be rendered
+3. No more race condition - disposed materials are never accessed by the renderer
+
+**Testing Suggestion**:
+
+1. Start the game and enter combat
+2. Kill an enemy (especially the Gretchin mentioned in the logs)
+3. Verify that:
+   - Loot orb appears correctly after enemy death
+   - No Three.js shader errors appear in console
+   - Enemies remain visible and targetable after killing one enemy
+   - Health bars continue to render correctly for remaining enemies
+4. Kill multiple enemies in succession to ensure the fix works consistently
+
+DECISION: fix_implemented

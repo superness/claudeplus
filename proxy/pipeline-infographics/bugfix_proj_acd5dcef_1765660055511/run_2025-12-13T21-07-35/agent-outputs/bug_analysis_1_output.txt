@@ -1,0 +1,57 @@
+Now I have a good understanding of the game. This is an American Checkers game with AI. Let me analyze the bug based on the code and the bug report.
+
+## Bug Analysis
+
+**Bug Summary**: Multiple AI moves execute immediately after player's first move on game start/refresh
+
+**Expected Behavior**: When the player (Red) makes their first move, only one AI (Black) turn should occur - Black makes a single move, then it becomes Red's turn again.
+
+**Actual Behavior**: After Red makes one move, multiple pieces change position as if several turns have occurred. This suggests the AI is making multiple moves in rapid succession, possibly continuing when it shouldn't.
+
+**Affected Systems**: Turn System, AI System
+
+**Severity**: HIGH - This is a core gameplay bug that breaks the fundamental turn-based nature of the game.
+
+**Reproduction Steps**:
+1. Start a new game (or refresh the page)
+2. Make one move as Red (the player)
+3. Observe that many game pieces have changed position, as if multiple turns occurred
+
+**Likely Source Files**: 
+- `client/game.js` (specifically the `scheduleAIMove`, `executeAIMove`, and turn management logic)
+
+**Initial Hypothesis**: 
+
+Looking at the code, I can see there's a guard in `executeAIMove()` at line 1239-1243:
+```javascript
+if (this.turnSystem.currentPlayer !== 'black') {
+    this.aiThinking = false;
+    return;
+}
+```
+
+However, the issue is likely in how multi-jump handling interacts with turn switching. Looking at `executeAIMove()` (lines 1237-1304):
+
+1. The AI executes a move
+2. If it's a multi-jump situation (lines 1293-1297), it schedules another `executeAIMove()` with `setTimeout` for the same piece
+3. At line 1300, it calls `this.turnSystem.endTurn()` which switches to red's turn
+4. **BUT** the previously scheduled `setTimeout` callbacks from multi-jumps may still fire
+
+The key issue appears to be that when multi-jump continues, it schedules another AI move **before** ending the turn. But there might also be an issue where:
+
+1. The `aiThinking` flag may not be properly synchronized
+2. Multiple `setTimeout` callbacks could be queued up
+3. The guard check at line 1239-1243 should prevent stale callbacks, but there may be a race condition
+
+Another potential issue: In `startNewGame()` (lines 1155-1166), the game resets but doesn't cancel any pending `setTimeout` callbacks from the AI. If you refresh/start new game during AI's turn, old callbacks may still execute.
+
+Additionally, looking at line 1210-1213:
+```javascript
+if (this.isAIEnabled && this.turnSystem.currentPlayer === 'black') {
+    this.scheduleAIMove();
+}
+```
+
+This triggers after the player ends their turn. The AI should only make one move (plus multi-jump continuations), but there may be multiple AI move callbacks accumulating.
+
+DECISION: analysis_complete

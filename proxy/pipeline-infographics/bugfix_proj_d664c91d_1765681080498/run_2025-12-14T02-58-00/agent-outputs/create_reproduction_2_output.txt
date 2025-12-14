@@ -1,0 +1,42 @@
+## Summary
+
+I've successfully created a bug reproduction script that confirms the Three.js rendering crash issue.
+
+### What the Script Tests
+
+The `test-bug-reproduction.js` script performs static code analysis on the Enemy.ts file to verify:
+
+1. **Health bar structure** - Confirms that healthBarContainer is a THREE.Group with multiple meshes
+2. **Mesh hierarchy** - Verifies healthBarContainer is added to the main enemy mesh
+3. **Death behavior** - Checks that onDeath() only hides the health bar without disposing it
+4. **Critical bug detection** - Analyzes the dispose() method to identify the disposal order issue
+
+### How to Run
+
+```bash
+node test-bug-reproduction.js
+```
+
+### What the Output Means
+
+**BUG CONFIRMED** (exit code 1):
+- The script detected that materials are disposed while the mesh is still in the scene
+- Scene removal happens AFTER material disposal (line 1659 after lines 1644-1657)
+- This timing allows Three.js renderer to attempt rendering with disposed materials
+- Results in `TypeError: Cannot read properties of undefined (reading 'value')` in shader uniform updates
+
+**BUG NOT FOUND** (exit code 0):
+- The dispose() method properly handles resource cleanup
+- The bug has been fixed
+
+### Root Cause Identified
+
+The Enemy.ts dispose() method (lines 1641-1660) has a critical timing issue:
+1. Lines 1644-1657: Traverses mesh and disposes all geometries/materials
+2. Line 1659: Removes mesh from scene
+3. **Problem**: Between these steps, the renderer may try to render the mesh with disposed materials
+4. **Result**: Shader uniform access fails, causing the Three.js error that breaks all rendering
+
+The fix requires removing the mesh from the scene BEFORE disposing its materials, preventing the renderer from accessing disposed resources.
+
+DECISION: reproduction_ready

@@ -1,0 +1,93 @@
+Perfect! Now I have enough information to provide a comprehensive fix verification. Let me compile my assessment.
+
+## Fix Review
+
+**Summary of what was fixed:**
+
+The fix addresses a critical race condition in `LootVisualization.ts` at line 338 where loot orb meshes were being disposed while still in the rendering pipeline. The fix reorders the disposal sequence to remove the entire loot group from the Three.js scene BEFORE disposing individual materials and geometries.
+
+**Key changes:**
+1. Moved `scene.remove(this.group)` from the end of disposal to the beginning (line 338)
+2. Added explicit comment explaining the critical timing requirement (lines 336-337)
+3. Material/geometry disposal now occurs AFTER scene removal (lines 341-356)
+
+This follows the same fix pattern that was successfully applied to `Enemy.ts:1645`.
+
+---
+
+## Completeness Check
+
+- [x] **Root cause addressed**: The race condition between material disposal and rendering is eliminated
+- [x] **Edge cases handled**: All disposal paths verified:
+  - Direct removal via `removeDrop()` (line 404)
+  - Pickup animation completion callback (line 420)
+  - Bulk cleanup via `clearAll()` (line 499)
+- [x] **Defensive coding applied**: 
+  - Scene removal happens atomically before any material access
+  - Optional `beamLine` mesh is null-checked before disposal (line 353)
+- [x] **Animation safety**: The pickup animation modifies material opacity (lines 318-320) but only BEFORE the disposal callback executes (line 325 → 420)
+- [x] **Update loop safety**: Orbs are removed from the `Map` immediately after disposal (lines 405, 421, 500), preventing the update loop from accessing disposed materials
+
+---
+
+## Regression Analysis
+
+**No regressions detected**
+
+Analysis of potential issues:
+
+1. **Update loop timing**: ✅ Safe
+   - The orb is removed from `this.orbs` Map immediately after `dispose()` is called
+   - The `update()` loop (line 456) only iterates over `this.orbs.values()`
+   - No possibility of calling `orb.update()` on a disposed orb
+
+2. **Pickup animation race condition**: ✅ Safe
+   - Animation modifies materials via `requestAnimationFrame` (lines 318-320, 323)
+   - `onComplete()` callback (line 325) is called synchronously AFTER animation finishes
+   - Disposal only happens in the completion callback (line 420)
+   - No concurrent material access during disposal
+
+3. **Multiple disposal calls**: ✅ Safe
+   - `addDrop()` calls `removeDrop()` before creating new orb (line 381)
+   - `removeDrop()` checks if orb exists before disposing (line 403)
+   - `pickupDrop()` removes orb from Map after disposal (line 421)
+   - No double-disposal risk
+
+4. **Memory leaks**: ✅ Prevented
+   - All geometries and materials are still properly disposed
+   - Scene removal ensures no dangling references in renderer
+   - Map cleanup ensures no lingering orb references
+
+5. **Game balance**: ✅ Unchanged
+   - No gameplay logic was modified
+   - Loot drop rates, pickup radius, and animation timing remain identical
+   - Only internal disposal ordering changed
+
+6. **Performance**: ✅ Improved
+   - Removing from scene first prevents renderer from accessing disposed resources
+   - Eliminates continuous error spam in render loop (seen in bug report)
+   - No performance overhead added
+
+---
+
+## Verdict
+
+The fix is **complete, correct, and safe**. It properly addresses the root cause identified in the bug analysis without introducing any regressions.
+
+**Key strengths:**
+1. Matches the proven fix pattern from `Enemy.ts:1645`
+2. Handles all disposal paths consistently
+3. Prevents the specific Three.js shader uniform error documented in the bug report
+4. Maintains all existing functionality and game balance
+5. Improves stability by eliminating render loop crashes
+
+**Testing confirmed:**
+- Static code analysis shows proper disposal ordering
+- All edge cases (direct removal, pickup animation, bulk cleanup) follow the same safe pattern
+- No possibility of accessing disposed materials from update loop or animation callbacks
+
+The implementation is defensive, well-documented, and follows Three.js best practices for resource cleanup.
+
+---
+
+DECISION: FIX_VERIFIED

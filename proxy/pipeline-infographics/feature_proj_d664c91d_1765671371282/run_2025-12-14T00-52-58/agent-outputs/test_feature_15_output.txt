@@ -1,0 +1,102 @@
+Perfect! Now I understand the issues. Let me create my integration test report:
+
+## Test Results
+
+### Syntax Check
+**FAIL** - TypeScript compilation errors found:
+
+1. **BuffIndicators.ts** - Invalid StatusEffectType values:
+   - Line 45: `'CRIPPLED'` not in StatusEffectType enum (should be removed or mapped to valid type)
+   - Line 46: `'BLINDED'` not in StatusEffectType enum (actual type is `'BLIND'`)
+   - Line 48: `'SUPPRESSED'` not in StatusEffectType enum (should be `'SILENCE'`)
+   - Line 49: `'ROOTED'` not in StatusEffectType enum (should be `'IMMOBILIZE'` or `'SLOW'`)
+   - Line 83: Same invalid types in Record mapping
+
+2. **Game.ts:771** - Missing method:
+   - Calls `this.ui.getPartyUI()` but UI class doesn't have this method
+   - UI.ts only has `getCombatFeedback()` method at line 270
+   - PartyUI is never exposed through UI class
+
+### Integration Path Verification
+
+#### Path 1: Visual Effects for Ranged/Cone Attacks
+**Entry Point**: `CombatManager.playSkillEffect()` → calls → `SkillEffectSystem.playSkillEffect()`
+- ✅ CombatManager imports SkillEffectSystem at client/src/combat/CombatManager.ts
+- ✅ Method exists and is called at lines 351, 416, 981, 1248
+- ✅ ProjectileEffect class enhanced with larger size (0.35 units, glow sphere 0.5 units)
+- ✅ ConeEffect class enhanced with 100 particles (doubled), size 0.6 (doubled), opacity 1.0
+- **CONNECTED: YES** - Full path verified and enhanced
+
+#### Path 2: Skill Error Feedback
+**Entry Point**: Server sends ERROR message → `Game.handleNetworkError()` → `CombatFeedback.showSkillError()`
+- ✅ NetworkManager registers error handler at Game.ts:173-174
+- ✅ `handleNetworkError()` exists at Game.ts:784-804
+- ✅ Calls `combatFeedback.showSkillError()` with error type
+- ✅ `showSkillError()` exists at CombatFeedback.ts:579 with enhanced UI (24px font, icons, boxed display)
+- **CONNECTED: YES** - Full path verified
+
+#### Path 3: Buff/Debuff Display
+**Entry Point**: Server sends BUFF_EVENT → `Game.handleBuffEvent()` → PartyUI update
+- ✅ NetworkManager registers handler at Game.ts:168-170
+- ✅ `handleBuffEvent()` exists at Game.ts:730-779
+- ✅ Properly tracks buffs in `entityBuffs` Map (Game.ts:69)
+- ❌ **DISCONNECTED**: Calls `this.ui.getPartyUI()` but method doesn't exist in UI class
+- ✅ PartyUI.updateMemberBuffs() exists and is properly implemented at PartyUI.ts:519
+- **CONNECTED: NO** - Integration path broken at UI layer
+
+#### Path 4: DPS Meter Removal
+**Entry Point**: `CombatDummy.createLabel()` 
+- ✅ Label creation at ProvingGrounds.ts:622-646
+- ✅ Line 638: Now displays `HP: ${this.maxHealth}` only (no DPS)
+- **CONNECTED: YES** - DPS display successfully removed
+
+### Disconnected Systems Found
+
+1. **PartyUI not exposed through UI class**
+   - PartyUI is instantiated somewhere but never connected to main UI
+   - Game.ts assumes `ui.getPartyUI()` exists but it doesn't
+   - Critical integration failure - buff system can't update party UI
+
+### Placeholder Code Found
+
+From grep results:
+- `client/src/network/NetworkManager.ts:417` - Network interpolation placeholder
+- `client/src/game/World.ts:339` - Placeholder gothic architecture
+- `client/src/combat/CombatManager.ts:615` - TODO: Add initiative to PlayerStats
+- `client/src/combat/CombatManager.ts:1286` - TODO: Add armor to PlayerStats
+- `client/src/game/Game.ts:777` - TODO: Update BuffIndicator3D for enemies
+- Multiple TODOs in PartyManager for threat/cleanse tracking
+
+### Issues Found
+
+**CRITICAL INTEGRATION FAILURES:**
+
+1. **PartyUI Not Integrated with UI Class**
+   - **Impact**: Buff/debuff display completely non-functional
+   - **Location**: Game.ts:771 calls `ui.getPartyUI()` which doesn't exist
+   - **Fix Required**: Add PartyUI as property of UI class and expose via getter method
+   - **Path Broken**: Buff tracking works, but can't reach PartyUI to display
+
+2. **Invalid Status Effect Types in BuffIndicators.ts**
+   - **Impact**: TypeScript compilation fails, breaks build
+   - **Location**: Lines 45, 46, 48, 49, 83
+   - **Fix Required**: Map to valid StatusEffectType enum values:
+     - 'CRIPPLED' → Remove or map to 'SLOW'
+     - 'BLINDED' → Change to 'BLIND'
+     - 'SUPPRESSED' → Change to 'SILENCE'
+     - 'ROOTED' → Change to 'IMMOBILIZE'
+
+**MODERATE ISSUES:**
+
+3. **StatusEffectType Mismatches**
+   - PartyUI.ts uses similar invalid types in buff classification arrays
+   - May cause runtime issues even if BuffIndicators is fixed
+
+**WORKING INTEGRATIONS:**
+
+✅ Visual effects enhanced and fully connected
+✅ Skill error feedback enhanced and fully connected
+✅ DPS meter removed successfully
+✅ Buff tracking system works up to UI boundary
+
+DECISION: has_issues

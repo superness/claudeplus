@@ -1,0 +1,98 @@
+I now have all the information needed to extract the requirements.
+
+## Feature: Fix Canvas Click Coordinate Scaling
+
+### Specifications from Design Docs
+
+#### Technical/Visual Requirements
+
+From `design-docs/game-design.md` (System 9 - Rendering System):
+> ```javascript
+> RenderConfig: {
+>     tileSize: number,           // pixels per tile (e.g., 64)
+>     ...
+> }
+> ```
+
+> "Draw 8x8 board with alternating colors"
+
+The canvas is configured at 512x512 pixels (8 tiles × 64 pixels per tile) in `game.js:486-487`:
+```javascript
+this.canvas.width = CONFIG.boardSize * CONFIG.tileSize;
+this.canvas.height = CONFIG.boardSize * CONFIG.tileSize;
+```
+
+#### Input System Mechanics
+
+From `design-docs/game-design.md` (System 8 - Input System):
+> - **Purpose**: Handle player input for piece selection and move execution
+> - **Core Mechanics**:
+>   - Click to select piece (must be current player's piece)
+>   - Click destination to move (if valid)
+>   - Highlight valid moves for selected piece
+>   - Enforce mandatory captures (only show jumps if available)
+
+> ```javascript
+> handleTileClick(x, y): void {
+>     const clickedPiece = board.getPiece(x, y);
+>     if (selectedPiece && isValidMoveTarget(x, y)) {
+>         executeMove(selectedPiece, x, y);
+>         clearSelection();
+>     } else if (clickedPiece && clickedPiece.owner === currentPlayer) {
+>         if (!isMultiJumpInProgress || clickedPiece === multiJumpPiece) {
+>             selectPiece(clickedPiece);
+>         }
+>     } else {
+>         clearSelection();
+>     }
+> }
+> ```
+
+#### Current Bug Location
+
+The current implementation at `game.js:427-433`:
+```javascript
+handleClick(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+
+    const x = Math.floor(clickX / CONFIG.tileSize);
+    const y = 7 - Math.floor(clickY / CONFIG.tileSize);
+```
+
+The CSS at `style.css:261-264` applies responsive scaling:
+```css
+#game-canvas {
+    max-width: 100%;
+    height: auto;
+}
+```
+
+#### The Problem
+
+When the canvas is CSS-scaled (on mobile or narrow viewports), `getBoundingClientRect()` returns the **displayed size** (e.g., 320px wide), but the click calculation uses the fixed `CONFIG.tileSize` (64px) which assumes the canvas is at its native 512px width. This causes:
+- Click position relative to displayed canvas: correct
+- Division by 64: assumes 512px canvas width
+- Result: wrong board coordinates when canvas is scaled
+
+#### The Fix
+
+The coordinate calculation must account for the ratio between displayed canvas size and native canvas size:
+```javascript
+const scaleX = this.canvas.width / rect.width;
+const scaleY = this.canvas.height / rect.height;
+const clickX = (event.clientX - rect.left) * scaleX;
+const clickY = (event.clientY - rect.top) * scaleY;
+```
+
+### Implementation Checklist
+
+- [ ] In `InputSystem.handleClick()`, get the canvas bounding rect
+- [ ] Calculate the X scale ratio: `canvas.width / rect.width`
+- [ ] Calculate the Y scale ratio: `canvas.height / rect.height`
+- [ ] Scale the click coordinates by these ratios before dividing by `CONFIG.tileSize`
+- [ ] Verify clicks map to correct board squares at any canvas display size
+- [ ] Test on both full-size and responsive (scaled) canvas views
+
+DECISION: requirements_extracted

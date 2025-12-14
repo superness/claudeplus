@@ -373,8 +373,12 @@ app.get('/api/projects/:id/stories', authMiddleware, (req, res) => {
     }
 
     // Scan all pipeline folders and find ones that match this project
+    // Note: Pipeline folders can be named:
+    // - pipeline_<timestamp> for feature/design pipelines
+    // - bugfix_proj_<id>_<timestamp> for bug fix pipelines
+    // - feature_proj_<id>_<timestamp> for feature pipelines
     const pipelineFolders = fs.readdirSync(infographicsDir)
-      .filter(d => d.startsWith('pipeline_'))
+      .filter(d => d.startsWith('pipeline_') || d.startsWith('bugfix_') || d.startsWith('feature_'))
       .sort()
       .reverse(); // newest first
 
@@ -382,14 +386,26 @@ app.get('/api/projects/:id/stories', authMiddleware, (req, res) => {
       const pipelineDir = path.join(infographicsDir, folder);
 
       // Check execution log to see if this pipeline was for our project
-      const pipelineTimestamp = folder.replace('pipeline_', '');
       const executionLogPath = path.join(pipelinesDir, `${folder}_execution.json`);
 
       let isForThisProject = false;
       let pipelineType = 'feature';
       let description = 'Pipeline run';
 
-      if (fs.existsSync(executionLogPath)) {
+      // Check if folder name contains our project ID (e.g., bugfix_proj_XXXX_timestamp)
+      if (folder.includes(req.params.id)) {
+        isForThisProject = true;
+        if (folder.startsWith('bugfix_')) {
+          pipelineType = 'bugfix';
+          description = 'Bug Fix';
+        } else if (folder.startsWith('feature_')) {
+          pipelineType = 'feature';
+          description = 'Feature';
+        }
+      }
+
+      // Also check execution log contents
+      if (!isForThisProject && fs.existsSync(executionLogPath)) {
         try {
           const logContent = fs.readFileSync(executionLogPath, 'utf8');
           // Check if working directory contains our project ID
@@ -399,8 +415,12 @@ app.get('/api/projects/:id/stories', authMiddleware, (req, res) => {
             if (logContent.includes('living-game-world') || logContent.includes('game-design')) {
               pipelineType = 'design';
               description = 'Initial Design';
+            } else if (logContent.includes('bug-fix') || logContent.includes('bugfix')) {
+              pipelineType = 'bugfix';
+              description = 'Bug Fix';
             } else if (logContent.includes('feature-implementer')) {
               pipelineType = 'feature';
+              description = 'Feature';
             }
           }
         } catch (e) {
@@ -545,8 +565,134 @@ app.delete('/api/projects/:id/chat-history', authMiddleware, (req, res) => {
 });
 
 // ============================================
+// AI Usage Tracking Routes
+// ============================================
+
+// Get usage for a specific project
+app.get('/api/projects/:id/usage', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const usage = db.getProjectUsage(req.params.id, limit);
+    const summary = db.getProjectUsageSummary(req.params.id);
+    const totalCost = db.getTotalCost(req.params.id);
+    res.json({ usage, summary, totalCost });
+  } catch (err) {
+    console.error('[API] Error getting project usage:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get usage summary for a project
+app.get('/api/projects/:id/usage/summary', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const summary = db.getProjectUsageSummary(req.params.id);
+    const totals = db.getTotalCost(req.params.id);
+    const dailyUsage = db.getDailyUsage(req.params.id, 30);
+    res.json({
+      summary,
+      totalCost: totals.totalCost,
+      totalTokens: totals.totalTokens,
+      callCount: totals.callCount,
+      dailyUsage
+    });
+  } catch (err) {
+    console.error('[API] Error getting usage summary:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get usage for a specific pipeline
+app.get('/api/projects/:id/pipelines/:pipelineId/usage', authMiddleware, (req, res) => {
+  const project = db.getProject(req.params.id);
+  if (!project || project.user_id !== req.userId) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+
+  try {
+    const usage = db.getPipelineUsageSummary(req.params.pipelineId);
+    res.json(usage);
+  } catch (err) {
+    console.error('[API] Error getting pipeline usage:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get global usage summary (all projects for this user)
+app.get('/api/usage/global', authMiddleware, (req, res) => {
+  try {
+    // Get all projects for this user
+    const projects = db.getProjects(req.userId);
+    const projectIds = projects.map(p => p.id);
+
+    const globalSummary = db.getGlobalUsageSummary(projectIds);
+    const totalCost = projectIds.reduce((sum, pid) => sum + db.getTotalCost(pid), 0);
+
+    res.json({
+      summary: globalSummary,
+      totalCost,
+      projectCount: projects.length
+    });
+  } catch (err) {
+    console.error('[API] Error getting global usage:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // Server Management Routes
 // ============================================
+
+// Internal endpoint for agents to restart servers (no auth required)
+// Agents call: curl -X POST http://localhost:3008/api/internal/server/restart -H "Content-Type: application/json" -d '{"projectPath": "/path/to/project"}'
+app.post('/api/internal/server/restart', async (req, res) => {
+  const { projectPath } = req.body;
+
+  if (!projectPath) {
+    return res.status(400).json({ error: 'projectPath required' });
+  }
+
+  try {
+    // Use projectPath as a unique identifier for this server instance
+    const projectId = `internal_${Buffer.from(projectPath).toString('base64').slice(0, 20)}`;
+
+    console.log(`[API] Internal server restart for path: ${projectPath}`);
+
+    // Analyze the project to detect configuration
+    const config = await serverManager.analyzeProject(projectPath);
+
+    const startConfig = {
+      startCommand: config.detected?.startCommand,
+      port: config.detected?.port,
+      nodeEnv: 'development'
+    };
+
+    if (!startConfig.startCommand) {
+      return res.status(400).json({ error: 'No start command detected for project' });
+    }
+
+    const result = await serverManager.restartServer(projectId, projectPath, startConfig);
+
+    console.log(`[API] Internal restart complete: port ${result.port}, pid ${result.pid}`);
+    res.json({
+      success: true,
+      ...result,
+      frontendUrl: config.detected?.frontendUrl
+    });
+  } catch (err) {
+    console.error('[API] Internal restart error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Helper to get project path
 function getProjectPath(project) {
@@ -766,6 +912,19 @@ wss.on('connection', (ws) => {
   });
 });
 
+// Message types that should be persisted to chat history
+const PERSIST_MESSAGE_TYPES = new Set([
+  'pipeline-commentary',
+  'pipeline-progress',
+  'agent-output',
+  'design-started',
+  'design-completed',
+  'design-failed',
+  'work-started',
+  'work-completed',
+  'work-failed'
+]);
+
 // Broadcast to clients subscribed to a project
 function broadcastToProject(projectId, message) {
   let sentCount = 0;
@@ -777,6 +936,20 @@ function broadcastToProject(projectId, message) {
   });
   if (message.type === 'pipeline-progress' || message.type === 'agent-output') {
     console.log(`[WS] Broadcast ${message.type} to ${sentCount} clients for ${projectId}`);
+  }
+
+  // Persist important messages to chat history
+  if (PERSIST_MESSAGE_TYPES.has(message.type) && projectId) {
+    try {
+      const content = JSON.stringify(message);
+      db.addChatMessage(projectId, message.type, content, {
+        pipelineId: message.pipelineId,
+        agent: message.agent || message.content?.agent,
+        stage: message.stageName || message.content?.stageName
+      });
+    } catch (err) {
+      console.error('[Server] Failed to persist message to chat history:', err.message);
+    }
   }
 }
 
@@ -867,6 +1040,90 @@ pipelineBridge.onEvent((msg) => {
     return;
   }
 
+  // Handle AI usage events - record to database
+  if (msg.type === 'ai-usage') {
+    const usage = msg.content || {};
+    console.log(`[Server] Received AI usage: ${usage.agentName}, ${usage.totalTokens} tokens, $${usage.estimatedCostUsd?.toFixed(6) || '0'}`);
+
+    // Try to extract projectId from pipelineId (format: pipeline_proj_XXXX_timestamp or bugfix_proj_XXXX_timestamp)
+    let projectId = null;
+    if (usage.pipelineId) {
+      const match = usage.pipelineId.match(/_(proj_\w+)_/);
+      if (match) {
+        projectId = match[1];
+      }
+    }
+
+    // Record usage in database
+    try {
+      db.recordAiUsage({
+        projectId: projectId,
+        pipelineId: usage.pipelineId,
+        stageId: usage.stageId || usage.stageName,
+        agentName: usage.agentName,
+        actionType: usage.actionType || 'agent_execution',
+        model: usage.model || 'unknown',
+        inputTokens: usage.inputTokens || 0,
+        outputTokens: usage.outputTokens || 0,
+        cacheReadTokens: usage.cacheReadTokens || 0,
+        cacheWriteTokens: usage.cacheWriteTokens || 0,
+        durationMs: usage.durationMs || 0,
+        costUsd: usage.estimatedCostUsd || null,  // Use actual cost from Claude CLI
+        metadata: {
+          inputCharCount: usage.inputCharCount,
+          outputCharCount: usage.outputCharCount,
+          stageName: usage.stageName,
+          modelBreakdown: usage.modelBreakdown || {}
+        }
+      });
+      console.log(`[Server] Recorded AI usage for ${usage.agentName} (model: ${usage.model}, cost: $${usage.estimatedCostUsd?.toFixed(6) || '0'}, project: ${projectId || 'unknown'})`);
+    } catch (err) {
+      console.error('[Server] Failed to record AI usage:', err.message);
+    }
+
+    // Broadcast usage to connected clients for the relevant project
+    if (projectId) {
+      broadcastToProject(projectId, {
+        type: 'ai-usage',
+        ...usage
+      });
+    }
+    return;
+  }
+
+  // Handle agent-stream events (real-time tool usage and streaming text)
+  if (msg.type === 'agent-stream') {
+    const content = msg.content || {};
+    const eventType = content.eventType;
+
+    // Log tool events for debugging
+    if (eventType === 'tool_start') {
+      console.log(`[Server] Agent ${content.agent} using tool: ${content.tool}`);
+    }
+
+    // Extract projectId from pipelineId
+    let projectId = null;
+    if (content.pipelineId) {
+      const match = content.pipelineId.match(/_(proj_\w+)_/);
+      if (match) {
+        projectId = match[1];
+      }
+    }
+
+    // Broadcast to project clients or all clients
+    if (projectId) {
+      broadcastToProject(projectId, msg);
+    } else {
+      // Fallback: broadcast to all clients with a project
+      wss.clients.forEach(client => {
+        if (client.readyState === 1 && clientProjects.has(client)) {
+          client.send(JSON.stringify(msg));
+        }
+      });
+    }
+    return;
+  }
+
   // Extract projectId from pipeline messages
   if (msg.pipelineId) {
     const match = msg.pipelineId.match(/_(proj_\w+)_/);
@@ -899,6 +1156,15 @@ serverManager.on('server-error', (data) => {
   broadcastToProject(data.projectId, { type: 'server-error', ...data });
 });
 
+serverManager.on('port-conflict', (data) => {
+  console.log(`[Server] Port conflict on ${data.port} for project ${data.projectId}`);
+  broadcastToProject(data.projectId, {
+    type: 'port-conflict',
+    message: data.message || `Port ${data.port} is in use, clearing...`,
+    ...data
+  });
+});
+
 serverManager.on('script-output', (data) => {
   broadcastToProject(data.projectId, { type: 'script-output', ...data });
 });
@@ -922,6 +1188,25 @@ async function start() {
     console.log('[Server] Connected to pipeline proxy');
   } catch (err) {
     console.warn('[Server] Could not connect to proxy (will retry):', err.message);
+  }
+
+  // Check for projects with queued work items and start processing them
+  try {
+    const allProjects = db.db.prepare('SELECT id, status FROM projects WHERE status IN (?, ?)').all('live', 'implementing');
+    for (const project of allProjects) {
+      const queuedItems = db.db.prepare('SELECT COUNT(*) as count FROM work_queue WHERE project_id = ? AND status = ?').get(project.id, 'queued');
+      if (queuedItems.count > 0) {
+        console.log(`[Server] Found ${queuedItems.count} queued items for project ${project.id}, triggering queue processing...`);
+        // Update status to implementing if it was live
+        if (project.status === 'live') {
+          db.updateProjectStatus(project.id, 'implementing');
+        }
+        // Trigger queue processing (async, don't wait)
+        queueService.processNextInQueue(project.id);
+      }
+    }
+  } catch (err) {
+    console.warn('[Server] Error checking for queued work:', err.message);
   }
 
   server.listen(PORT, () => {

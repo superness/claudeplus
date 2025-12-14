@@ -91,6 +91,41 @@ class PipelineBridge {
     };
   }
 
+  /**
+   * Ask the proxy if any pipelines are currently running
+   * This is the authoritative source - the proxy knows for sure
+   */
+  async checkActivePipelines() {
+    if (!this.connected) {
+      try {
+        await this.connect();
+      } catch (err) {
+        console.log('[PipelineBridge] Not connected to proxy, assuming no active pipelines');
+        return { pipelines: [] };
+      }
+    }
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        console.log('[PipelineBridge] Timeout waiting for active-pipelines response');
+        resolve({ pipelines: [] });
+      }, 5000);
+
+      // One-time handler for the response
+      const handler = (msg) => {
+        if (msg.type === 'active-pipelines') {
+          clearTimeout(timeout);
+          this.eventCallbacks = this.eventCallbacks.filter(cb => cb !== handler);
+          console.log(`[PipelineBridge] Proxy reports ${msg.pipelines?.length || 0} active pipeline(s)`);
+          resolve(msg);
+        }
+      };
+      this.eventCallbacks.push(handler);
+
+      this.ws.send(JSON.stringify({ type: 'check-active-pipelines' }));
+    });
+  }
+
   loadTemplate(templateName) {
     const templatePath = path.join(TEMPLATES_DIR, `${templateName}.json`);
     if (!fs.existsSync(templatePath)) {
