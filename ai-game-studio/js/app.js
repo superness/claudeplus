@@ -1180,10 +1180,11 @@ async function loadServerStatus() {
     }
 
     // If server is already running, update the game preview
-    if (status.status === 'running' && status.url && currentProject.custom_path) {
-      document.getElementById('game-url-link').href = status.url;
-      document.getElementById('game-url-link').textContent = status.url;
-      document.getElementById('game-iframe').src = status.url;
+    if (status.status === 'running' && (status.url || status.frontendUrl) && currentProject.custom_path) {
+      const previewUrl = status.frontendUrl || status.url;
+      document.getElementById('game-url-link').href = previewUrl;
+      document.getElementById('game-url-link').textContent = previewUrl;
+      document.getElementById('game-iframe').src = previewUrl;
       document.getElementById('preview-placeholder').classList.add('hidden');
     }
 
