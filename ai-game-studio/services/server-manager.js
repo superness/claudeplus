@@ -537,8 +537,9 @@ class ServerManager {
         // Client info for projects with separate frontend
         clientProcess: clientProcess,
         clientPid: clientInfo?.pid || null,
-        clientPort: clientInfo?.port || null,
-        frontendUrl: clientInfo?.url || null
+        clientPort: clientInfo?.port || analysis.detected?.clientPort || null,
+        // Use detected frontendUrl even if client process wasn't started
+        frontendUrl: clientInfo?.url || analysis.detected?.frontendUrl || null
       };
 
       this.runningServers.set(projectId, serverInfo);

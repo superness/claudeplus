@@ -831,8 +831,12 @@ app.get('/api/projects/:id/server/status', authMiddleware, (req, res) => {
     const status = serverManager.getServerStatus(req.params.id);
     const config = db.getProjectServerConfig(req.params.id);
 
+    // Use detected frontendUrl from config if runtime frontendUrl is missing
+    const frontendUrl = status.frontendUrl || config?.detected?.frontendUrl || null;
+
     res.json({
       ...status,
+      frontendUrl,
       config
     });
   } catch (err) {

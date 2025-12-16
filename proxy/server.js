@@ -59,8 +59,12 @@ class ClaudeProxy {
     this.browserAutomation = null; // Browser automation service instance
     this.browserSessions = new Map(); // Track browser sessions per pipeline/client
     this.testLibrary = new TestLibraryManager(); // Test library manager
+    this.claudeChatProcesses = new Map(); // Track Claude processes per chat conversation
+    this.clientTypes = new Map(); // Track client types: 'claude-chat', 'game-studio', 'pipeline', etc.
+    this.hatsDir = path.join(__dirname, '..', 'claude-chat', 'hats'); // Directory for hat JSON files
 
     this.initializePipelineStorage();
+    this.initializeHatStorage();
     this.initializeTemplateStorage();
     this.initializeAgentStorage();
     this.setupWebSocketServer();
@@ -295,6 +299,7 @@ class ClaudeProxy {
         this.clients.delete(ws);
         this.conversationHistory.delete(ws);
         this.workingDirectory.delete(ws);
+        this.clientTypes.delete(ws);
         console.log('[PROXY] Windows client disconnected');
       });
 
@@ -1066,17 +1071,8 @@ class ClaudeProxy {
           message: `Feedback will be included in the next stage: "${pipelineState.currentStage}"`
         }));
 
-        // Broadcast to all clients for UI update
-        this.clients.forEach(client => {
-          if (client.readyState === 1) {
-            client.send(JSON.stringify({
-              type: 'pipeline-feedback-update',
-              pipelineId: pipelineState.id,
-              feedbackCount: pipelineState.userFeedback.length,
-              latestFeedback: feedbackEntry
-            }));
-          }
-        });
+        // Send feedback update to the originating client only
+        // (ws already received the injection-ack above)
 
       } catch (error) {
         console.error('[PROXY] Failed to inject feedback:', error);
@@ -1204,7 +1200,66 @@ class ClaudeProxy {
         agentId: message.agent.id,
         success: saved
       }));
-      
+
+    // Hat Management Handlers
+    } else if (message.type === 'get-hats') {
+      console.log('[PROXY] Client requesting all hats');
+
+      try {
+        const hats = this.getAllHats();
+        console.log(`[PROXY] Got ${hats.length} hats, sending response`);
+
+        ws.send(JSON.stringify({
+          type: 'hats-list',
+          hats: hats
+        }));
+      } catch (error) {
+        console.error('[PROXY] Error in get-hats handler:', error);
+        ws.send(JSON.stringify({
+          type: 'hats-error',
+          error: error.message
+        }));
+      }
+
+    } else if (message.type === 'get-hat') {
+      console.log(`[PROXY] Client requesting hat: ${message.hatId}`);
+
+      const hat = this.loadHat(message.hatId);
+
+      if (hat) {
+        ws.send(JSON.stringify({
+          type: 'hat-data',
+          hat: hat
+        }));
+      } else {
+        ws.send(JSON.stringify({
+          type: 'hat-not-found',
+          hatId: message.hatId
+        }));
+      }
+
+    } else if (message.type === 'save-hat') {
+      console.log(`[PROXY] Saving hat: ${message.hat.id}`);
+
+      const saved = this.saveHat(message.hat);
+
+      ws.send(JSON.stringify({
+        type: saved ? 'hat-saved' : 'hat-save-failed',
+        hatId: message.hat.id,
+        success: saved
+      }));
+
+    } else if (message.type === 'delete-hat') {
+      console.log(`[PROXY] Deleting hat: ${message.hatId}`);
+
+      const deleted = this.deleteHat(message.hatId);
+
+      ws.send(JSON.stringify({
+        type: 'hat-deleted',
+        hatId: message.hatId,
+        success: deleted
+      }));
+
     } else if (message.type === 'execute-pipeline') {
       console.log(`[PROXY] Received pipeline execution request: ${message.pipeline?.name || 'unknown'}`);
 
@@ -1942,7 +1997,9 @@ Generate the complete pipeline system now:`;
           'pipeline_generator',
           systemPrompt,
           message.userPrompt,
-          process.cwd()
+          process.cwd(),
+          null,  // pipelineState
+          ws     // originatingWs
         );
 
         // Emit usage event
@@ -1983,6 +2040,394 @@ Generate the complete pipeline system now:`;
           stack: error.stack
         }));
       }
+    } else if (message.type === 'claude-chat-init') {
+      // Initialize a Claude Chat session
+      console.log('[PROXY] Claude Chat session initialized');
+      const conversationId = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      // Mark this client as claude-chat type (won't receive pipeline broadcasts)
+      this.clientTypes.set(ws, 'claude-chat');
+
+      // Set working directory
+      if (message.workingDirectory) {
+        this.workingDirectory.set(ws, message.workingDirectory);
+      }
+
+      // Initialize conversation history
+      this.conversationHistory.set(ws, []);
+
+      ws.send(JSON.stringify({
+        type: 'claude-chat-init-ack',
+        conversationId: conversationId
+      }));
+
+    } else if (message.type === 'claude-chat-message') {
+      console.log(`[PROXY] Claude Chat message: ${message.message?.substring(0, 100)}...`);
+
+      try {
+        const workingDir = message.workingDirectory || this.workingDirectory.get(ws) || process.cwd();
+        const conversationId = message.conversationId || 'default';
+        const tabId = message.tabId; // Capture tabId to include in all responses
+        const pipelineId = message.pipelineId; // Pipeline to route through (null = direct chat)
+
+        // If pipelineId is specified, route through standard pipeline execution
+        if (pipelineId) {
+          console.log(`[PROXY] [PIPELINE-CHAT] Routing message through pipeline: ${pipelineId}`);
+
+          // Load the pipeline template
+          const templatePath = path.join(this.templatesDir, `${pipelineId}.json`);
+          if (!fs.existsSync(templatePath)) {
+            console.error(`[PROXY] [PIPELINE-CHAT] Pipeline not found: ${pipelineId}`);
+            ws.send(JSON.stringify({
+              type: 'error',
+              tabId: tabId,
+              message: `Pipeline not found: ${pipelineId}`
+            }));
+            return;
+          }
+
+          const pipeline = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
+
+          // Build hat context if specified
+          let hatContext = '';
+          let hatIds = message.hatIds || [];
+          if (!Array.isArray(hatIds) || hatIds.length === 0) {
+            hatIds = message.hatId && message.hatId !== 'default' ? [message.hatId] : [];
+          }
+          if (hatIds.length > 0) {
+            hatContext = this.buildMultiHatContext(hatIds);
+          }
+
+          // Build conversation history context
+          const clientHistory = message.history || [];
+          let contextMessages = '';
+          if (clientHistory.length > 0) {
+            const recentHistory = clientHistory.slice(-10);
+            contextMessages = recentHistory.map(h =>
+              `Human: ${h.user}\n\nAssistant: ${h.assistant}`
+            ).join('\n\n---\n\n');
+            contextMessages = `\n\nPrevious conversation:\n${contextMessages}\n\n---\n\nCurrent request: `;
+          }
+
+          const userContext = hatContext + contextMessages + message.message;
+
+          // Use standard pipeline execution (same as standalone-pipeline.html)
+          // Execute asynchronously and handle response
+          this.executePipelineStages(pipeline, userContext, workingDir, ws)
+            .then((result) => {
+              console.log(`[PROXY] [PIPELINE-CHAT] Pipeline completed for tab ${tabId}`);
+
+              // Extract final output from results (last stage output)
+              let finalOutput = '';
+              if (typeof result === 'object') {
+                const stageKeys = Object.keys(result);
+                if (stageKeys.length > 0) {
+                  finalOutput = result[stageKeys[stageKeys.length - 1]] || '';
+                }
+              } else {
+                finalOutput = result || '';
+              }
+
+              // Clean DECISION markers from output
+              finalOutput = String(finalOutput).replace(/\n*\*{0,2}DECISION:\s*\w+\*{0,2}\s*$/i, '').trim();
+
+              // Store in conversation history
+              const history = this.conversationHistory.get(ws) || [];
+              history.push({ user: message.message, assistant: finalOutput });
+              this.conversationHistory.set(ws, history);
+
+              // Send final response as chat message
+              ws.send(JSON.stringify({
+                type: 'assistant-message',
+                tabId: tabId,
+                content: finalOutput
+              }));
+            })
+            .catch((error) => {
+              console.error(`[PROXY] [PIPELINE-CHAT] Pipeline error:`, error);
+              ws.send(JSON.stringify({
+                type: 'error',
+                tabId: tabId,
+                message: `Pipeline error: ${error.message}`
+              }));
+            });
+          return;
+        }
+
+        // Get conversation history - prefer client-provided history, fall back to server-side
+        const clientHistory = message.history || [];
+        const serverHistory = this.conversationHistory.get(ws) || [];
+        const history = clientHistory.length > 0 ? clientHistory : serverHistory;
+
+        // Build context from history (last 10 exchanges)
+        let contextMessages = '';
+        console.log(`[PROXY] [CHAT-HISTORY] Client history length: ${clientHistory.length}, Server history length: ${serverHistory.length}`);
+        if (history.length > 0) {
+          const recentHistory = history.slice(-10);
+          console.log(`[PROXY] [CHAT-HISTORY] Using ${recentHistory.length} history exchanges for context`);
+          contextMessages = recentHistory.map(h =>
+            `Human: ${h.user}\n\nAssistant: ${h.assistant}`
+          ).join('\n\n---\n\n');
+          contextMessages = `\n\nPrevious conversation:\n${contextMessages}\n\n---\n\nCurrent request: `;
+          console.log(`[PROXY] [CHAT-HISTORY] Context prefix length: ${contextMessages.length} chars`);
+        } else {
+          console.log(`[PROXY] [CHAT-HISTORY] No history available - starting fresh conversation`);
+        }
+
+        // Build hat context if hats are specified (supports multiple)
+        let hatContext = '';
+        // Support both new hatIds array and legacy hatId field
+        let hatIds = message.hatIds || [];
+        if (!Array.isArray(hatIds) || hatIds.length === 0) {
+          hatIds = message.hatId && message.hatId !== 'default' ? [message.hatId] : [];
+        }
+
+        if (hatIds.length > 0) {
+          hatContext = this.buildMultiHatContext(hatIds);
+          if (hatContext) {
+            console.log(`[PROXY] [HAT] Applied ${hatIds.length} hat(s): ${hatIds.join(', ')} (${hatContext.length} chars)`);
+          }
+        }
+
+        const fullMessage = hatContext + contextMessages + message.message;
+        console.log(`[PROXY] [CHAT-HISTORY] Full message length: ${fullMessage.length} chars (hat: ${hatContext.length}, context: ${contextMessages.length}, message: ${message.message.length})`);
+
+        // Spawn Claude with streaming
+        const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
+        const claude = spawn('claude', [
+          '--permission-mode', 'bypassPermissions',
+          '--print',
+          '--verbose',
+          '--output-format', 'stream-json',
+          '--include-partial-messages',
+          '-'
+        ], {
+          cwd: workingDir,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...cleanEnv, PWD: workingDir }
+        });
+
+        // Track the process so we can abort it
+        this.claudeChatProcesses.set(conversationId, claude);
+
+        let lineBuffer = '';
+        let streamingText = '';
+        let currentToolBlock = null;
+        let lastBroadcast = 0;
+        let usageData = { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+
+        const broadcastEvent = (eventType, data) => {
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'agent-stream',
+              tabId: tabId, // Include tabId so client routes to correct tab
+              content: { eventType, ...data }
+            }));
+          }
+        };
+
+        claude.stdout.on('data', (data) => {
+          lineBuffer += data.toString();
+          const lines = lineBuffer.split('\n');
+          lineBuffer = lines.pop();
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+
+            try {
+              let event = JSON.parse(line);
+              if (event.type === 'stream_event' && event.event) {
+                event = event.event;
+              }
+
+              // Tool start
+              if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+                const block = event.content_block;
+                currentToolBlock = { name: block.name, id: block.id, input: '' };
+                broadcastEvent('tool_start', { tool: block.name });
+              }
+
+              // Text streaming
+              else if (event.type === 'content_block_delta') {
+                const delta = event.delta;
+
+                if (delta?.type === 'text_delta' && delta.text) {
+                  streamingText += delta.text;
+                  const now = Date.now();
+                  if (now - lastBroadcast > 200) {
+                    broadcastEvent('text_delta', {
+                      text: delta.text,
+                      accumulated: streamingText.slice(-500),
+                      totalLength: streamingText.length
+                    });
+                    lastBroadcast = now;
+                  }
+                }
+
+                // Thinking
+                else if (delta?.type === 'thinking_delta' && delta.thinking) {
+                  broadcastEvent('thinking', { text: delta.thinking });
+                }
+
+                // Tool input
+                else if (delta?.type === 'input_json_delta' && currentToolBlock) {
+                  currentToolBlock.input += delta.partial_json || '';
+                }
+              }
+
+              // Thinking start
+              else if (event.type === 'content_block_start' && event.content_block?.type === 'thinking') {
+                broadcastEvent('thinking_start', {});
+              }
+
+              // Block stop
+              else if (event.type === 'content_block_stop' && currentToolBlock) {
+                let parsedInput = currentToolBlock.input;
+                try { parsedInput = JSON.parse(currentToolBlock.input); } catch (e) {}
+
+                // Special handling for TodoWrite
+                if (currentToolBlock.name === 'TodoWrite' && parsedInput?.todos) {
+                  broadcastEvent('todo_update', { todos: parsedInput.todos });
+                }
+                // File operations
+                else if (['Read', 'Write', 'Edit'].includes(currentToolBlock.name)) {
+                  const filePath = parsedInput?.file_path || '';
+                  broadcastEvent('file_operation', {
+                    tool: currentToolBlock.name,
+                    file: filePath.split('/').pop() || filePath
+                  });
+                }
+                else {
+                  broadcastEvent('tool_call', {
+                    tool: currentToolBlock.name,
+                    input: typeof parsedInput === 'string' ? parsedInput.slice(0, 200) : JSON.stringify(parsedInput).slice(0, 200)
+                  });
+                }
+                currentToolBlock = null;
+              }
+
+              // Tool result (direct event type)
+              else if (event.type === 'tool_result') {
+                broadcastEvent('tool_result', {
+                  result: typeof event.result === 'string' ? event.result.slice(0, 500) : 'completed'
+                });
+              }
+
+              // Handle user messages containing tool results
+              else if (event.type === 'user' && event.message?.content) {
+                for (const block of event.message.content) {
+                  if (block.type === 'tool_result') {
+                    const resultPreview = typeof block.content === 'string'
+                      ? block.content.slice(0, 500)
+                      : JSON.stringify(block.content).slice(0, 500);
+                    broadcastEvent('tool_result', {
+                      result: resultPreview,
+                      is_error: block.is_error || false
+                    });
+                  }
+                }
+              }
+
+              // Usage info
+              else if (event.type === 'usage' || event.usage) {
+                const usage = event.usage || event;
+                usageData.inputTokens += usage.input_tokens || 0;
+                usageData.outputTokens += usage.output_tokens || 0;
+                // Claude 4 pricing approximation
+                usageData.estimatedCostUsd = (usageData.inputTokens * 0.000003) + (usageData.outputTokens * 0.000015);
+              }
+
+              // Result event (final output)
+              else if (event.type === 'result' && event.result) {
+                streamingText = event.result;
+              }
+
+            } catch (e) {
+              // Not JSON, might be plain text output
+              streamingText += line + '\n';
+            }
+          }
+        });
+
+        claude.stderr.on('data', (data) => {
+          console.log(`[PROXY] Claude Chat stderr: ${data.toString()}`);
+        });
+
+        claude.on('close', (code) => {
+          // Remove from tracking
+          this.claudeChatProcesses.delete(conversationId);
+
+          // Broadcast completion
+          broadcastEvent('complete', {
+            duration: Date.now() - parseInt(conversationId.split('_')[1]) || 0,
+            workLogCount: 0
+          });
+
+          // Send usage
+          if (usageData.inputTokens > 0 || usageData.outputTokens > 0) {
+            ws.send(JSON.stringify({
+              type: 'ai-usage',
+              tabId: tabId,
+              content: usageData
+            }));
+          }
+
+          // Store in history
+          history.push({
+            user: message.message,
+            assistant: streamingText.trim()
+          });
+          this.conversationHistory.set(ws, history);
+
+          // Send final response
+          ws.send(JSON.stringify({
+            type: 'assistant-message',
+            tabId: tabId,
+            content: streamingText.trim()
+          }));
+
+          console.log(`[PROXY] Claude Chat completed with code ${code}`);
+        });
+
+        claude.on('error', (error) => {
+          console.error('[PROXY] Claude Chat spawn error:', error);
+          this.claudeChatProcesses.delete(conversationId);
+          ws.send(JSON.stringify({
+            type: 'error',
+            tabId: tabId,
+            message: `Failed to start Claude: ${error.message}`
+          }));
+        });
+
+        // Send the message
+        claude.stdin.write(fullMessage + '\n');
+        claude.stdin.end();
+
+      } catch (error) {
+        console.error('[PROXY] Claude Chat error:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          tabId: tabId,
+          message: error.message
+        }));
+      }
+
+    } else if (message.type === 'claude-chat-abort') {
+      console.log('[PROXY] Claude Chat abort requested');
+      const conversationId = message.conversationId || 'default';
+      const tabId = message.tabId;
+      const claude = this.claudeChatProcesses.get(conversationId);
+
+      if (claude) {
+        claude.kill('SIGTERM');
+        this.claudeChatProcesses.delete(conversationId);
+        ws.send(JSON.stringify({
+          type: 'claude-aborted',
+          tabId: tabId,
+          conversationId
+        }));
+      }
+
     } // DISABLED: Dragon-vision system disabled
     // else if (message.type === 'dragon-command') {
     //   console.log(`[PROXY] 🐉 Dragon command received:`, message.content);
@@ -2468,6 +2913,187 @@ Your job now: Review the pipeline output and provide a helpful, conversational r
     }
   }
 
+  // Hat Storage Methods
+  initializeHatStorage() {
+    if (!fs.existsSync(this.hatsDir)) {
+      fs.mkdirSync(this.hatsDir, { recursive: true });
+      console.log(`[PROXY] Created hat storage directory: ${this.hatsDir}`);
+    }
+    console.log(`[PROXY] Hat storage initialized at: ${this.hatsDir}`);
+  }
+
+  loadHat(hatId) {
+    try {
+      const filePath = path.join(this.hatsDir, `${hatId}.json`);
+      if (fs.existsSync(filePath)) {
+        const data = fs.readFileSync(filePath, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error(`[PROXY] Error loading hat ${hatId}:`, error);
+    }
+    return null;
+  }
+
+  getAllHats() {
+    try {
+      const files = fs.readdirSync(this.hatsDir);
+      const jsonFiles = files.filter(file => file.endsWith('.json'));
+
+      return jsonFiles.map(file => {
+        const hatId = path.basename(file, '.json');
+        return this.loadHat(hatId);
+      }).filter(Boolean);
+    } catch (error) {
+      console.error('[PROXY] Error getting all hats:', error);
+      return [];
+    }
+  }
+
+  saveHat(hatData) {
+    try {
+      hatData.updatedAt = new Date().toISOString();
+      if (!hatData.createdAt) {
+        hatData.createdAt = hatData.updatedAt;
+      }
+      const filePath = path.join(this.hatsDir, `${hatData.id}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(hatData, null, 2));
+      console.log(`[PROXY] Saved hat: ${hatData.id}`);
+      return true;
+    } catch (error) {
+      console.error(`[PROXY] Error saving hat ${hatData.id}:`, error);
+      return false;
+    }
+  }
+
+  deleteHat(hatId) {
+    try {
+      const filePath = path.join(this.hatsDir, `${hatId}.json`);
+      if (fs.existsSync(filePath)) {
+        // Don't allow deleting the default hat
+        const hat = this.loadHat(hatId);
+        if (hat && hat.isDefault) {
+          console.log(`[PROXY] Cannot delete default hat: ${hatId}`);
+          return false;
+        }
+        fs.unlinkSync(filePath);
+        console.log(`[PROXY] Deleted hat file: ${hatId}`);
+        return true;
+      }
+    } catch (error) {
+      console.error(`[PROXY] Error deleting hat ${hatId}:`, error);
+    }
+    return false;
+  }
+
+  buildHatContext(hatId) {
+    // Build the context string from a hat's system prompt and documentation
+    const hat = this.loadHat(hatId);
+    if (!hat || hat.isDefault) {
+      return ''; // No context for default hat
+    }
+
+    let context = '';
+
+    // Add system prompt
+    if (hat.systemPrompt && hat.systemPrompt.trim()) {
+      context += `<hat-context name="${hat.name}">\n`;
+      context += hat.systemPrompt;
+      context += '\n</hat-context>\n\n';
+    }
+
+    // Add documentation files
+    if (hat.documentationPaths && hat.documentationPaths.length > 0) {
+      context += '<hat-documentation>\n';
+      for (const docPath of hat.documentationPaths) {
+        try {
+          if (fs.existsSync(docPath)) {
+            const content = fs.readFileSync(docPath, 'utf8');
+            const filename = path.basename(docPath);
+            context += `\n--- ${filename} ---\n`;
+            context += content;
+            context += '\n--- end ---\n';
+          } else {
+            console.log(`[PROXY] Hat documentation file not found: ${docPath}`);
+          }
+        } catch (error) {
+          console.error(`[PROXY] Error reading hat documentation ${docPath}:`, error);
+        }
+      }
+      context += '</hat-documentation>\n\n';
+    }
+
+    return context;
+  }
+
+  buildMultiHatContext(hatIds) {
+    // Build combined context from multiple hats
+    if (!hatIds || hatIds.length === 0) {
+      return '';
+    }
+
+    // For single hat, use the existing method
+    if (hatIds.length === 1) {
+      return this.buildHatContext(hatIds[0]);
+    }
+
+    // For multiple hats, combine their contexts
+    let combinedContext = '';
+    const loadedHats = [];
+
+    for (const hatId of hatIds) {
+      const hat = this.loadHat(hatId);
+      if (hat && !hat.isDefault) {
+        loadedHats.push(hat);
+      }
+    }
+
+    if (loadedHats.length === 0) {
+      return '';
+    }
+
+    // Add all system prompts in hat-context blocks
+    for (const hat of loadedHats) {
+      if (hat.systemPrompt && hat.systemPrompt.trim()) {
+        combinedContext += `<hat-context name="${hat.name}">\n`;
+        combinedContext += hat.systemPrompt;
+        combinedContext += '\n</hat-context>\n\n';
+      }
+    }
+
+    // Combine all documentation from all hats (deduped by path)
+    const allDocPaths = new Set();
+    for (const hat of loadedHats) {
+      if (hat.documentationPaths && hat.documentationPaths.length > 0) {
+        for (const docPath of hat.documentationPaths) {
+          allDocPaths.add(docPath);
+        }
+      }
+    }
+
+    if (allDocPaths.size > 0) {
+      combinedContext += '<hat-documentation>\n';
+      for (const docPath of allDocPaths) {
+        try {
+          if (fs.existsSync(docPath)) {
+            const content = fs.readFileSync(docPath, 'utf8');
+            const filename = path.basename(docPath);
+            combinedContext += `\n--- ${filename} ---\n`;
+            combinedContext += content;
+            combinedContext += '\n--- end ---\n';
+          } else {
+            console.log(`[PROXY] Hat documentation file not found: ${docPath}`);
+          }
+        } catch (error) {
+          console.error(`[PROXY] Error reading hat documentation ${docPath}:`, error);
+        }
+      }
+      combinedContext += '</hat-documentation>\n\n';
+    }
+
+    return combinedContext;
+  }
+
   parsePipelineGenerationResponse(response) {
     console.log(`[PROXY] Parsing pipeline generation response...`);
 
@@ -2606,23 +3232,16 @@ Your commentary:`;
       }
     });
 
-    // If we have a target WebSocket, send to it
+    // Only send to the target WebSocket (not all clients)
     if (targetWs && targetWs.readyState === 1) {
-      targetWs.send(usageMessage);
+      try {
+        targetWs.send(usageMessage);
+      } catch (err) {
+        console.error('[PROXY] Failed to send usage event to client:', err.message);
+      }
     }
 
-    // Also broadcast to all connected clients
-    this.clients.forEach(client => {
-      if (client.readyState === 1) {
-        try {
-          client.send(usageMessage);
-        } catch (err) {
-          console.error('[PROXY] Failed to send usage event to client:', err.message);
-        }
-      }
-    });
-
-    console.log(`[PROXY] [USAGE] Broadcasted usage event: ${usageData.agentName}, ${usageData.totalTokens} tokens, $${usageData.estimatedCostUsd?.toFixed(6) || '0.000000'}`);
+    console.log(`[PROXY] [USAGE] Sent usage event to target client: ${usageData.agentName}, ${usageData.totalTokens} tokens, $${usageData.estimatedCostUsd?.toFixed(6) || '0.000000'}`);
   }
 
   async sendCommentaryUpdate(ws, context, workingDir, pipelineId = null) {
@@ -2644,12 +3263,10 @@ Your commentary:`;
           }
         });
 
-        // Broadcast to all connected clients (including pipeline monitors)
-        this.clients.forEach(client => {
-          if (client.readyState === 1) { // WebSocket.OPEN = 1
-            client.send(commentaryMessage);
-          }
-        });
+        // Send only to the originating client
+        if (ws && ws.readyState === 1) {
+          ws.send(commentaryMessage);
+        }
       } catch (error) {
         console.error('[PROXY] Background commentary failed:', error);
       }
@@ -2802,6 +3419,460 @@ Your commentary:`;
       console.error(`[PROXY] Failed to execute pipeline ${pipelineName}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Execute a pipeline for chat messages - supports conditional routing and sub-pipelines
+   * This sends responses back in chat-compatible format with tabId for proper routing
+   */
+  async executeChatPipeline(pipeline, userContext, workingDir, ws, tabId, conversationId) {
+    console.log(`[PROXY] [PIPELINE-CHAT] Starting chat pipeline: ${pipeline.name} for tab ${tabId}`);
+
+    try {
+      // For chat pipelines, we run through stages but format output as chat messages
+      const results = {};
+      const stageMap = {};
+      pipeline.stages.forEach(stage => stageMap[stage.id] = stage);
+
+      let currentStageId = pipeline.stages[0]?.id;
+      let executionCount = 0;
+      const maxExecutions = 20; // Higher limit for complex pipelines with sub-pipelines
+
+      while (currentStageId && executionCount < maxExecutions) {
+        const stage = stageMap[currentStageId];
+        if (!stage) break;
+
+        executionCount++;
+        console.log(`[PROXY] [PIPELINE-CHAT] Executing stage: ${stage.name} (${stage.agent || 'sub_pipeline'})`);
+
+        // Send stage start notification
+        ws.send(JSON.stringify({
+          type: 'agent-stream',
+          tabId: tabId,
+          content: { eventType: 'stage_start', stageName: stage.name, agent: stage.agent || 'sub_pipeline' }
+        }));
+
+        // Handle sub-pipeline stages
+        if (stage.type === 'sub_pipeline' && stage.config?.pipeline) {
+          console.log(`[PROXY] [PIPELINE-CHAT] Executing sub-pipeline: ${stage.config.pipeline}`);
+
+          // Load sub-pipeline template
+          const subPipelinePath = path.join(__dirname, '..', 'templates', `${stage.config.pipeline}.json`);
+          if (!fs.existsSync(subPipelinePath)) {
+            console.error(`[PROXY] [PIPELINE-CHAT] Sub-pipeline not found: ${stage.config.pipeline}`);
+            results[stage.id] = `Error: Sub-pipeline ${stage.config.pipeline} not found`;
+          } else {
+            const subPipeline = JSON.parse(fs.readFileSync(subPipelinePath, 'utf8'));
+
+            // Build sub-pipeline input
+            let subInput = userContext;
+            const stageInputs = stage.inputs || [];
+            if (stageInputs.length > 0) {
+              subInput += '\n\nContext from parent pipeline:\n';
+              stageInputs.forEach(inputStage => {
+                if (results[inputStage]) {
+                  subInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+                }
+              });
+            }
+
+            // Recursively execute sub-pipeline (but capture output, don't send as final message)
+            const subResults = await this.executeChatSubPipeline(subPipeline, subInput, workingDir, ws, tabId);
+            results[stage.id] = subResults;
+          }
+
+          // Determine next stage after sub-pipeline
+          currentStageId = this.determineNextStage(pipeline, stage.id, 'complete');
+          continue;
+        }
+
+        // Build stage input
+        let stageInput = userContext;
+        const stageInputs = stage.inputs || [];
+        if (stageInputs.length > 0) {
+          stageInput += '\n\nInputs from previous stages:\n';
+          stageInputs.forEach(inputStage => {
+            if (results[inputStage]) {
+              stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+            }
+          });
+        }
+
+        // Load agent config
+        const agentPath = path.join(__dirname, '..', 'agents', `${stage.agent}.json`);
+        let agentPrompt = `You are ${stage.agent.toUpperCase()}. Complete your task.`;
+
+        if (fs.existsSync(agentPath)) {
+          const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
+          if (agentConfig.system_prompt_template) {
+            agentPrompt = agentConfig.system_prompt_template;
+          } else if (agentConfig.systemPrompt) {
+            agentPrompt = agentConfig.systemPrompt;
+          }
+        }
+
+        // Add decision instructions if stage has decisions defined
+        let availableDecisions = stage.decisions || [];
+        if (availableDecisions.length === 0) {
+          // Extract decisions from pipeline connections
+          const connections = pipeline.flow?.connections || [];
+          const stageConnections = connections.filter(conn => conn.from === stage.id);
+          availableDecisions = stageConnections.map(conn => ({
+            choice: typeof conn.condition === 'object' ? conn.condition.value : conn.condition,
+            description: conn.description || `Go to ${conn.to}`
+          }));
+        }
+
+        if (availableDecisions.length > 0 && !agentPrompt.includes('DECISION:')) {
+          agentPrompt += `\n\n=== ROUTING DECISION REQUIRED ===\n`;
+          agentPrompt += `After your response, you MUST choose exactly ONE decision from:\n`;
+          availableDecisions.forEach(decision => {
+            agentPrompt += `- ${decision.choice}: ${decision.description}\n`;
+          });
+          agentPrompt += `\n**CRITICAL**: Your VERY LAST LINE must be exactly:\n`;
+          agentPrompt += `DECISION: [ONE_OF_THE_ABOVE_CHOICES]\n`;
+          agentPrompt += `Example: DECISION: ${availableDecisions[0].choice}\n`;
+        }
+
+        // Execute Claude with streaming for this stage
+        const { output, usage } = await this.executeChatPipelineStage(
+          stage.agent, agentPrompt, stageInput, workingDir, ws, tabId
+        );
+
+        results[stage.id] = output;
+
+        // Send usage for this stage
+        if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+          ws.send(JSON.stringify({
+            type: 'ai-usage',
+            tabId: tabId,
+            content: usage
+          }));
+        }
+
+        // Determine next stage using proper conditional routing
+        currentStageId = this.determineNextStage(pipeline, stage.id, output);
+        console.log(`[PROXY] [PIPELINE-CHAT] Next stage: ${currentStageId || 'END'}`);
+      }
+
+      // Get final output from last executed stage (usually response_synthesis)
+      const lastExecutedStages = Object.keys(results);
+      const lastStageId = lastExecutedStages[lastExecutedStages.length - 1];
+      let finalOutput = results[lastStageId] || '';
+
+      // Clean up the final output - remove DECISION lines from user-facing response
+      finalOutput = finalOutput.replace(/\n*\*{0,2}DECISION:\s*\w+\*{0,2}\s*$/i, '').trim();
+
+      // Extract reflection metadata from hat_reflection stage if present
+      let reflectionMetadata = null;
+      if (results['hat_reflection']) {
+        const reflectionOutput = results['hat_reflection'];
+
+        // Extract "Action Taken:" section
+        const actionMatch = reflectionOutput.match(/\*{0,2}Action Taken:\*{0,2}\s*\n?\s*(.+?)(?:\n\n|\n\*{0,2}|$)/is);
+        if (actionMatch) {
+          const actionText = actionMatch[1].trim();
+          // Only include if something was actually updated (not "No updates needed")
+          if (actionText && !actionText.toLowerCase().includes('no update') && !actionText.toLowerCase().includes('none')) {
+            reflectionMetadata = {
+              actionTaken: actionText,
+              timestamp: new Date().toISOString()
+            };
+            console.log(`[PROXY] [PIPELINE-CHAT] Reflection action: ${actionText}`);
+          }
+        }
+      }
+
+      // Store in conversation history
+      const history = this.conversationHistory.get(ws) || [];
+      history.push({
+        user: userContext,
+        assistant: finalOutput
+      });
+      this.conversationHistory.set(ws, history);
+
+      // Send final response as chat message with optional reflection metadata
+      ws.send(JSON.stringify({
+        type: 'assistant-message',
+        tabId: tabId,
+        content: finalOutput,
+        reflection: reflectionMetadata
+      }));
+
+      console.log(`[PROXY] [PIPELINE-CHAT] Pipeline completed for tab ${tabId}`);
+
+    } catch (error) {
+      console.error(`[PROXY] [PIPELINE-CHAT] Error:`, error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        tabId: tabId,
+        message: `Pipeline error: ${error.message}`
+      }));
+    }
+  }
+
+  /**
+   * Execute a sub-pipeline for chat - returns combined output instead of sending as final message
+   */
+  async executeChatSubPipeline(pipeline, userContext, workingDir, ws, tabId) {
+    console.log(`[PROXY] [PIPELINE-CHAT-SUB] Executing sub-pipeline: ${pipeline.name}`);
+
+    const results = {};
+    const stageMap = {};
+    pipeline.stages.forEach(stage => stageMap[stage.id] = stage);
+
+    let currentStageId = pipeline.stages[0]?.id;
+    let executionCount = 0;
+    const maxExecutions = 10;
+
+    while (currentStageId && executionCount < maxExecutions) {
+      const stage = stageMap[currentStageId];
+      if (!stage) break;
+
+      executionCount++;
+      console.log(`[PROXY] [PIPELINE-CHAT-SUB] Stage: ${stage.name} (${stage.agent})`);
+
+      // Send stage notification
+      ws.send(JSON.stringify({
+        type: 'agent-stream',
+        tabId: tabId,
+        content: { eventType: 'stage_start', stageName: `[Sub] ${stage.name}`, agent: stage.agent }
+      }));
+
+      // Build stage input
+      let stageInput = userContext;
+      const stageInputs = stage.inputs || [];
+      if (stageInputs.length > 0) {
+        stageInput += '\n\nInputs from previous stages:\n';
+        stageInputs.forEach(inputStage => {
+          if (results[inputStage]) {
+            stageInput += `\n[${inputStage}]:\n${results[inputStage]}\n`;
+          }
+        });
+      }
+
+      // Load agent config and prompt
+      const agentPath = path.join(__dirname, '..', 'agents', `${stage.agent}.json`);
+      let agentPrompt = `You are ${stage.agent.toUpperCase()}. Complete your task.`;
+
+      if (fs.existsSync(agentPath)) {
+        const agentConfig = JSON.parse(fs.readFileSync(agentPath, 'utf8'));
+        agentPrompt = agentConfig.system_prompt_template || agentConfig.systemPrompt || agentPrompt;
+      }
+
+      // Add decision instructions if needed
+      let availableDecisions = stage.decisions || [];
+      if (availableDecisions.length === 0) {
+        const connections = pipeline.flow?.connections || [];
+        const stageConnections = connections.filter(conn => conn.from === stage.id);
+        availableDecisions = stageConnections.map(conn => ({
+          choice: typeof conn.condition === 'object' ? conn.condition.value : conn.condition,
+          description: conn.description || `Go to ${conn.to}`
+        }));
+      }
+
+      if (availableDecisions.length > 0 && !agentPrompt.includes('DECISION:')) {
+        agentPrompt += `\n\n=== ROUTING DECISION REQUIRED ===\n`;
+        agentPrompt += `After your response, choose ONE decision:\n`;
+        availableDecisions.forEach(d => agentPrompt += `- ${d.choice}: ${d.description}\n`);
+        agentPrompt += `\nYour LAST LINE must be: DECISION: [CHOICE]\n`;
+      }
+
+      // Execute stage
+      const { output, usage } = await this.executeChatPipelineStage(
+        stage.agent, agentPrompt, stageInput, workingDir, ws, tabId
+      );
+
+      results[stage.id] = output;
+
+      if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+        ws.send(JSON.stringify({
+          type: 'ai-usage',
+          tabId: tabId,
+          content: usage
+        }));
+      }
+
+      currentStageId = this.determineNextStage(pipeline, stage.id, output);
+    }
+
+    // Return combined output from sub-pipeline
+    return Object.values(results).join('\n\n---\n\n');
+  }
+
+  /**
+   * Execute a single stage of a chat pipeline with streaming output
+   */
+  async executeChatPipelineStage(agentName, agentPrompt, stageInput, workingDir, ws, tabId) {
+    return new Promise((resolve) => {
+      const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
+
+      const claude = spawn('claude', [
+        '--permission-mode', 'bypassPermissions',
+        '--print',
+        '--verbose',
+        '--output-format', 'stream-json',
+        '--include-partial-messages',
+        '-p', agentPrompt,
+        '-'
+      ], {
+        cwd: workingDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...cleanEnv, PWD: workingDir }
+      });
+
+      let lineBuffer = '';
+      let streamingText = '';
+      let currentToolBlock = null;
+      let usageData = { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+
+      const broadcastEvent = (eventType, data) => {
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({
+            type: 'agent-stream',
+            tabId: tabId,
+            content: { eventType, ...data }
+          }));
+        }
+      };
+
+      claude.stdout.on('data', (data) => {
+        lineBuffer += data.toString();
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            let event = JSON.parse(line);
+            if (event.type === 'stream_event' && event.event) {
+              event = event.event;
+            }
+
+            // Tool start
+            if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+              const block = event.content_block;
+              currentToolBlock = { name: block.name, id: block.id, input: '' };
+              broadcastEvent('tool_start', { tool: block.name });
+            }
+
+            // Tool input accumulation
+            if (event.type === 'content_block_delta' && event.delta?.type === 'input_json_delta') {
+              if (currentToolBlock) {
+                currentToolBlock.input += event.delta.partial_json || '';
+              }
+            }
+
+            // Tool completion
+            if (event.type === 'content_block_stop' && currentToolBlock) {
+              let parsedInput = currentToolBlock.input;
+              try { parsedInput = JSON.parse(currentToolBlock.input); } catch (e) {}
+
+              // Special handling for TodoWrite - emit todo_update
+              if (currentToolBlock.name === 'TodoWrite' && parsedInput?.todos) {
+                broadcastEvent('todo_update', { todos: parsedInput.todos });
+              }
+              // File operations
+              else if (['Read', 'Write', 'Edit'].includes(currentToolBlock.name)) {
+                const filePath = parsedInput?.file_path || '';
+                broadcastEvent('file_operation', {
+                  tool: currentToolBlock.name,
+                  file: filePath.split('/').pop() || filePath
+                });
+              }
+              else {
+                broadcastEvent('tool_call', {
+                  tool: currentToolBlock.name,
+                  input: typeof parsedInput === 'string' ? parsedInput.slice(0, 200) : JSON.stringify(parsedInput).slice(0, 200)
+                });
+              }
+              currentToolBlock = null;
+            }
+
+            // Handle user messages containing tool results (marks tools as complete)
+            if (event.type === 'user' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'tool_result') {
+                  const resultPreview = typeof block.content === 'string'
+                    ? block.content.slice(0, 500)
+                    : JSON.stringify(block.content).slice(0, 500);
+                  broadcastEvent('tool_result', {
+                    result: resultPreview,
+                    is_error: block.is_error || false
+                  });
+                }
+              }
+            }
+
+            // Text streaming
+            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+              const text = event.delta.text || '';
+              streamingText += text;
+              // Include accumulated (last 500 chars) for frontend text display
+              broadcastEvent('text_delta', {
+                text,
+                accumulated: streamingText.slice(-500),
+                totalLength: streamingText.length
+              });
+            }
+
+            // Text block start
+            if (event.type === 'content_block_start' && event.content_block?.type === 'text') {
+              const initialText = event.content_block.text || '';
+              if (initialText) {
+                streamingText += initialText;
+                broadcastEvent('text_delta', {
+                  text: initialText,
+                  accumulated: streamingText.slice(-500),
+                  totalLength: streamingText.length
+                });
+              }
+            }
+
+            // Usage data
+            if (event.type === 'usage' || event.type === 'message_delta') {
+              if (event.usage) {
+                usageData.inputTokens = event.usage.input_tokens || usageData.inputTokens;
+                usageData.outputTokens = event.usage.output_tokens || usageData.outputTokens;
+              }
+            }
+
+            // Final result
+            if (event.type === 'result' && event.result) {
+              streamingText = event.result;
+            }
+
+          } catch (e) {
+            streamingText += line + '\n';
+          }
+        }
+      });
+
+      claude.stderr.on('data', (data) => {
+        console.log(`[PROXY] [PIPELINE-CHAT] Stage stderr: ${data.toString()}`);
+      });
+
+      claude.on('close', (code) => {
+        broadcastEvent('complete', { workLogCount: 0 });
+        resolve({
+          output: streamingText.trim(),
+          usage: usageData
+        });
+      });
+
+      claude.on('error', (error) => {
+        console.error(`[PROXY] [PIPELINE-CHAT] Stage error:`, error);
+        resolve({
+          output: `Error: ${error.message}`,
+          usage: usageData
+        });
+      });
+
+      // Send the input
+      claude.stdin.write(stageInput + '\n');
+      claude.stdin.end();
+    });
   }
 
   async resumePipeline(pipelineId, ws) {
@@ -3089,7 +4160,7 @@ Your commentary:`;
         }
 
         // Execute Claude
-        const { output: result, usage } = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
+        const { output: result, usage } = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState, ws);
         results[stage.id] = result;
 
         // Emit usage event for this stage
@@ -3627,12 +4698,15 @@ Your commentary:`;
         // DEBUG: Log what prompt is being sent
         console.log(`[PROXY] [DEBUG] Agent ${stage.agent} final prompt (${agentPrompt.length} chars): ${agentPrompt.substring(0, 300)}...`);
 
+        // Get the WebSocket for this pipeline
+        const pipelineWs = this.getPipelineWebSocket(pipelineState.id, ws);
+
         // Execute Claude with MCP, passing pipeline state to save PID
-        const { output: result, usage } = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState);
+        const { output: result, usage } = await this.executeClaudeWithMCP(stage.agent, agentPrompt, stageInput, workingDir, pipelineState, pipelineWs);
         results[stage.id] = result;
 
         // Emit usage event for this stage
-        const usageWs = this.getPipelineWebSocket(pipelineState.id, ws);
+        const usageWs = pipelineWs;
         this.broadcastUsageEvent({
           ...usage,
           actionType: 'pipeline_stage',
@@ -4009,7 +5083,7 @@ Your commentary:`;
     return null;
   }
 
-  async executeClaudeWithMCP(agentName, prompt, input, workingDir, pipelineState = null) {
+  async executeClaudeWithMCP(agentName, prompt, input, workingDir, pipelineState = null, originatingWs = null) {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
       const fullPrompt = `${prompt}\n\nUser Input: ${input}`;
@@ -4068,8 +5142,10 @@ Your commentary:`;
       let currentToolBlock = null;
       let lastBroadcast = 0;
 
-      // Broadcast real-time event to all connected clients
+      // Send real-time event to the originating client only (not broadcast to all)
       const broadcastStreamEvent = (eventType, data) => {
+        if (!originatingWs || originatingWs.readyState !== 1) return;
+
         const message = JSON.stringify({
           type: 'agent-stream',
           content: {
@@ -4080,11 +5156,7 @@ Your commentary:`;
             ...data
           }
         });
-        this.clients.forEach(client => {
-          if (client.readyState === 1) {
-            try { client.send(message); } catch (e) {}
-          }
-        });
+        try { originatingWs.send(message); } catch (e) {}
       };
 
       claude.stdout.on('data', (data) => {

@@ -495,33 +495,39 @@ class QueueService {
     this.processingProjects.add(projectId);
 
     try {
-      // Determine pipeline type and ID prefix
+      // Determine pipeline type and generate pipeline ID upfront
       const pipelineType = nextItem.pipeline_type || 'feature';
       const pipelinePrefix = pipelineType === 'bugfix' ? 'bugfix' : 'feature';
       const pipelineId = `${pipelinePrefix}_${projectId}_${Date.now()}`;
 
+      // Mark as in_progress with the actual pipeline ID
       db.updateWorkStatus(nextItem.id, 'in_progress', pipelineId);
-      this.emit('work-started', { projectId, item: nextItem, pipelineType });
+      this.emit('work-started', { projectId, item: nextItem, pipelineType, pipelineId });
 
       // Start progress polling
       this.startProgressPolling(projectId, pipelineType);
 
-      // Execute the appropriate pipeline based on type
+      // Execute the appropriate pipeline based on type, passing the pre-generated ID
+      let result;
       if (pipelineType === 'bugfix') {
-        console.log(`[QueueService] Executing bug fix pipeline for ${projectId}`);
-        await pipelineBridge.executeBugFixPipeline(
+        console.log(`[QueueService] Executing bug fix pipeline ${pipelineId} for ${projectId}`);
+        result = await pipelineBridge.executeBugFixPipeline(
           projectId,
           nextItem.description,
-          projectDir
+          projectDir,
+          pipelineId
         );
       } else {
-        console.log(`[QueueService] Executing feature pipeline for ${projectId}`);
-        await pipelineBridge.executeFeaturePipeline(
+        console.log(`[QueueService] Executing feature pipeline ${pipelineId} for ${projectId}`);
+        result = await pipelineBridge.executeFeaturePipeline(
           projectId,
           nextItem.description,
-          projectDir
+          projectDir,
+          pipelineId
         );
       }
+
+      console.log(`[QueueService] Pipeline ${pipelineId} completed successfully`);
 
       // Stop polling and mark as completed
       this.stopProgressPolling(projectId);

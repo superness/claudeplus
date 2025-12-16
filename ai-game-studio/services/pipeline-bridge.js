@@ -185,13 +185,13 @@ class PipelineBridge {
     });
   }
 
-  async executeFeaturePipeline(projectId, featureRequest, workingDir) {
+  async executeFeaturePipeline(projectId, featureRequest, workingDir, providedPipelineId = null) {
     if (!this.connected) {
       await this.connect();
     }
 
     const template = this.loadTemplate('game-feature-implementer-v2');
-    const pipelineId = `feature_${projectId}_${Date.now()}`;
+    const pipelineId = providedPipelineId || `feature_${projectId}_${Date.now()}`;
 
     return new Promise((resolve, reject) => {
       this.messageHandlers.set(pipelineId, (msg) => {
@@ -214,13 +214,13 @@ class PipelineBridge {
     });
   }
 
-  async executeBugFixPipeline(projectId, bugReport, workingDir) {
+  async executeBugFixPipeline(projectId, bugReport, workingDir, providedPipelineId = null) {
     if (!this.connected) {
       await this.connect();
     }
 
     const template = this.loadTemplate('game-bug-fix-v1');
-    const pipelineId = `bugfix_${projectId}_${Date.now()}`;
+    const pipelineId = providedPipelineId || `bugfix_${projectId}_${Date.now()}`;
 
     return new Promise((resolve, reject) => {
       this.messageHandlers.set(pipelineId, (msg) => {
