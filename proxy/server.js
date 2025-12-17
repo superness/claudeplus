@@ -2213,6 +2213,7 @@ Generate the complete pipeline system now:`;
         let lineBuffer = '';
         let streamingText = '';
         let currentToolBlock = null;
+        let pendingToolCompletion = null; // Track tool waiting for result confirmation
         let lastBroadcast = 0;
         let usageData = { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
 
@@ -2223,6 +2224,18 @@ Generate the complete pipeline system now:`;
               tabId: tabId, // Include tabId so client routes to correct tab
               content: { eventType, ...data }
             }));
+          }
+        };
+
+        // Helper to complete a pending tool
+        const completePendingTool = () => {
+          if (pendingToolCompletion) {
+            broadcastEvent('tool_result', {
+              tool: pendingToolCompletion.name,
+              result: 'completed'
+            });
+            console.log(`[PROXY] [CHAT] ✓ Tool completed: ${pendingToolCompletion.name}`);
+            pendingToolCompletion = null;
           }
         };
 
@@ -2240,11 +2253,24 @@ Generate the complete pipeline system now:`;
                 event = event.event;
               }
 
+              // DEBUG: Log all event types to understand what Claude Code CLI emits
+              if (event.type && !['content_block_delta'].includes(event.type)) {
+                console.log(`[PROXY] [CHAT-EVENT] event.type=${event.type}${event.message?.role ? ` message.role=${event.message.role}` : ''}`);
+              }
+
               // Tool start
               if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+                // A new tool starting means any previous tool has completed
+                completePendingTool();
+
                 const block = event.content_block;
                 currentToolBlock = { name: block.name, id: block.id, input: '' };
                 broadcastEvent('tool_start', { tool: block.name });
+              }
+
+              // Text block start - previous tool completed
+              else if (event.type === 'content_block_start' && event.content_block?.type === 'text') {
+                completePendingTool();
               }
 
               // Text streaming
@@ -2252,6 +2278,9 @@ Generate the complete pipeline system now:`;
                 const delta = event.delta;
 
                 if (delta?.type === 'text_delta' && delta.text) {
+                  // First text delta after a tool means the tool completed
+                  completePendingTool();
+
                   streamingText += delta.text;
                   const now = Date.now();
                   if (now - lastBroadcast > 200) {
@@ -2303,20 +2332,25 @@ Generate the complete pipeline system now:`;
                     input: typeof parsedInput === 'string' ? parsedInput.slice(0, 200) : JSON.stringify(parsedInput).slice(0, 200)
                   });
                 }
+                // Mark this tool as pending completion - will be confirmed when we see
+                // the next content (tool or text) or at message end
+                pendingToolCompletion = { name: currentToolBlock.name, id: currentToolBlock.id };
                 currentToolBlock = null;
               }
 
-              // Tool result (direct event type)
+              // Tool result (direct event type) - clear pending since we got explicit result
               else if (event.type === 'tool_result') {
+                pendingToolCompletion = null;
                 broadcastEvent('tool_result', {
                   result: typeof event.result === 'string' ? event.result.slice(0, 500) : 'completed'
                 });
               }
 
-              // Handle user messages containing tool results
+              // Handle user messages containing tool results - clear pending since we got explicit result
               else if (event.type === 'user' && event.message?.content) {
                 for (const block of event.message.content) {
                   if (block.type === 'tool_result') {
+                    pendingToolCompletion = null;
                     const resultPreview = typeof block.content === 'string'
                       ? block.content.slice(0, 500)
                       : JSON.stringify(block.content).slice(0, 500);
@@ -2354,6 +2388,9 @@ Generate the complete pipeline system now:`;
         });
 
         claude.on('close', (code) => {
+          // Complete any remaining pending tool
+          completePendingTool();
+
           // Remove from tracking
           this.claudeChatProcesses.delete(conversationId);
 
@@ -5141,6 +5178,19 @@ Your commentary:`;
       };
       let currentToolBlock = null;
       let lastBroadcast = 0;
+      let pendingToolCompletion = null; // Track tool that's waiting for result confirmation
+
+      // Helper to complete a pending tool
+      const completePendingTool = () => {
+        if (pendingToolCompletion) {
+          broadcastStreamEvent('tool_result', {
+            tool: pendingToolCompletion.name,
+            result: 'completed' // Tool results aren't streamed, so we just mark complete
+          });
+          console.log(`[PROXY] [${agentName}] ✓ Tool completed: ${pendingToolCompletion.name}`);
+          pendingToolCompletion = null;
+        }
+      };
 
       // Send real-time event to the originating client only (not broadcast to all)
       const broadcastStreamEvent = (eventType, data) => {
@@ -5177,10 +5227,18 @@ Your commentary:`;
               event = event.event;
             }
 
+            // DEBUG: Log all event types to understand what Claude Code CLI emits
+            if (event.type && !['content_block_delta'].includes(event.type)) {
+              console.log(`[PROXY] [MCP-EVENT] ${agentName}: event.type=${event.type}${event.message?.role ? ` message.role=${event.message.role}` : ''}`);
+            }
+
             // Handle different event types
             if (event.type === 'content_block_start') {
               const block = event.content_block;
               if (block?.type === 'tool_use') {
+                // A new tool starting means any previous tool has completed
+                completePendingTool();
+
                 currentToolBlock = { name: block.name, id: block.id, input: '' };
                 workLog.push({
                   type: 'tool_start',
@@ -5189,6 +5247,9 @@ Your commentary:`;
                 });
                 broadcastStreamEvent('tool_start', { tool: block.name });
                 console.log(`[PROXY] [${agentName}] 🔧 Tool: ${block.name}`);
+              } else if (block?.type === 'text') {
+                // Text content starting means any previous tool has completed
+                completePendingTool();
               }
             }
 
@@ -5197,6 +5258,9 @@ Your commentary:`;
 
               // Text streaming (thinking/reasoning commentary)
               if (delta?.type === 'text_delta' && delta.text) {
+                // First text delta after a tool means the tool completed
+                completePendingTool();
+
                 streamingText += delta.text;
 
                 // Throttle broadcasts to avoid flooding (every 300ms for more real-time feel)
@@ -5283,12 +5347,17 @@ Your commentary:`;
                     input: typeof parsedInput === 'string' ? parsedInput.slice(0, 200) : JSON.stringify(parsedInput).slice(0, 200)
                   });
                 }
+                // Mark this tool as pending completion - will be confirmed when we see
+                // the next content (tool or text) or at message end
+                pendingToolCompletion = { name: currentToolBlock.name, id: currentToolBlock.id };
                 currentToolBlock = null;
               }
             }
 
-            // Tool result
+            // Tool result - if we get an explicit tool_result event, use it
             else if (event.type === 'tool_result') {
+              // Clear pending since we got an explicit result
+              pendingToolCompletion = null;
               const result = event.content || event.result || '';
               const resultPreview = typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result).slice(0, 200);
               workLog.push({
@@ -5302,6 +5371,9 @@ Your commentary:`;
 
             // Message complete - extract usage
             else if (event.type === 'message_stop' || event.type === 'message') {
+              // Complete any pending tool before message ends
+              completePendingTool();
+
               if (event.message?.usage || event.usage) {
                 const usage = event.message?.usage || event.usage;
                 usageData.inputTokens = usage.input_tokens || 0;
@@ -5347,6 +5419,9 @@ Your commentary:`;
             else if (event.type === 'user' && event.message?.content) {
               for (const block of event.message.content) {
                 if (block.type === 'tool_result') {
+                  // Clear pending since we got an explicit result
+                  pendingToolCompletion = null;
+
                   const resultPreview = typeof block.content === 'string'
                     ? block.content.slice(0, 200)
                     : JSON.stringify(block.content).slice(0, 200);
@@ -5367,6 +5442,9 @@ Your commentary:`;
 
             // Result event (final output)
             else if (event.type === 'result') {
+              // Complete any pending tool at result time
+              completePendingTool();
+
               if (event.result) {
                 streamingText = event.result;
               }
@@ -5399,6 +5477,9 @@ Your commentary:`;
       });
 
       claude.on('close', (code) => {
+        // Complete any remaining pending tool
+        completePendingTool();
+
         const endTime = Date.now();
         usageData.durationMs = endTime - startTime;
         usageData.outputCharCount = streamingText.length;
