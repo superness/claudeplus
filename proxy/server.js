@@ -1603,6 +1603,9 @@ Answer the question directly and concisely.`;
         // Detect if user wants to modify THIS interface (game-dev-studio.html)
         const wantsToModifyStudioInterface = /\b(modify|change|update|edit|improve)\s+(this|the)?\s*(interface|studio)/i.test(message.message);
 
+        // Detect if this is a content creation request (zones, quests, enemies, dialogues)
+        const isContentRequest = /\[CONTENT\]|create\s+(a\s+)?(new\s+)?(zone|area|level|world|map)|design\s+(a\s+)?(new\s+)?(enemy|enemies|mob|mobs|boss|creature)|write\s+(a\s+)?(new\s+)?(quest|dialogue|dialog|conversation|npc)|validate\s+content|content\s+(system|compiler|validation)|\.zone\.yaml|\.quest\.yaml|\.dlg\b/i.test(message.message);
+
         // Build specialized context
         let studioContext = `GAME DEV STUDIO - Pipeline Interface Helper
 
@@ -1646,7 +1649,97 @@ This is the ONLY exception where you directly edit files - when they want to cha
 
 Be creative and implement their requested changes to the interface!`;
 
+        } else if (isContentRequest) {
+          // Content creation request - use content-generation-v1 pipeline
+          studioContext += `
+
+CONTENT CREATION REQUEST - USE CONTENT GENERATION PIPELINE
+
+The user wants to create game CONTENT (zones, quests, enemies, dialogues). Use the specialized content-generation-v1 pipeline.
+
+This pipeline uses the declarative content system with:
+- .zone.yaml files - ASCII maps, NPCs, enemies, spawn points
+- .quest.yaml files - Objectives, rewards, prerequisites
+- .dlg files - Screenplay-style NPC dialogue trees
+
+Your ONLY job:
+1. Parse what content the user wants to create
+2. Identify: faction (Imperial/Tau/Ork), content type, level range, theme
+3. Output the pipeline execution request in the special format below
+4. The proxy will detect it and execute the content pipeline
+
+HOW TO EXECUTE THE CONTENT PIPELINE:
+
+Output this exact format:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "content-generation-v1",
+  "userPrompt": "<detailed content creation request>",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Then add a brief message explaining what content you're creating.
+
+REQUIRED INFO TO EXTRACT:
+- Faction: Imperial, Tau, or Ork (default to Imperial if unclear)
+- Level Range: e.g., 1-5 for tutorial, 10-15 for mid-game
+- Content Type: zone, quest, enemy, dialogue, or full area (all)
+- Theme/Setting: desert, hive city, jungle, space hulk, etc.
+
+Examples:
+
+User: "Create a Tau outpost zone with some quests"
+Your response:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "content-generation-v1",
+  "userPrompt": "Create a Tau faction outpost zone with the following requirements: Faction: Tau, Level Range: 5-10, Content needed: zone with ASCII map, 2-3 quests introducing Tau technology and philosophy, enemies including Kroot hounds and Fire Warriors, dialogue for Tau Earth Caste merchants. The zone should have a clean, advanced aesthetic with Tau architecture.",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Running the content generation pipeline to create a Tau outpost zone...
+
+---
+
+User: "Design enemies for an Ork camp"
+Your response:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "content-generation-v1",
+  "userPrompt": "Design enemies for an Ork faction camp. Create enemy definitions including: Ork Boyz (basic melee), Ork Shootaz (ranged), Gretchin (weak support), and an Ork Nob boss. Include stats, abilities, attack patterns, and drop tables following GW1-style horizontal progression. Level range 8-12.",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Running the content generation pipeline to design Ork camp enemies...
+
+---
+
+User: "[CONTENT] Validate all content files"
+Your response:
+[PIPELINE-EXECUTE]
+{
+  "pipelineName": "content-generation-v1",
+  "userPrompt": "Validate all existing content files in the content/ directory. Run npm run content:validate to check .zone.yaml, .quest.yaml, and .dlg files for syntax errors, missing references, and schema compliance. Report any issues found and suggest fixes.",
+  "workingDirectory": "${message.workingDirectory}"
+}
+[/PIPELINE-EXECUTE]
+
+Running the content generation pipeline to validate content files...
+
+---
+
+CRITICAL RULES:
+- EVERY content request must output [PIPELINE-EXECUTE]...[/PIPELINE-EXECUTE]
+- ALWAYS use "content-generation-v1" as the pipelineName for content requests
+- Include faction, level range, and content type in the prompt
+- DO NOT use Read/Write/Edit/Bash tools on content files directly
+- Let the specialized content agents handle the creation`;
+
         } else {
+          // Regular development request - use dev-cycle-meta-v1 pipeline
           studioContext += `
 
 USER GAME REQUEST - ALWAYS USE PIPELINE
