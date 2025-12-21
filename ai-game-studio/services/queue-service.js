@@ -587,8 +587,8 @@ class QueueService {
     // Check if there's an active pipeline
     const isActive = this.processingProjects.has(projectId) || activePipelines.has(projectId);
 
-    // Get progress from execution log
-    const logPath = this.findLatestPipelineLog();
+    // Get progress from execution log for THIS project (not just any pipeline)
+    const logPath = this.findLatestPipelineLogForProject(projectId);
     if (!logPath) {
       return { active: isActive, progress: null };
     }

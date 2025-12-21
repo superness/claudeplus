@@ -2255,6 +2255,24 @@ Generate the complete pipeline system now:`;
         // Build context from history (last 10 exchanges)
         let contextMessages = '';
         console.log(`[PROXY] [CHAT-HISTORY] Client history length: ${clientHistory.length}, Server history length: ${serverHistory.length}`);
+
+        // DIAGNOSTIC: Write detailed history debug to file
+        const debugLogPath = path.join(__dirname, 'chat-history-debug.log');
+        const debugTimestamp = new Date().toISOString();
+        const debugEntry = [
+          `\n\n========== ${debugTimestamp} ==========`,
+          `Tab ID: ${tabId}`,
+          `Current message: ${message.message?.substring(0, 100)}...`,
+          `Client history count: ${clientHistory.length}`,
+          `Server history count: ${serverHistory.length}`,
+          `Using: ${clientHistory.length > 0 ? 'client' : 'server'} history`,
+          `History items (user message first 50 chars):`
+        ];
+        history.forEach((h, i) => {
+          debugEntry.push(`  [${i}] User: ${h.user?.substring(0, 50)}... | Assistant: ${h.assistant?.substring(0, 50)}...`);
+        });
+        fs.appendFileSync(debugLogPath, debugEntry.join('\n'));
+
         if (history.length > 0) {
           const recentHistory = history.slice(-10);
           console.log(`[PROXY] [CHAT-HISTORY] Using ${recentHistory.length} history exchanges for context`);
@@ -4135,8 +4153,11 @@ Your commentary:`;
         // Send stage start notification
         ws.send(JSON.stringify({
           type: 'pipeline-status',
+          pipelineId: pipelineState.id,
           content: {
             timestamp: new Date().toISOString(),
+            stageId: stage.id,
+            stageName: stage.name,
             agent: stage.agent.toUpperCase(),
             type: 'stage-start',
             message: `Starting ${stage.name}`,
@@ -4323,8 +4344,9 @@ Your commentary:`;
           pipelineId: pipelineState.id,
           content: {
             timestamp: new Date().toISOString(),
-            agent: stage.agent.toUpperCase(),
+            stageId: stage.id,
             stageName: stage.name,
+            agent: stage.agent.toUpperCase(),
             type: 'stage-complete',
             message: `${stage.name} completed`,
             result: result || '',  // Include full agent output

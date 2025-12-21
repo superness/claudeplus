@@ -1434,8 +1434,15 @@ document.getElementById('run-script-btn')?.addEventListener('click', () => {
 initFeedbackUI();
 
 // Parse AI chat commands for server management
+// Only triggers on SHORT explicit commands, not long feature descriptions
 function parseServerCommand(message) {
   const lowerMsg = message.toLowerCase().trim();
+
+  // Don't parse server commands from long messages (likely feature requests or prompts)
+  // Short commands are typically under 100 characters
+  if (lowerMsg.length > 100) {
+    return null;
+  }
 
   if (lowerMsg.includes('start') && (lowerMsg.includes('server') || lowerMsg.includes('backend'))) {
     return { action: 'start' };

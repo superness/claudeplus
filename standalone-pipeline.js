@@ -3250,9 +3250,12 @@ function checkForActivePipelines() {
     
     ws.onopen = () => {
       console.log('🔄 Checking for active pipelines...');
-      ws.send(JSON.stringify({
-        type: 'check-active-pipelines'
-      }));
+      // Small delay to allow server to fully initialize connection handler
+      setTimeout(() => {
+        ws.send(JSON.stringify({
+          type: 'check-active-pipelines'
+        }));
+      }, 300);
       
       let hasReceivedPipelinesResponse = false;
       
@@ -4412,23 +4415,37 @@ function executeCurrentPipeline() {
           // Pipeline execution status updates
           console.log('📊 Pipeline status update:', response.content);
           const content = response.content;
-          
+
           // Detect and highlight active stage from pipeline status
-          if (content && content.agent) {
-            console.log('🔍 Detecting stage for agent:', content.agent);
-            const activeStage = designer.detectActiveStageFromAgent(content.agent);
-            console.log('🎯 Active stage detected:', activeStage);
-            if (activeStage) {
-              console.log('✨ Animating node:', activeStage.id, activeStage.color, activeStage.icon);
-              designer.animatePipelineNode(activeStage.id, activeStage.color, activeStage.icon);
-              
-              // Show progress message in UI
-              designer.updateAgentProgress(content.agent, content.message, content.type);
-            } else {
-              console.log('❌ No matching stage found for agent:', content.agent);
+          // PREFER stageId if provided (handles multiple stages with same agent)
+          let activeStage = null;
+          if (content && content.stageId) {
+            // Direct lookup by stageId - most reliable
+            console.log('🎯 Using stageId directly:', content.stageId);
+            const stage = designer.pipelineConfig?.stages?.find(s => s.id === content.stageId);
+            if (stage) {
+              activeStage = {
+                id: stage.id,
+                icon: designer.getStageIcon(stage),
+                color: designer.getStageColor(stage)
+              };
             }
+          } else if (content && content.agent) {
+            // Fallback to agent-based detection for backwards compatibility
+            console.log('🔍 Detecting stage for agent:', content.agent);
+            activeStage = designer.detectActiveStageFromAgent(content.agent);
           }
-          
+
+          if (activeStage) {
+            console.log('✨ Animating node:', activeStage.id, activeStage.color, activeStage.icon);
+            designer.animatePipelineNode(activeStage.id, activeStage.color, activeStage.icon);
+
+            // Show progress message in UI
+            designer.updateAgentProgress(content.agent, content.message, content.type);
+          } else if (content && content.agent) {
+            console.log('❌ No matching stage found for agent:', content.agent);
+          }
+
           if (content && content.message) {
             designer.addChatMessage('pipeline', content.agent || 'Pipeline', content.message, null, '🔄');
           }
@@ -4509,10 +4526,25 @@ function executeCurrentPipeline() {
           let currentStage = '';
           let stageIcon = '';
           let stageColor = '';
-          
-          // Dynamically determine which pipeline stage is active based on current pipeline
-          const agentName = response.content.agent || '';
-          const activeStage = designer.detectActiveStageFromAgent(agentName);
+
+          // Dynamically determine which pipeline stage is active
+          // PREFER stageId if provided (handles multiple stages with same agent)
+          let activeStage = null;
+          if (response.content.stageId) {
+            // Direct lookup by stageId - most reliable
+            const stage = designer.pipelineConfig?.stages?.find(s => s.id === response.content.stageId);
+            if (stage) {
+              activeStage = {
+                id: stage.id,
+                icon: designer.getStageIcon(stage),
+                color: designer.getStageColor(stage)
+              };
+            }
+          } else {
+            // Fallback to agent-based detection for backwards compatibility
+            const agentName = response.content.agent || '';
+            activeStage = designer.detectActiveStageFromAgent(agentName);
+          }
           if (activeStage) {
             currentStage = activeStage.id;
             stageIcon = activeStage.icon;
