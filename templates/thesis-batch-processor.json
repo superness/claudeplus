@@ -1,0 +1,113 @@
+{
+  "id": "thesis-batch-processor",
+  "name": "Thesis Batch Processor",
+  "description": "Iterates through thesis stub documents in a directory, expanding each using the thesis-generator-v1 sub-pipeline. Loops until all thesis documents are complete.",
+  "version": "1.0.0",
+  "category": "academic",
+  "stages": [
+    {
+      "id": "select_thesis",
+      "name": "Select Next Thesis",
+      "type": "selector",
+      "agent": "thesis_selector",
+      "description": "Scan directory for THESIS_*.md files and select the next stub that needs expansion",
+      "decisions": [
+        {"choice": "THESIS_SELECTED", "description": "Found a thesis stub that needs expansion"},
+        {"choice": "ALL_COMPLETE", "description": "All thesis documents are already complete"}
+      ]
+    },
+    {
+      "id": "generate_thesis",
+      "name": "Generate Full Thesis",
+      "type": "sub_pipeline",
+      "agent": "pipeline_executor",
+      "description": "Run thesis-generator-v1 sub-pipeline to expand the selected stub into a full thesis with arguments, counterarguments, and evidence plans",
+      "inputs": ["select_thesis"],
+      "prompt": "Expand THIS SINGLE THESIS DOCUMENT into a full academic argument.\n\n**FILE TO PROCESS:** {{select_thesis.selected_file}}\n\n**CORE TENSION:** {{select_thesis.core_tension}}\n\n**CURRENT CONTENT:**\n{{select_thesis.thesis_content}}\n\n---\n\n**CRITICAL INSTRUCTIONS:**\n1. Work ONLY on the file specified above: {{select_thesis.selected_file}}\n2. Do NOT scan for or process any other THESIS_*.md files\n3. Do NOT modify any file other than {{select_thesis.selected_file}}\n4. If you see references to other thesis topics, IGNORE them\n5. Your ENTIRE job is to expand THIS ONE document\n\nExpand this into a full thesis with:\n- Refined thesis statement\n- Argument outline with evidence\n- Counterarguments and responses\n- Evidence gathering plan\n- Final score and assessment",
+      "config": {
+        "pipeline": "thesis-generator-v1",
+        "inheritContext": false
+      }
+    },
+    {
+      "id": "write_thesis",
+      "name": "Write Thesis Document",
+      "type": "writer",
+      "agent": "thesis_document_writer",
+      "description": "Write the expanded thesis back to the original file",
+      "inputs": ["select_thesis", "generate_thesis"],
+      "decisions": [
+        {"choice": "DOCUMENT_WRITTEN", "description": "Expanded thesis written to file"},
+        {"choice": "WRITE_FAILED", "description": "Failed to write the document"}
+      ]
+    },
+    {
+      "id": "completion_check",
+      "name": "Check for More",
+      "type": "router",
+      "agent": "thesis_selector",
+      "description": "Check if there are more thesis stubs to process, routing back to generation or completing the pipeline",
+      "inputs": ["write_thesis"],
+      "decisions": [
+        {"choice": "THESIS_SELECTED", "description": "More thesis stubs found - continue processing"},
+        {"choice": "ALL_COMPLETE", "description": "All thesis documents have been processed"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "conditional",
+    "description": "Loop through thesis documents: select -> generate (sub-pipeline) -> write -> check for more",
+    "connections": [
+      {
+        "from": "select_thesis",
+        "to": "generate_thesis",
+        "condition": "THESIS_SELECTED",
+        "description": "Thesis stub found, run thesis-generator-v1 sub-pipeline"
+      },
+      {
+        "from": "select_thesis",
+        "to": null,
+        "condition": "ALL_COMPLETE",
+        "description": "All thesis documents already complete - PIPELINE ENDS"
+      },
+      {
+        "from": "generate_thesis",
+        "to": "write_thesis",
+        "condition": "complete",
+        "description": "Sub-pipeline complete, write result to file"
+      },
+      {
+        "from": "write_thesis",
+        "to": "completion_check",
+        "condition": "DOCUMENT_WRITTEN",
+        "description": "Document written, check for more stubs"
+      },
+      {
+        "from": "write_thesis",
+        "to": null,
+        "condition": "WRITE_FAILED",
+        "description": "Write failed - PIPELINE ENDS with error"
+      },
+      {
+        "from": "completion_check",
+        "to": "select_thesis",
+        "condition": "THESIS_SELECTED",
+        "description": "More stubs found - loop back to select next thesis"
+      },
+      {
+        "from": "completion_check",
+        "to": null,
+        "condition": "ALL_COMPLETE",
+        "description": "All thesis documents processed - PIPELINE ENDS successfully"
+      }
+    ]
+  },
+  "metadata": {
+    "tags": ["thesis", "batch-processing", "academic", "looping", "sub-pipeline"],
+    "author": "Claude Plus Development System",
+    "subPipelines": ["thesis-generator-v1"],
+    "workingDirectory": "Target directory containing THESIS_*.md files (e.g., /mnt/c/github/chainsocial)",
+    "expectedFiles": "THESIS_01_*.md, THESIS_02_*.md, etc.",
+    "purpose": "Batch expand thesis stubs into full academic arguments using thesis-generator-v1"
+  }
+}
