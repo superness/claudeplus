@@ -1,0 +1,121 @@
+{
+  "id": "spec-batch-processor",
+  "name": "Specification Batch Processor",
+  "description": "Iteratively processes all protocol specification stubs until all are complete",
+  "version": "1.0.0",
+  "type": "batch_processor",
+  "stages": [
+    {
+      "id": "select_spec",
+      "name": "Select Next Specification Stub",
+      "type": "agent",
+      "description": "Identifies the next protocol specification that needs to be expanded",
+      "agent": "spec_subsystem_selector",
+      "prompt": "Analyze all protocol specification files in the specs/ directory. Select the next specification stub that needs to be expanded into a complete specification.",
+      "config": {
+        "inputs": [],
+        "outputs": ["selected_file", "subsystem_name", "spec_content", "relevant_theses", "open_questions"]
+      },
+      "routing": {
+        "decision_field": "decision",
+        "possible_next_stages": [
+          {
+            "decision": "continue_processing",
+            "next_stage": "generate_spec"
+          },
+          {
+            "decision": "all_complete",
+            "next_stage": null
+          }
+        ],
+        "default_next_stage": "generate_spec"
+      }
+    },
+    {
+      "id": "generate_spec",
+      "name": "Generate Complete Specification",
+      "type": "sub_pipeline",
+      "description": "Runs the spec-generator sub-pipeline to create a complete specification",
+      "agent": "pipeline_executor",
+      "config": {
+        "pipeline": "spec-generator-v1",
+        "inheritContext": false,
+        "contextMapping": {
+          "subsystem_name": "{{select_spec.subsystem_name}}",
+          "spec_content": "{{select_spec.spec_content}}",
+          "relevant_theses": "{{select_spec.relevant_theses}}",
+          "open_questions": "{{select_spec.open_questions}}"
+        },
+        "inputs": ["select_spec"],
+        "outputs": ["final_specification"]
+      },
+      "routing": {
+        "next_stage": "write_spec"
+      }
+    },
+    {
+      "id": "write_spec",
+      "name": "Write Specification to File",
+      "type": "agent",
+      "description": "Writes the generated specification content to the appropriate file",
+      "agent": "spec_document_writer",
+      "prompt": "Write the generated protocol specification to the selected file. Extract the file path from the selector stage and the specification content from the generator stage.",
+      "config": {
+        "inputs": ["select_spec", "generate_spec"],
+        "outputs": ["file_written"]
+      },
+      "routing": {
+        "next_stage": "completion_check"
+      }
+    },
+    {
+      "id": "completion_check",
+      "name": "Check for Remaining Stubs",
+      "type": "agent",
+      "description": "Checks if there are more specification stubs to process",
+      "agent": "spec_subsystem_selector",
+      "prompt": "Check all protocol specification files in the specs/ directory. Determine if there are any remaining stubs that need expansion, or if all specifications are complete.",
+      "config": {
+        "inputs": ["write_spec"],
+        "outputs": ["remaining_stubs", "next_action"]
+      },
+      "routing": {
+        "decision_field": "decision",
+        "possible_next_stages": [
+          {
+            "decision": "continue_processing",
+            "next_stage": "select_spec"
+          },
+          {
+            "decision": "all_complete",
+            "next_stage": null
+          }
+        ],
+        "default_next_stage": null
+      }
+    }
+  ],
+  "connections": [
+    {"from": "select_spec", "to": "generate_spec", "condition": "continue_processing"},
+    {"from": "generate_spec", "to": "write_spec"},
+    {"from": "write_spec", "to": "completion_check"},
+    {"from": "completion_check", "to": "select_spec", "condition": "continue_processing"}
+  ],
+  "loopConfig": {
+    "maxIterations": 10,
+    "breakCondition": "all_complete"
+  },
+  "metadata": {
+    "created": "2024-12-24",
+    "purpose": "Batch processing of ChainSocial protocol specifications",
+    "target_directory": "specs/",
+    "expected_files": [
+      "SPEC_01_IDENTITY.md",
+      "SPEC_02_CONTENT_DECAY.md",
+      "SPEC_03_PROOF_OF_WORK.md",
+      "SPEC_04_SPACES.md",
+      "SPEC_05_FORKS_CONSENSUS.md",
+      "SPEC_06_NETWORK_SYNC.md"
+    ]
+  }
+}

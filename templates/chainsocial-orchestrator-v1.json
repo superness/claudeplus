@@ -1,0 +1,82 @@
+{
+  "id": "chainsocial-orchestrator-v1",
+  "name": "ChainSocial Roadmap Orchestrator",
+  "version": "1.1.0",
+  "description": "Simple 2-stage orchestrator: find next milestone, run milestone pipeline, loop until complete",
+  "category": "meta",
+  "projectContext": {
+    "roadmapPath": "/mnt/c/github/chainsocial/ROADMAP.md",
+    "subPipeline": "chainsocial-milestone-v1"
+  },
+  "stages": [
+    {
+      "id": "find_next_milestone",
+      "name": "Find Next Milestone",
+      "agent": "roadmap_step_finder",
+      "description": "Read ROADMAP.md, find first incomplete milestone with satisfied dependencies",
+      "decisions": [
+        {"choice": "next_milestone_found", "description": "Found an incomplete milestone ready to execute"},
+        {"choice": "all_complete", "description": "All milestones in roadmap are complete"},
+        {"choice": "blocked", "description": "Next milestone has unsatisfied dependencies"}
+      ]
+    },
+    {
+      "id": "execute_milestone",
+      "name": "Execute Milestone Pipeline",
+      "type": "sub_pipeline",
+      "agent": "pipeline_executor",
+      "description": "Run the chainsocial-milestone-v1 pipeline for the identified milestone",
+      "inputs": ["find_next_milestone"],
+      "config": {
+        "pipeline": "chainsocial-milestone-v1"
+      },
+      "decisions": [
+        {"choice": "complete", "description": "Milestone pipeline completed successfully"},
+        {"choice": "failed", "description": "Milestone pipeline failed"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "conditional",
+    "description": "Loop through milestones until all complete or blocked",
+    "connections": [
+      {
+        "from": "find_next_milestone",
+        "to": "execute_milestone",
+        "condition": "next_milestone_found",
+        "description": "Milestone found, execute it"
+      },
+      {
+        "from": "find_next_milestone",
+        "to": null,
+        "condition": "all_complete",
+        "description": "All milestones done - PIPELINE SUCCESS"
+      },
+      {
+        "from": "find_next_milestone",
+        "to": null,
+        "condition": "blocked",
+        "description": "Blocked by dependencies - PIPELINE STOP"
+      },
+      {
+        "from": "execute_milestone",
+        "to": "find_next_milestone",
+        "condition": "complete",
+        "description": "LOOP: Milestone done, find next one"
+      },
+      {
+        "from": "execute_milestone",
+        "to": null,
+        "condition": "failed",
+        "description": "Milestone failed - PIPELINE STOP"
+      }
+    ]
+  },
+  "metadata": {
+    "created": "2024-12-25",
+    "updated": "2024-12-25",
+    "author": "Claude",
+    "tags": ["chainsocial", "orchestrator", "meta-pipeline", "looping"],
+    "isMetaPipeline": true
+  }
+}

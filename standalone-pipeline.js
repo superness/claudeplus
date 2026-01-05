@@ -1246,8 +1246,10 @@ class PipelineDesigner {
           x: x,
           y: y,
           config: {
-            inputs: stage.inputs || [],
-            outputs: stage.outputs || [],
+            // Preserve original stage.config properties (like pipeline for sub_pipeline stages)
+            ...(stage.config || {}),
+            inputs: stage.inputs || stage.config?.inputs || [],
+            outputs: stage.outputs || stage.config?.outputs || [],
             phase: stage.phase
           }
         });
@@ -1432,8 +1434,10 @@ class PipelineDesigner {
           x: pos.x,
           y: pos.y,
           config: {
-            inputs: stage.inputs || [],
-            outputs: stage.outputs || []
+            // Preserve original stage.config properties (like pipeline for sub_pipeline stages)
+            ...(stage.config || {}),
+            inputs: stage.inputs || stage.config?.inputs || [],
+            outputs: stage.outputs || stage.config?.outputs || []
           }
         });
         nodeIds.push(nodeId);

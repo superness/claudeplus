@@ -75,10 +75,59 @@ Windows Electron App → WebSocket (port 8081) → WSL Proxy Server → Claude C
    **Event Types**:
    - `pipeline_initialized` - Pipeline configuration loaded
    - `stage_started` - Stage began execution (timestamp = start time, NOT completion time)
-   - `stage_completed` - Stage finished successfully with results
+   - `stage_completed` - Stage finished successfully with results, **includes reasoningLog and workLog**
    - `stage_error` - Stage failed with error details
    - `stage_routed` - Stage returned routing decision (next_stage)
    - `pipeline_completed` - Entire pipeline finished
+
+   **NEW: Reasoning Audit Trail** (December 2025)
+
+   Every `stage_completed` event now includes:
+   - `reasoningLog`: Array of agent's declared intentions before tool calls
+   - `workLog`: Array of actual tool calls with reasoning match/mismatch info
+
+   **Reasoning Block Format** (agents MUST output before each tool call):
+   ```
+   \`\`\`reasoning
+   ACTION: Write
+   TARGET: /path/to/file.json
+   PURPOSE: Create the pipeline configuration
+   EXPECTED_OUTCOME: A valid JSON file with 5 stages
+   VERIFICATION: File will exist and be readable
+   \`\`\`
+   ```
+
+   **WorkLog Entry Types**:
+   - `reasoning` - Agent declared an intention
+   - `tool_call` - Agent made a tool call (includes `reasoning` field if matched)
+   - `missing_reasoning` - Tool call made WITHOUT preceding reasoning block (⚠ WARNING)
+   - `reasoning_mismatch` - Declared action doesn't match actual tool call (⚠ WARNING)
+
+   **Example - Good Agent Behavior**:
+   ```json
+   {
+     "reasoningLog": [
+       {"action": "Write", "target": "config.json", "purpose": "Create config"}
+     ],
+     "workLog": [
+       {"type": "reasoning", "action": "Write", "target": "config.json"},
+       {"type": "tool_call", "tool": "Write", "reasoning": {...}}
+     ]
+   }
+   ```
+
+   **Example - Problematic Agent Behavior (NO REASONING)**:
+   ```json
+   {
+     "reasoningLog": [],
+     "workLog": [
+       {"type": "missing_reasoning", "tool": "Write", "target": "config.json"},
+       {"type": "tool_call", "tool": "Write", "reasoning": null}
+     ]
+   }
+   ```
+
+   This audit trail helps detect when agents claim to do work without actually making tool calls.
 
    **Example - Pipeline Still Running**:
    ```json
@@ -367,6 +416,36 @@ The orchestrator will automatically chain:
 ## Debugging and Logs
 
 **IMPORTANT**: When debugging pipeline failures or execution issues, ALWAYS check the structured execution logs FIRST before reading the plain text proxy.log file.
+
+### CRITICAL: Pipeline Status Verification - DO NOT BE LAZY
+
+**The #1 rule for pipeline status: CHECK THE STATE FILE, NOT THE EXECUTION LOG.**
+
+The execution log shows HISTORY. The state file shows CURRENT STATUS.
+
+**MANDATORY verification before answering ANY pipeline status question:**
+
+```bash
+# Step 1: ALWAYS check state file FIRST - this is the SOURCE OF TRUTH
+cat proxy/pipeline-states/current.json | jq '{status, currentStage, pid, completedStages: (.completedStages | length)}'
+
+# Step 2: Verify if PID is still alive
+ps -p $(cat proxy/pipeline-states/current.json | jq -r '.pid') 2>/dev/null && echo "PROCESS ALIVE" || echo "PROCESS DEAD"
+```
+
+**NEVER do these lazy mistakes:**
+- ❌ Count stages in execution log and assume "31 stages = complete"
+- ❌ Say "completed" without verifying `"status": "completed"` in state file
+- ❌ Give confident answers based on log history instead of current state
+- ❌ Extrapolate when verification takes 2 seconds
+
+**State file fields that determine status:**
+- `status`: "running" | "completed" | "failed" | "paused" (THE ANSWER)
+- `currentStage`: What stage is active RIGHT NOW
+- `completedStages`: Array of completed stage IDs
+- `pid`: Process ID (verify with `ps -p`)
+
+**If you give false completion status, you waste user time and break trust. This has happened before. Don't let it happen again.**
 
 #### Primary Debug Sources (check in this order):
 

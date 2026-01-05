@@ -1,0 +1,110 @@
+{
+  "id": "chat-v1",
+  "name": "Smart Chat Pipeline",
+  "description": "Intelligent chat pipeline with meta-routing. Routes messages to either quick chat or task execution, then reflects on insights and synthesizes the final response.",
+  "version": "2.0.0",
+  "category": "chat",
+  "stages": [
+    {
+      "id": "meta_routing",
+      "name": "Message Routing",
+      "type": "classifier",
+      "agent": "meta_router",
+      "description": "Analyze message and decide: quick chat or task execution",
+      "decisions": [
+        {"choice": "QUICK_CHAT", "description": "Simple response, no complex task"},
+        {"choice": "TASK_EXECUTION", "description": "Complex task requiring tools and execution"}
+      ]
+    },
+    {
+      "id": "quick_chat",
+      "name": "Quick Chat",
+      "type": "chat",
+      "agent": "quick_chat_agent",
+      "description": "Handle simple conversational responses",
+      "inputs": [],
+      "decisions": [
+        {"choice": "CHAT_COMPLETE", "description": "Chat response generated"}
+      ]
+    },
+    {
+      "id": "task_execution",
+      "name": "Task Execution Pipeline",
+      "type": "sub_pipeline",
+      "agent": "pipeline_executor",
+      "description": "Execute claude-plus-v1 sub-pipeline for complex tasks",
+      "inputs": ["meta_routing"],
+      "config": {
+        "pipeline": "claude-plus-v1",
+        "inheritContext": true
+      }
+    },
+    {
+      "id": "hat_reflection",
+      "name": "Hat Reflection",
+      "type": "analyzer",
+      "agent": "hat_reflector",
+      "description": "Reflect on the interaction and persist valuable insights",
+      "inputs": ["quick_chat", "task_execution"],
+      "decisions": [
+        {"choice": "REFLECTION_COMPLETE", "description": "Reflection done, insights captured"}
+      ]
+    },
+    {
+      "id": "response_synthesis",
+      "name": "Final Response",
+      "type": "synthesizer",
+      "agent": "response_synthesizer",
+      "description": "Synthesize clean final response for user",
+      "inputs": ["quick_chat", "task_execution", "hat_reflection"]
+    }
+  ],
+  "flow": {
+    "type": "conditional",
+    "description": "Meta-route -> (Quick Chat OR Task Execution) -> Reflection -> Synthesis",
+    "connections": [
+      {
+        "from": "meta_routing",
+        "to": "quick_chat",
+        "condition": "QUICK_CHAT",
+        "description": "Simple message, use quick chat"
+      },
+      {
+        "from": "meta_routing",
+        "to": "task_execution",
+        "condition": "TASK_EXECUTION",
+        "description": "Complex task, use task execution pipeline"
+      },
+      {
+        "from": "quick_chat",
+        "to": "hat_reflection",
+        "condition": "CHAT_COMPLETE",
+        "description": "Chat done, reflect on insights"
+      },
+      {
+        "from": "task_execution",
+        "to": "hat_reflection",
+        "condition": "complete",
+        "description": "Task done, reflect on insights"
+      },
+      {
+        "from": "hat_reflection",
+        "to": "response_synthesis",
+        "condition": "REFLECTION_COMPLETE",
+        "description": "Reflection done, generate final response"
+      },
+      {
+        "from": "response_synthesis",
+        "to": null,
+        "condition": "complete",
+        "description": "Response generated - PIPELINE ENDS"
+      }
+    ]
+  },
+  "metadata": {
+    "tags": ["chat", "meta-routing", "intelligent", "reflection"],
+    "author": "Claude Plus Development System",
+    "subPipelines": ["claude-plus-v1"],
+    "purpose": "Intelligent chat with routing, execution, and learning"
+  }
+}

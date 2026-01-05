@@ -2285,6 +2285,35 @@ Generate the complete pipeline system now:`;
           console.log(`[PROXY] [CHAT-HISTORY] No history available - starting fresh conversation`);
         }
 
+        // Write FULL conversation history to a file in the working directory
+        // This allows the AI to read the complete history when needed
+        const fullHistory = message.fullHistory || [];
+        if (fullHistory.length > 0) {
+          const tabName = message.tabName || tabId;
+          const safeTabName = tabName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+          const historyFilePath = path.join(workingDir, `.chat-history-${safeTabName}.md`);
+
+          let historyContent = `# Full Chat History\n\n`;
+          historyContent += `**Tab:** ${tabName}\n`;
+          historyContent += `**Updated:** ${new Date().toISOString()}\n`;
+          historyContent += `**Total Exchanges:** ${fullHistory.length}\n\n`;
+          historyContent += `---\n\n`;
+
+          fullHistory.forEach((h, i) => {
+            historyContent += `## Exchange ${i + 1}\n\n`;
+            historyContent += `**Human:**\n${h.user}\n\n`;
+            historyContent += `**Assistant:**\n${h.assistant}\n\n`;
+            historyContent += `---\n\n`;
+          });
+
+          try {
+            fs.writeFileSync(historyFilePath, historyContent);
+            console.log(`[PROXY] [CHAT-HISTORY] Wrote full history (${fullHistory.length} exchanges) to ${historyFilePath}`);
+          } catch (err) {
+            console.error(`[PROXY] [CHAT-HISTORY] Failed to write history file: ${err.message}`);
+          }
+        }
+
         // Build hat context if hats are specified (supports multiple)
         let hatContext = '';
         // Support both new hatIds array and legacy hatId field

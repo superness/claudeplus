@@ -1,0 +1,172 @@
+{
+  "id": "iterative-implementation-v1",
+  "name": "Iterative Implementation Pipeline",
+  "description": "Implements features one at a time from an implementation plan. Reads the plan, selects the next task, implements it, validates, then loops back for the next task until all tasks are complete.",
+  "version": "1.0.0",
+  "category": "development",
+  "stages": [
+    {
+      "id": "assess_project",
+      "name": "Assess Project State",
+      "type": "analyzer",
+      "agent": "project_assessor",
+      "description": "Analyzes the current project state: reads implementation plan, checks what's already built, identifies next priorities.",
+      "inputs": [],
+      "decisions": [
+        {"choice": "ready_to_implement", "description": "Found implementation plan and identified work to do"},
+        {"choice": "project_complete", "description": "All tasks in implementation plan are done"},
+        {"choice": "missing_plan", "description": "No implementation plan found"}
+      ]
+    },
+    {
+      "id": "select_task",
+      "name": "Select Next Task",
+      "type": "planner",
+      "agent": "task_selector",
+      "description": "Picks ONE specific task from the implementation plan that hasn't been completed yet. Prioritizes by dependencies and phase order.",
+      "inputs": ["assess_project"],
+      "decisions": [
+        {"choice": "task_selected", "description": "Selected a specific task to implement"},
+        {"choice": "all_tasks_complete", "description": "No more tasks remain in the plan"}
+      ]
+    },
+    {
+      "id": "extract_requirements",
+      "name": "Extract Task Requirements",
+      "type": "planner",
+      "agent": "requirements_extractor",
+      "description": "Reads the technical specification and extracts SPECIFIC requirements for this task. Produces a focused mini-spec.",
+      "inputs": ["select_task"],
+      "decisions": [
+        {"choice": "requirements_clear", "description": "Requirements extracted and ready for implementation"},
+        {"choice": "requirements_unclear", "description": "Spec is ambiguous, need clarification"}
+      ]
+    },
+    {
+      "id": "plan_implementation",
+      "name": "Plan Implementation",
+      "type": "planner",
+      "agent": "implementation_planner",
+      "description": "Creates a concrete implementation plan: files to create/modify, functions to write, tests to add.",
+      "inputs": ["extract_requirements"],
+      "decisions": [
+        {"choice": "plan_ready", "description": "Implementation plan is ready"},
+        {"choice": "blocked", "description": "Cannot proceed due to missing dependencies"}
+      ]
+    },
+    {
+      "id": "review_plan",
+      "name": "Review Implementation Plan",
+      "type": "reviewer",
+      "agent": "plan_reviewer",
+      "description": "Quick sanity check on the implementation plan. Ensures it matches requirements and is feasible.",
+      "inputs": ["plan_implementation", "extract_requirements"],
+      "decisions": [
+        {"choice": "approved", "description": "Plan looks good, proceed with implementation"},
+        {"choice": "needs_revision", "description": "Plan has issues, revise"}
+      ]
+    },
+    {
+      "id": "implement_task",
+      "name": "Implement Task",
+      "type": "executor",
+      "agent": "code_implementer",
+      "description": "Writes the actual code according to the approved plan. Creates files, writes functions, adds tests.",
+      "inputs": ["review_plan"],
+      "decisions": [
+        {"choice": "implementation_complete", "description": "Code written successfully"},
+        {"choice": "implementation_blocked", "description": "Hit a blocker during implementation"}
+      ]
+    },
+    {
+      "id": "run_tests",
+      "name": "Run Tests",
+      "type": "executor",
+      "agent": "test_runner",
+      "description": "Runs any tests for the implemented task. Checks syntax, runs unit tests, verifies no regressions.",
+      "inputs": ["implement_task"],
+      "decisions": [
+        {"choice": "tests_pass", "description": "All tests pass"},
+        {"choice": "tests_fail", "description": "Some tests failed"},
+        {"choice": "no_tests", "description": "No tests to run for this task"}
+      ]
+    },
+    {
+      "id": "fix_issues",
+      "name": "Fix Issues",
+      "type": "executor",
+      "agent": "issue_fixer",
+      "description": "Fixes any issues found during testing.",
+      "inputs": ["run_tests"],
+      "decisions": [
+        {"choice": "issues_fixed", "description": "All issues resolved"},
+        {"choice": "needs_redesign", "description": "Issues require plan changes"}
+      ]
+    },
+    {
+      "id": "validate_task",
+      "name": "Validate Task Complete",
+      "type": "validator",
+      "agent": "task_validator",
+      "description": "Verifies the task meets all acceptance criteria from the requirements. Checks against the original spec.",
+      "inputs": ["implement_task", "extract_requirements", "run_tests"],
+      "decisions": [
+        {"choice": "task_complete", "description": "Task fully implemented and validated"},
+        {"choice": "incomplete", "description": "Task doesn't meet all criteria"},
+        {"choice": "needs_more_work", "description": "Task partially complete, needs more implementation"}
+      ]
+    },
+    {
+      "id": "update_progress",
+      "name": "Update Progress",
+      "type": "executor",
+      "agent": "progress_tracker",
+      "description": "Marks the task as complete in the implementation plan. Commits changes. Prepares for next task.",
+      "inputs": ["validate_task"],
+      "decisions": [
+        {"choice": "continue", "description": "More tasks remain, continue to next"},
+        {"choice": "all_done", "description": "All tasks in plan are complete"}
+      ]
+    }
+  ],
+  "connections": [
+    {"from": "assess_project", "to": "select_task", "condition": "ready_to_implement", "description": "Found work to do"},
+    {"from": "assess_project", "to": null, "condition": "project_complete", "description": "Project complete - PIPELINE ENDS"},
+    {"from": "assess_project", "to": null, "condition": "missing_plan", "description": "No plan found - PIPELINE ENDS"},
+
+    {"from": "select_task", "to": "extract_requirements", "condition": "task_selected", "description": "Task selected, extract requirements"},
+    {"from": "select_task", "to": null, "condition": "all_tasks_complete", "description": "All done - PIPELINE ENDS"},
+
+    {"from": "extract_requirements", "to": "plan_implementation", "condition": "requirements_clear", "description": "Requirements clear, plan implementation"},
+    {"from": "extract_requirements", "to": "select_task", "condition": "requirements_unclear", "description": "Requirements unclear, skip and try another task"},
+
+    {"from": "plan_implementation", "to": "review_plan", "condition": "plan_ready", "description": "Plan ready for review"},
+    {"from": "plan_implementation", "to": "select_task", "condition": "blocked", "description": "Blocked, try different task"},
+
+    {"from": "review_plan", "to": "implement_task", "condition": "approved", "description": "Plan approved, implement"},
+    {"from": "review_plan", "to": "plan_implementation", "condition": "needs_revision", "description": "Revise the plan"},
+
+    {"from": "implement_task", "to": "run_tests", "condition": "implementation_complete", "description": "Code written, run tests"},
+    {"from": "implement_task", "to": "plan_implementation", "condition": "implementation_blocked", "description": "Blocked during impl, revisit plan"},
+
+    {"from": "run_tests", "to": "validate_task", "condition": "tests_pass", "description": "Tests pass, validate task"},
+    {"from": "run_tests", "to": "fix_issues", "condition": "tests_fail", "description": "Tests failed, fix issues"},
+    {"from": "run_tests", "to": "validate_task", "condition": "no_tests", "description": "No tests, proceed to validation"},
+
+    {"from": "fix_issues", "to": "run_tests", "condition": "issues_fixed", "description": "Issues fixed, re-run tests"},
+    {"from": "fix_issues", "to": "plan_implementation", "condition": "needs_redesign", "description": "Needs redesign"},
+
+    {"from": "validate_task", "to": "update_progress", "condition": "task_complete", "description": "Task complete, update progress"},
+    {"from": "validate_task", "to": "implement_task", "condition": "needs_more_work", "description": "Needs more work"},
+    {"from": "validate_task", "to": "plan_implementation", "condition": "incomplete", "description": "Incomplete, revise plan"},
+
+    {"from": "update_progress", "to": "select_task", "condition": "continue", "description": "Continue to next task"},
+    {"from": "update_progress", "to": null, "condition": "all_done", "description": "All tasks complete - PIPELINE ENDS"}
+  ],
+  "startStage": "assess_project",
+  "metadata": {
+    "tags": ["implementation", "iterative", "feature-development", "plan-driven"],
+    "author": "Claude Plus Development System",
+    "methodology": "Plan-driven iterative implementation with validation loops"
+  }
+}
