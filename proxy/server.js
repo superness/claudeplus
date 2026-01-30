@@ -63,6 +63,14 @@ class ClaudeProxy {
     this.clientTypes = new Map(); // Track client types: 'claude-chat', 'game-studio', 'pipeline', etc.
     this.hatsDir = path.join(__dirname, '..', 'claude-chat', 'hats'); // Directory for hat JSON files
 
+    // REST API: Track chat requests and responses
+    this.chatApiRequests = new Map(); // requestId -> { status, response, streamingText, tools, errors, startTime }
+    this.chatApiRequestCounter = 0;
+
+    // REST API: Track API-created tabs with conversation history
+    this.chatApiTabs = new Map(); // tabId -> { name, messages, workingDirectory, hatIds, createdAt, lastActivity }
+    this.chatApiTabCounter = 0;
+
     this.initializePipelineStorage();
     this.initializeHatStorage();
     this.initializeTemplateStorage();
@@ -75,7 +83,7 @@ class ClaudeProxy {
   handleHttpRequest(req, res) {
     // Enable CORS for cross-origin requests
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -263,9 +271,597 @@ class ClaudeProxy {
       return;
     }
 
+    // ========== REST API: Chat Endpoints ==========
+
+    // POST /api/chat/send - Send a message to a specific tab
+    if (req.url === '/api/chat/send' && req.method === 'POST') {
+      this.handleChatApiSend(req, res);
+      return;
+    }
+
+    // GET /api/chat/response/:requestId - Get/wait for response
+    if (req.url.startsWith('/api/chat/response/') && req.method === 'GET') {
+      const requestId = req.url.replace('/api/chat/response/', '').split('?')[0];
+      this.handleChatApiResponse(req, res, requestId);
+      return;
+    }
+
+    // GET /api/chat/status/:requestId - Check request status without waiting
+    if (req.url.startsWith('/api/chat/status/') && req.method === 'GET') {
+      const requestId = req.url.replace('/api/chat/status/', '').split('?')[0];
+      this.handleChatApiStatus(req, res, requestId);
+      return;
+    }
+
+    // POST /api/chat/abort/:requestId - Abort a running request
+    if (req.url.startsWith('/api/chat/abort/') && req.method === 'POST') {
+      const requestId = req.url.replace('/api/chat/abort/', '').split('?')[0];
+      this.handleChatApiAbort(req, res, requestId);
+      return;
+    }
+
+    // GET /api/chat/requests - List all active/recent requests
+    if (req.url === '/api/chat/requests' && req.method === 'GET') {
+      this.handleChatApiListRequests(req, res);
+      return;
+    }
+
+    // ========== REST API: Tab Management Endpoints ==========
+
+    // POST /api/tabs - Create a new tab
+    if (req.url === '/api/tabs' && req.method === 'POST') {
+      this.handleTabCreate(req, res);
+      return;
+    }
+
+    // GET /api/tabs - List all API-created tabs
+    if (req.url === '/api/tabs' && req.method === 'GET') {
+      this.handleTabList(req, res);
+      return;
+    }
+
+    // GET /api/tabs/:tabId - Get a specific tab
+    if (req.url.match(/^\/api\/tabs\/[^\/]+$/) && req.method === 'GET') {
+      const tabId = req.url.replace('/api/tabs/', '');
+      this.handleTabGet(req, res, tabId);
+      return;
+    }
+
+    // DELETE /api/tabs/:tabId - Delete a tab
+    if (req.url.match(/^\/api\/tabs\/[^\/]+$/) && req.method === 'DELETE') {
+      const tabId = req.url.replace('/api/tabs/', '');
+      this.handleTabDelete(req, res, tabId);
+      return;
+    }
+
     // Default: upgrade to WebSocket
     res.writeHead(426, { 'Content-Type': 'text/plain' });
     res.end('This service requires WebSocket connection');
+  }
+
+  // ========== REST API: Chat Handler Methods ==========
+
+  // Helper to parse JSON body from request
+  async parseJsonBody(req) {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          resolve(body ? JSON.parse(body) : {});
+        } catch (e) {
+          reject(new Error('Invalid JSON body'));
+        }
+      });
+      req.on('error', reject);
+    });
+  }
+
+  // POST /api/chat/send - Send a message and get a request ID
+  async handleChatApiSend(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Validate required fields
+      if (!body.message) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'message is required' }));
+        return;
+      }
+
+      // Generate request ID
+      const requestId = `chat_${++this.chatApiRequestCounter}_${Date.now()}`;
+
+      // Check if using an API-created tab
+      let history = body.history || [];
+      let workingDirectory = body.workingDirectory || process.cwd();
+      let hatIds = body.hatIds || [];
+      let tabId = body.tabId || 'api-' + requestId;
+      let apiTab = null;
+
+      if (body.tabId && this.chatApiTabs.has(body.tabId)) {
+        apiTab = this.chatApiTabs.get(body.tabId);
+        tabId = body.tabId;
+
+        // Use tab's settings if not overridden in request
+        workingDirectory = body.workingDirectory || apiTab.workingDirectory;
+        hatIds = body.hatIds || apiTab.hatIds;
+
+        // Build history from tab's messages
+        if (history.length === 0 && apiTab.messages.length > 0) {
+          // Convert messages to history format
+          for (let i = 0; i < apiTab.messages.length; i += 2) {
+            const userMsg = apiTab.messages[i];
+            const assistantMsg = apiTab.messages[i + 1];
+            if (userMsg && userMsg.role === 'user' && assistantMsg && assistantMsg.role === 'assistant') {
+              history.push({
+                user: userMsg.content,
+                assistant: assistantMsg.content
+              });
+            }
+          }
+        }
+
+        // Add user message to tab
+        apiTab.messages.push({
+          role: 'user',
+          content: body.message,
+          timestamp: Date.now()
+        });
+        apiTab.lastActivity = Date.now();
+
+        console.log(`[PROXY] [API] Using API tab ${tabId} with ${history.length} history pairs`);
+      }
+
+      // Initialize request tracking
+      this.chatApiRequests.set(requestId, {
+        status: 'running',
+        response: null,
+        streamingText: '',
+        tools: [],
+        todos: [],
+        errors: [],
+        startTime: Date.now(),
+        tabId: tabId,
+        apiTab: apiTab, // Reference to API tab for updating
+        message: body.message,
+        workingDirectory: workingDirectory,
+        hatIds: hatIds,
+        history: history,
+        pipelineId: body.pipelineId || null
+      });
+
+      console.log(`[PROXY] [API] Chat request ${requestId} started: "${body.message.substring(0, 50)}..."`);
+
+      // Start the Claude process asynchronously
+      this.executeChatApiRequest(requestId, body);
+
+      // Return the request ID immediately
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        requestId,
+        tabId,
+        status: 'running',
+        message: 'Request accepted, use GET /api/chat/response/' + requestId + ' to get the response'
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [API] Chat send error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/chat/response/:requestId - Wait for and return the response
+  async handleChatApiResponse(req, res, requestId) {
+    const request = this.chatApiRequests.get(requestId);
+
+    if (!request) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request not found' }));
+      return;
+    }
+
+    // Parse timeout from query string (default 5 minutes)
+    const url = new URL(req.url, 'http://localhost:8081');
+    const timeoutMs = parseInt(url.searchParams.get('timeout') || '300000');
+    const pollInterval = 100; // Check every 100ms
+
+    const startWait = Date.now();
+
+    // Poll until response is ready or timeout
+    const checkResponse = () => {
+      const req = this.chatApiRequests.get(requestId);
+
+      if (!req) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request not found' }));
+        return;
+      }
+
+      if (req.status === 'completed' || req.status === 'error' || req.status === 'aborted') {
+        // Clean up old requests after response (keep for 5 minutes)
+        setTimeout(() => this.chatApiRequests.delete(requestId), 300000);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          requestId,
+          status: req.status,
+          response: req.response,
+          tools: req.tools,
+          todos: req.todos,
+          errors: req.errors,
+          duration: Date.now() - req.startTime
+        }));
+        return;
+      }
+
+      // Check timeout
+      if (Date.now() - startWait > timeoutMs) {
+        res.writeHead(408, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          requestId,
+          status: 'timeout',
+          message: 'Request is still running, try again later',
+          streamingText: req.streamingText.slice(-1000) // Last 1000 chars of progress
+        }));
+        return;
+      }
+
+      // Keep polling
+      setTimeout(checkResponse, pollInterval);
+    };
+
+    checkResponse();
+  }
+
+  // GET /api/chat/status/:requestId - Check status without waiting
+  handleChatApiStatus(req, res, requestId) {
+    const request = this.chatApiRequests.get(requestId);
+
+    if (!request) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request not found' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      requestId,
+      status: request.status,
+      duration: Date.now() - request.startTime,
+      toolCount: request.tools.length,
+      todoCount: request.todos.length,
+      streamingProgress: request.streamingText.length,
+      hasResponse: request.response !== null
+    }));
+  }
+
+  // POST /api/chat/abort/:requestId - Abort a running request
+  async handleChatApiAbort(req, res, requestId) {
+    const request = this.chatApiRequests.get(requestId);
+
+    if (!request) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request not found' }));
+      return;
+    }
+
+    if (request.status !== 'running') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request is not running', status: request.status }));
+      return;
+    }
+
+    // Kill the Claude process if it exists
+    const claude = this.claudeChatProcesses.get(requestId);
+    if (claude) {
+      claude.kill('SIGTERM');
+      this.claudeChatProcesses.delete(requestId);
+    }
+
+    request.status = 'aborted';
+    request.response = request.streamingText || 'Request was aborted';
+
+    console.log(`[PROXY] [API] Chat request ${requestId} aborted`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      requestId,
+      status: 'aborted',
+      message: 'Request has been aborted'
+    }));
+  }
+
+  // GET /api/chat/requests - List all active/recent requests
+  handleChatApiListRequests(req, res) {
+    const requests = [];
+    for (const [requestId, request] of this.chatApiRequests) {
+      requests.push({
+        requestId,
+        status: request.status,
+        message: request.message.substring(0, 100) + (request.message.length > 100 ? '...' : ''),
+        startTime: new Date(request.startTime).toISOString(),
+        duration: Date.now() - request.startTime,
+        tabId: request.tabId
+      });
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ requests }));
+  }
+
+  // ========== REST API: Tab Management Handler Methods ==========
+
+  // POST /api/tabs - Create a new tab
+  async handleTabCreate(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Generate tab ID if not provided
+      const tabId = body.tabId || `api-tab-${++this.chatApiTabCounter}-${Date.now()}`;
+
+      // Check if tab already exists
+      if (this.chatApiTabs.has(tabId)) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Tab already exists', tabId }));
+        return;
+      }
+
+      // Create the tab
+      const tab = {
+        name: body.name || tabId,
+        messages: [],
+        workingDirectory: body.workingDirectory || process.cwd(),
+        hatIds: body.hatIds || [],
+        createdAt: Date.now(),
+        lastActivity: Date.now()
+      };
+
+      this.chatApiTabs.set(tabId, tab);
+
+      console.log(`[PROXY] [API] Tab created: ${tabId} (name: ${tab.name})`);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tabId,
+        name: tab.name,
+        workingDirectory: tab.workingDirectory,
+        hatIds: tab.hatIds,
+        createdAt: new Date(tab.createdAt).toISOString(),
+        message: 'Tab created successfully'
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [API] Tab create error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/tabs - List all API-created tabs
+  handleTabList(req, res) {
+    const tabs = [];
+    for (const [tabId, tab] of this.chatApiTabs) {
+      tabs.push({
+        tabId,
+        name: tab.name,
+        messageCount: tab.messages.length,
+        workingDirectory: tab.workingDirectory,
+        hatIds: tab.hatIds,
+        createdAt: new Date(tab.createdAt).toISOString(),
+        lastActivity: new Date(tab.lastActivity).toISOString()
+      });
+    }
+
+    // Sort by last activity (most recent first)
+    tabs.sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ tabs }));
+  }
+
+  // GET /api/tabs/:tabId - Get a specific tab
+  handleTabGet(req, res, tabId) {
+    const tab = this.chatApiTabs.get(tabId);
+
+    if (!tab) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Tab not found', tabId }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      tabId,
+      name: tab.name,
+      messages: tab.messages,
+      workingDirectory: tab.workingDirectory,
+      hatIds: tab.hatIds,
+      createdAt: new Date(tab.createdAt).toISOString(),
+      lastActivity: new Date(tab.lastActivity).toISOString()
+    }));
+  }
+
+  // DELETE /api/tabs/:tabId - Delete a tab
+  handleTabDelete(req, res, tabId) {
+    if (!this.chatApiTabs.has(tabId)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Tab not found', tabId }));
+      return;
+    }
+
+    this.chatApiTabs.delete(tabId);
+
+    console.log(`[PROXY] [API] Tab deleted: ${tabId}`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      tabId,
+      message: 'Tab deleted successfully'
+    }));
+  }
+
+  // Execute a chat request via REST API
+  async executeChatApiRequest(requestId, body) {
+    const request = this.chatApiRequests.get(requestId);
+    if (!request) return;
+
+    const workingDir = request.workingDirectory;
+
+    try {
+      // Build hat context if specified
+      let hatContext = '';
+      if (request.hatIds.length > 0) {
+        hatContext = this.buildMultiHatContext(request.hatIds);
+      }
+
+      // Build conversation history context
+      let contextMessages = '';
+      if (request.history.length > 0) {
+        const recentHistory = request.history.slice(-10);
+        contextMessages = recentHistory.map(h =>
+          `Human: ${h.user}\n\nAssistant: ${h.assistant}`
+        ).join('\n\n---\n\n');
+        contextMessages = `\n\nPrevious conversation:\n${contextMessages}\n\n---\n\nCurrent request: `;
+      }
+
+      const fullMessage = hatContext + contextMessages + body.message;
+
+      // Spawn Claude with streaming
+      const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
+      const claude = spawn('claude', [
+        '--permission-mode', 'bypassPermissions',
+        '--print',
+        '--verbose',
+        '--output-format', 'stream-json',
+        '--include-partial-messages',
+        '-'
+      ], {
+        cwd: workingDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...cleanEnv, PWD: workingDir }
+      });
+
+      // Track the process so we can abort it
+      this.claudeChatProcesses.set(requestId, claude);
+
+      let lineBuffer = '';
+      let currentToolBlock = null;
+
+      claude.stdout.on('data', (data) => {
+        lineBuffer += data.toString();
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            let event = JSON.parse(line);
+            if (event.type === 'stream_event' && event.event) {
+              event = event.event;
+            }
+
+            // Tool start
+            if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+              const block = event.content_block;
+              currentToolBlock = { name: block.name, id: block.id, input: '', startTime: Date.now() };
+              request.tools.push({ name: block.name, status: 'running', startTime: Date.now() });
+            }
+
+            // Text streaming
+            else if (event.type === 'content_block_delta') {
+              const delta = event.delta;
+
+              if (delta?.type === 'text_delta' && delta.text) {
+                request.streamingText += delta.text;
+              }
+
+              // Tool input
+              else if (delta?.type === 'input_json_delta' && currentToolBlock) {
+                currentToolBlock.input += delta.partial_json || '';
+              }
+            }
+
+            // Block stop
+            else if (event.type === 'content_block_stop' && currentToolBlock) {
+              let parsedInput = currentToolBlock.input;
+              try { parsedInput = JSON.parse(currentToolBlock.input); } catch (e) {}
+
+              // Update tool status
+              const tool = request.tools.find(t => t.name === currentToolBlock.name && t.status === 'running');
+              if (tool) {
+                tool.status = 'completed';
+                tool.duration = Date.now() - tool.startTime;
+                if (parsedInput.file_path) tool.file = parsedInput.file_path;
+              }
+
+              // Special handling for TodoWrite
+              if (currentToolBlock.name === 'TodoWrite' && parsedInput?.todos) {
+                request.todos = parsedInput.todos;
+              }
+
+              currentToolBlock = null;
+            }
+
+            // Result event (final output)
+            else if (event.type === 'result' && event.result) {
+              request.streamingText = event.result;
+            }
+
+          } catch (e) {
+            // Not JSON, might be plain text output
+            request.streamingText += line + '\n';
+          }
+        }
+      });
+
+      claude.stderr.on('data', (data) => {
+        console.log(`[PROXY] [API] Claude stderr: ${data.toString()}`);
+        request.errors.push(data.toString());
+      });
+
+      claude.on('close', (code) => {
+        // Remove from tracking
+        this.claudeChatProcesses.delete(requestId);
+
+        // Mark as completed
+        request.status = code === 0 ? 'completed' : 'error';
+        request.response = request.streamingText.trim();
+
+        // If using an API tab, add the assistant response to the tab
+        if (request.apiTab) {
+          request.apiTab.messages.push({
+            role: 'assistant',
+            content: request.response,
+            timestamp: Date.now()
+          });
+          request.apiTab.lastActivity = Date.now();
+          console.log(`[PROXY] [API] Added assistant response to API tab ${request.tabId}`);
+        }
+
+        console.log(`[PROXY] [API] Chat request ${requestId} completed with code ${code}`);
+      });
+
+      claude.on('error', (error) => {
+        console.error('[PROXY] [API] Claude spawn error:', error);
+        this.claudeChatProcesses.delete(requestId);
+        request.status = 'error';
+        request.errors.push(error.message);
+        request.response = `Failed to start Claude: ${error.message}`;
+      });
+
+      // Send the message
+      claude.stdin.write(fullMessage + '\n');
+      claude.stdin.end();
+
+    } catch (error) {
+      console.error('[PROXY] [API] executeChatApiRequest error:', error);
+      request.status = 'error';
+      request.errors.push(error.message);
+      request.response = `Error: ${error.message}`;
+    }
   }
 
   setupWebSocketServer() {
