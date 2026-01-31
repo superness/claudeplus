@@ -70,8 +70,14 @@ class ClaudeProxy {
     // REST API: Track API-created tabs with conversation history
     this.chatApiTabs = new Map(); // tabId -> { name, messages, workingDirectory, hatIds, createdAt, lastActivity }
     this.chatApiTabCounter = 0;
+    this.apiTabsFile = path.join(__dirname, 'api-tabs.json'); // Persistent storage for API tabs
+
+    // Resolve claude binary path for consistent spawning
+    this.claudePath = this.resolveClaudePath();
+    console.log(`[PROXY] Claude binary path: ${this.claudePath}`);
 
     this.initializePipelineStorage();
+    this.loadApiTabs(); // Load tabs from disk on startup
     this.initializeHatStorage();
     this.initializeTemplateStorage();
     this.initializeAgentStorage();
@@ -83,7 +89,7 @@ class ClaudeProxy {
   handleHttpRequest(req, res) {
     // Enable CORS for cross-origin requests
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -334,6 +340,48 @@ class ClaudeProxy {
       return;
     }
 
+    // PUT /api/tabs/:tabId - Update a tab
+    if (req.url.match(/^\/api\/tabs\/[^\/]+$/) && req.method === 'PUT') {
+      const tabId = decodeURIComponent(req.url.replace('/api/tabs/', ''));
+      this.handleTabUpdate(req, res, tabId);
+      return;
+    }
+
+    // ========== REST API: Hat Management Endpoints ==========
+
+    // GET /api/hats - List all hats
+    if (req.url === '/api/hats' && req.method === 'GET') {
+      this.handleHatList(req, res);
+      return;
+    }
+
+    // POST /api/hats - Create a new hat
+    if (req.url === '/api/hats' && req.method === 'POST') {
+      this.handleHatCreate(req, res);
+      return;
+    }
+
+    // GET /api/hats/:hatId - Get a specific hat
+    if (req.url.match(/^\/api\/hats\/[^\/]+$/) && req.method === 'GET') {
+      const hatId = decodeURIComponent(req.url.replace('/api/hats/', ''));
+      this.handleHatGet(req, res, hatId);
+      return;
+    }
+
+    // PUT /api/hats/:hatId - Update a hat
+    if (req.url.match(/^\/api\/hats\/[^\/]+$/) && req.method === 'PUT') {
+      const hatId = decodeURIComponent(req.url.replace('/api/hats/', ''));
+      this.handleHatUpdate(req, res, hatId);
+      return;
+    }
+
+    // DELETE /api/hats/:hatId - Delete a hat
+    if (req.url.match(/^\/api\/hats\/[^\/]+$/) && req.method === 'DELETE') {
+      const hatId = decodeURIComponent(req.url.replace('/api/hats/', ''));
+      this.handleHatDelete(req, res, hatId);
+      return;
+    }
+
     // Default: upgrade to WebSocket
     res.writeHead(426, { 'Content-Type': 'text/plain' });
     res.end('This service requires WebSocket connection');
@@ -389,26 +437,43 @@ class ClaudeProxy {
 
         // Build history from tab's messages
         if (history.length === 0 && apiTab.messages.length > 0) {
-          // Convert messages to history format
-          for (let i = 0; i < apiTab.messages.length; i += 2) {
-            const userMsg = apiTab.messages[i];
-            const assistantMsg = apiTab.messages[i + 1];
-            if (userMsg && userMsg.role === 'user' && assistantMsg && assistantMsg.role === 'assistant') {
+          // Filter to only user/assistant messages (exclude system messages)
+          // Handle both 'role' (API format) and 'type' (frontend format)
+          const chatMessages = apiTab.messages.filter(m => {
+            const msgType = m.role || m.type;
+            return msgType === 'user' || msgType === 'assistant';
+          });
+
+          // Convert messages to history format - pair user messages with following assistant messages
+          for (let i = 0; i < chatMessages.length - 1; i++) {
+            const userMsg = chatMessages[i];
+            const assistantMsg = chatMessages[i + 1];
+            const userType = userMsg.role || userMsg.type;
+            const assistantType = assistantMsg.role || assistantMsg.type;
+
+            if (userType === 'user' && assistantType === 'assistant') {
               history.push({
                 user: userMsg.content,
                 assistant: assistantMsg.content
               });
+              i++; // Skip the assistant message we just paired
             }
           }
         }
 
         // Add user message to tab
-        apiTab.messages.push({
+        const userMessage = {
           role: 'user',
           content: body.message,
           timestamp: Date.now()
-        });
+        };
+        apiTab.messages.push(userMessage);
         apiTab.lastActivity = Date.now();
+        this.saveApiTabs(); // Persist user message to disk
+
+        // Broadcast user message to all connected clients
+        this.broadcastTabMessage(tabId, userMessage, true);
+        this.broadcastTabUpdate(tabId, 'tab-updated');
 
         console.log(`[PROXY] [API] Using API tab ${tabId} with ${history.length} history pairs`);
       }
@@ -619,6 +684,10 @@ class ClaudeProxy {
       };
 
       this.chatApiTabs.set(tabId, tab);
+      this.saveApiTabs(); // Persist to disk
+
+      // Broadcast tab creation to all connected clients
+      this.broadcastTabUpdate(tabId, 'tab-created');
 
       console.log(`[PROXY] [API] Tab created: ${tabId} (name: ${tab.name})`);
 
@@ -692,6 +761,10 @@ class ClaudeProxy {
     }
 
     this.chatApiTabs.delete(tabId);
+    this.saveApiTabs(); // Persist to disk
+
+    // Broadcast tab deletion to all connected clients
+    this.broadcastTabUpdate(tabId, 'tab-deleted');
 
     console.log(`[PROXY] [API] Tab deleted: ${tabId}`);
 
@@ -700,6 +773,272 @@ class ClaudeProxy {
       tabId,
       message: 'Tab deleted successfully'
     }));
+  }
+
+  // PUT /api/tabs/:tabId - Update a tab
+  async handleTabUpdate(req, res, tabId) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Check if tab exists; if not, create it
+      let tab = this.chatApiTabs.get(tabId);
+      const isNew = !tab;
+
+      if (isNew) {
+        // Create new tab with provided data
+        tab = {
+          name: body.name || tabId,
+          messages: [],
+          workingDirectory: body.workingDirectory || process.cwd(),
+          hatIds: body.hatIds || [],
+          pipelineId: body.pipelineId || null,
+          totalCost: body.totalCost || 0,
+          totalInputTokens: body.totalInputTokens || 0,
+          totalOutputTokens: body.totalOutputTokens || 0,
+          createdAt: Date.now(),
+          lastActivity: Date.now()
+        };
+      }
+
+      // Update fields if provided
+      if (body.name !== undefined) tab.name = body.name;
+      if (body.workingDirectory !== undefined) tab.workingDirectory = body.workingDirectory;
+      if (body.hatIds !== undefined) tab.hatIds = body.hatIds;
+      if (body.pipelineId !== undefined) tab.pipelineId = body.pipelineId;
+      if (body.totalCost !== undefined) tab.totalCost = body.totalCost;
+      if (body.totalInputTokens !== undefined) tab.totalInputTokens = body.totalInputTokens;
+      if (body.totalOutputTokens !== undefined) tab.totalOutputTokens = body.totalOutputTokens;
+
+      // Update messages if provided (replace entire array)
+      if (body.messages !== undefined) {
+        tab.messages = body.messages;
+      }
+
+      tab.lastActivity = Date.now();
+
+      this.chatApiTabs.set(tabId, tab);
+      this.saveApiTabs(); // Persist to disk
+
+      // Broadcast tab update to all connected clients
+      this.broadcastTabUpdate(tabId, isNew ? 'tab-created' : 'tab-updated');
+
+      console.log(`[PROXY] [API] Tab ${isNew ? 'created' : 'updated'}: ${tabId}`);
+
+      res.writeHead(isNew ? 201 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tabId,
+        name: tab.name,
+        messageCount: tab.messages.length,
+        workingDirectory: tab.workingDirectory,
+        hatIds: tab.hatIds,
+        pipelineId: tab.pipelineId,
+        lastActivity: new Date(tab.lastActivity).toISOString(),
+        message: isNew ? 'Tab created successfully' : 'Tab updated successfully'
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [API] Tab update error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // ========== REST API: Hat Management Handler Methods ==========
+
+  // GET /api/hats - List all hats
+  handleHatList(req, res) {
+    try {
+      const hats = this.getAllHats();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ hats }));
+    } catch (error) {
+      console.error('[PROXY] [API] Hat list error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // POST /api/hats - Create a new hat
+  async handleHatCreate(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Validate required fields
+      if (!body.id) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'id is required' }));
+        return;
+      }
+
+      if (!body.name) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'name is required' }));
+        return;
+      }
+
+      // Check if hat already exists
+      const existingHat = this.loadHat(body.id);
+      if (existingHat) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Hat already exists', hatId: body.id }));
+        return;
+      }
+
+      // Create the hat
+      const hatData = {
+        id: body.id,
+        name: body.name,
+        description: body.description || '',
+        icon: body.icon || '',
+        color: body.color || '',
+        systemPrompt: body.systemPrompt || '',
+        documentationPaths: body.documentationPaths || [],
+        isDefault: false
+      };
+
+      const success = this.saveHat(hatData);
+
+      if (success) {
+        console.log(`[PROXY] [API] Hat created: ${body.id}`);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          message: 'Hat created successfully',
+          hat: this.loadHat(body.id)
+        }));
+      } else {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to save hat' }));
+      }
+
+    } catch (error) {
+      console.error('[PROXY] [API] Hat create error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/hats/:hatId - Get a specific hat
+  handleHatGet(req, res, hatId) {
+    try {
+      const hat = this.loadHat(hatId);
+
+      if (!hat) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Hat not found', hatId }));
+        return;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ hat }));
+
+    } catch (error) {
+      console.error('[PROXY] [API] Hat get error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // PUT /api/hats/:hatId - Update a hat
+  async handleHatUpdate(req, res, hatId) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Load existing hat
+      let hat = this.loadHat(hatId);
+      const isNew = !hat;
+
+      if (isNew) {
+        // Create new hat if it doesn't exist
+        if (!body.name) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'name is required for new hat' }));
+          return;
+        }
+
+        hat = {
+          id: hatId,
+          name: body.name,
+          description: body.description || '',
+          icon: body.icon || '',
+          color: body.color || '',
+          systemPrompt: '',
+          documentationPaths: [],
+          isDefault: false
+        };
+      }
+
+      // Cannot modify the default hat's core properties
+      if (hat.isDefault && (body.id !== undefined || body.isDefault !== undefined)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Cannot modify default hat core properties' }));
+        return;
+      }
+
+      // Update fields if provided
+      if (body.name !== undefined) hat.name = body.name;
+      if (body.description !== undefined) hat.description = body.description;
+      if (body.icon !== undefined) hat.icon = body.icon;
+      if (body.color !== undefined) hat.color = body.color;
+      if (body.systemPrompt !== undefined) hat.systemPrompt = body.systemPrompt;
+      if (body.documentationPaths !== undefined) hat.documentationPaths = body.documentationPaths;
+
+      const success = this.saveHat(hat);
+
+      if (success) {
+        console.log(`[PROXY] [API] Hat ${isNew ? 'created' : 'updated'}: ${hatId}`);
+        res.writeHead(isNew ? 201 : 200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          message: isNew ? 'Hat created successfully' : 'Hat updated successfully',
+          hat: this.loadHat(hatId)
+        }));
+      } else {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to save hat' }));
+      }
+
+    } catch (error) {
+      console.error('[PROXY] [API] Hat update error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // DELETE /api/hats/:hatId - Delete a hat
+  handleHatDelete(req, res, hatId) {
+    try {
+      const hat = this.loadHat(hatId);
+
+      if (!hat) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Hat not found', hatId }));
+        return;
+      }
+
+      if (hat.isDefault) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Cannot delete the default hat' }));
+        return;
+      }
+
+      const success = this.deleteHat(hatId);
+
+      if (success) {
+        console.log(`[PROXY] [API] Hat deleted: ${hatId}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          message: 'Hat deleted successfully',
+          hatId
+        }));
+      } else {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to delete hat' }));
+      }
+
+    } catch (error) {
+      console.error('[PROXY] [API] Hat delete error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
   }
 
   // Execute a chat request via REST API
@@ -730,7 +1069,7 @@ class ClaudeProxy {
 
       // Spawn Claude with streaming
       const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
-      const claude = spawn('claude', [
+      const claude = spawn(this.claudePath, [
         '--permission-mode', 'bypassPermissions',
         '--print',
         '--verbose',
@@ -768,6 +1107,8 @@ class ClaudeProxy {
               const block = event.content_block;
               currentToolBlock = { name: block.name, id: block.id, input: '', startTime: Date.now() };
               request.tools.push({ name: block.name, status: 'running', startTime: Date.now() });
+              // Broadcast tool start to frontend
+              this.broadcastApiTabStream(request.tabId, 'tool_start', { tool: block.name });
             }
 
             // Text streaming
@@ -776,6 +1117,8 @@ class ClaudeProxy {
 
               if (delta?.type === 'text_delta' && delta.text) {
                 request.streamingText += delta.text;
+                // Broadcast text delta to frontend
+                this.broadcastApiTabStream(request.tabId, 'text_delta', { text: delta.text });
               }
 
               // Tool input
@@ -797,9 +1140,17 @@ class ClaudeProxy {
                 if (parsedInput.file_path) tool.file = parsedInput.file_path;
               }
 
+              // Broadcast tool completion to frontend
+              this.broadcastApiTabStream(request.tabId, 'tool_result', {
+                tool: currentToolBlock.name,
+                file: parsedInput?.file_path
+              });
+
               // Special handling for TodoWrite
               if (currentToolBlock.name === 'TodoWrite' && parsedInput?.todos) {
                 request.todos = parsedInput.todos;
+                // Broadcast todo update to frontend
+                this.broadcastApiTabStream(request.tabId, 'todo_update', { todos: parsedInput.todos });
               }
 
               currentToolBlock = null;
@@ -832,12 +1183,19 @@ class ClaudeProxy {
 
         // If using an API tab, add the assistant response to the tab
         if (request.apiTab) {
-          request.apiTab.messages.push({
+          const assistantMessage = {
             role: 'assistant',
             content: request.response,
             timestamp: Date.now()
-          });
+          };
+          request.apiTab.messages.push(assistantMessage);
           request.apiTab.lastActivity = Date.now();
+          this.saveApiTabs(); // Persist assistant response to disk
+
+          // Broadcast assistant response to all connected clients
+          this.broadcastTabMessage(request.tabId, assistantMessage, false);
+          this.broadcastTabUpdate(request.tabId, 'tab-updated');
+
           console.log(`[PROXY] [API] Added assistant response to API tab ${request.tabId}`);
         }
 
@@ -2747,7 +3105,8 @@ Generate the complete pipeline system now:`;
 
       ws.send(JSON.stringify({
         type: 'claude-chat-init-ack',
-        conversationId: conversationId
+        conversationId: conversationId,
+        tabId: message.tabId // Echo back tabId so client can match to correct tab
       }));
 
     } else if (message.type === 'claude-chat-message') {
@@ -2758,6 +3117,22 @@ Generate the complete pipeline system now:`;
         const conversationId = message.conversationId || 'default';
         const tabId = message.tabId; // Capture tabId to include in all responses
         const pipelineId = message.pipelineId; // Pipeline to route through (null = direct chat)
+
+        // Look up API tab for persistence (if this is an API tab)
+        let apiTab = null;
+        if (tabId && this.chatApiTabs.has(tabId)) {
+          apiTab = this.chatApiTabs.get(tabId);
+          // Save user message to API tab
+          const userMessage = {
+            role: 'user',
+            content: message.message,
+            timestamp: Date.now()
+          };
+          apiTab.messages.push(userMessage);
+          apiTab.lastActivity = Date.now();
+          this.saveApiTabs();
+          console.log(`[PROXY] [CHAT] Saved user message to API tab ${tabId}`);
+        }
 
         // If pipelineId is specified, route through standard pipeline execution
         if (pipelineId) {
@@ -2930,7 +3305,7 @@ Generate the complete pipeline system now:`;
 
         // Spawn Claude with streaming
         const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
-        const claude = spawn('claude', [
+        const claude = spawn(this.claudePath, [
           '--permission-mode', 'bypassPermissions',
           '--print',
           '--verbose',
@@ -2945,6 +3320,7 @@ Generate the complete pipeline system now:`;
 
         // Track the process so we can abort it
         this.claudeChatProcesses.set(conversationId, claude);
+        console.log(`[PROXY] [ABORT] Registered Claude process with conversationId: ${conversationId}`);
 
         let lineBuffer = '';
         let streamingText = '';
@@ -3152,6 +3528,19 @@ Generate the complete pipeline system now:`;
           });
           this.conversationHistory.set(ws, history);
 
+          // Save assistant response to API tab if applicable
+          if (apiTab) {
+            const assistantMessage = {
+              role: 'assistant',
+              content: streamingText.trim(),
+              timestamp: Date.now()
+            };
+            apiTab.messages.push(assistantMessage);
+            apiTab.lastActivity = Date.now();
+            this.saveApiTabs();
+            console.log(`[PROXY] [CHAT] Saved assistant response to API tab ${tabId}`);
+          }
+
           // Send final response
           ws.send(JSON.stringify({
             type: 'assistant-message',
@@ -3186,18 +3575,30 @@ Generate the complete pipeline system now:`;
       }
 
     } else if (message.type === 'claude-chat-abort') {
-      console.log('[PROXY] Claude Chat abort requested');
       const conversationId = message.conversationId || 'default';
       const tabId = message.tabId;
+      console.log(`[PROXY] [ABORT] Abort requested for conversationId: ${conversationId}, tabId: ${tabId}`);
+      console.log(`[PROXY] [ABORT] Active processes: ${Array.from(this.claudeChatProcesses.keys()).join(', ') || 'none'}`);
       const claude = this.claudeChatProcesses.get(conversationId);
 
       if (claude) {
+        console.log(`[PROXY] [ABORT] Found process, killing with SIGTERM...`);
         claude.kill('SIGTERM');
         this.claudeChatProcesses.delete(conversationId);
         ws.send(JSON.stringify({
           type: 'claude-aborted',
           tabId: tabId,
           conversationId
+        }));
+        console.log(`[PROXY] [ABORT] Process killed and removed from tracking`);
+      } else {
+        console.log(`[PROXY] [ABORT] No process found for conversationId: ${conversationId}`);
+        // Still send aborted response so frontend can update UI
+        ws.send(JSON.stringify({
+          type: 'claude-aborted',
+          tabId: tabId,
+          conversationId,
+          warning: 'No active process found'
         }));
       }
 
@@ -3246,7 +3647,7 @@ Generate the complete pipeline system now:`;
         console.log('[PROXY] Spawning claude process...');
         // Create env without ANTHROPIC_API_KEY so Claude CLI uses subscription login, not API key
         const { ANTHROPIC_API_KEY, ...cleanEnv } = process.env;
-        const claude = spawn('claude', ['--permission-mode', 'bypassPermissions', '-'], {
+        const claude = spawn(this.claudePath, ['--permission-mode', 'bypassPermissions', '-'], {
           cwd: process.cwd(),
           stdio: ['pipe', 'pipe', 'pipe'],
           env: cleanEnv
@@ -3684,6 +4085,137 @@ Your job now: Review the pipeline output and provide a helpful, conversational r
       console.error(`[PROXY] Error saving agent ${agentData.id}:`, error);
       return false;
     }
+  }
+
+  // Resolve the full path to the claude binary for reliable spawning
+  resolveClaudePath() {
+    const { execSync } = require('child_process');
+
+    // Try to find claude in PATH
+    try {
+      const claudePath = execSync('which claude 2>/dev/null', { encoding: 'utf8' }).trim();
+      if (claudePath) {
+        return claudePath;
+      }
+    } catch (e) {
+      // which failed, try other methods
+    }
+
+    // Common locations for nvm-installed global packages
+    const possiblePaths = [
+      '/home/super/.nvm/versions/node/v20.19.5/bin/claude',
+      '/usr/local/bin/claude',
+      '/usr/bin/claude',
+      path.join(process.env.HOME || '/home/super', '.nvm', 'versions', 'node', process.version.replace('v', 'v'), 'bin', 'claude'),
+    ];
+
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    }
+
+    // Fallback to just 'claude' and hope it's in PATH
+    console.warn('[PROXY] Could not find claude binary, falling back to PATH lookup');
+    return 'claude';
+  }
+
+  // API Tabs Persistence Methods
+  loadApiTabs() {
+    try {
+      if (fs.existsSync(this.apiTabsFile)) {
+        const data = fs.readFileSync(this.apiTabsFile, 'utf8');
+        const tabsData = JSON.parse(data);
+
+        // Restore tabs to the Map
+        this.chatApiTabs.clear();
+        for (const [tabId, tab] of Object.entries(tabsData.tabs || {})) {
+          this.chatApiTabs.set(tabId, tab);
+        }
+
+        // Restore the counter to avoid ID collisions
+        this.chatApiTabCounter = tabsData.counter || 0;
+
+        console.log(`[PROXY] Loaded ${this.chatApiTabs.size} API tabs from disk`);
+      } else {
+        console.log('[PROXY] No API tabs file found, starting fresh');
+      }
+    } catch (error) {
+      console.error('[PROXY] Error loading API tabs:', error);
+    }
+  }
+
+  saveApiTabs() {
+    try {
+      // Convert Map to object for JSON serialization
+      const tabsObj = {};
+      for (const [tabId, tab] of this.chatApiTabs) {
+        tabsObj[tabId] = tab;
+      }
+
+      const data = {
+        tabs: tabsObj,
+        counter: this.chatApiTabCounter,
+        savedAt: new Date().toISOString()
+      };
+
+      fs.writeFileSync(this.apiTabsFile, JSON.stringify(data, null, 2));
+      console.log(`[PROXY] Saved ${this.chatApiTabs.size} API tabs to disk`);
+    } catch (error) {
+      console.error('[PROXY] Error saving API tabs:', error);
+    }
+  }
+
+  // Broadcast a message to all connected WebSocket clients
+  broadcastToClients(message) {
+    const messageStr = JSON.stringify(message);
+    for (const client of this.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(messageStr);
+      }
+    }
+  }
+
+  // Broadcast tab update to all connected clients
+  broadcastTabUpdate(tabId, eventType, tabData = null) {
+    const tab = tabData || this.chatApiTabs.get(tabId);
+    if (!tab && eventType !== 'tab-deleted') return;
+
+    this.broadcastToClients({
+      type: 'api-tab-update',
+      eventType,
+      tabId,
+      tab: eventType === 'tab-deleted' ? null : {
+        id: tabId,
+        name: tab.name,
+        workingDirectory: tab.workingDirectory,
+        hatIds: tab.hatIds || [],
+        messageCount: tab.messages?.length || 0,
+        lastMessage: tab.messages?.length > 0 ? tab.messages[tab.messages.length - 1] : null,
+        createdAt: tab.createdAt,
+        lastActivity: tab.lastActivity
+      }
+    });
+  }
+
+  // Broadcast new message in a tab to all connected clients
+  broadcastTabMessage(tabId, message, isUserMessage) {
+    this.broadcastToClients({
+      type: 'api-tab-message',
+      tabId,
+      message,
+      isUserMessage
+    });
+  }
+
+  // Broadcast streaming event for API tab (allows frontend to see real-time output)
+  broadcastApiTabStream(tabId, eventType, data) {
+    this.broadcastToClients({
+      type: 'api-tab-stream',
+      tabId,
+      eventType,
+      ...data
+    });
   }
 
   // Hat Storage Methods
@@ -4480,7 +5012,7 @@ Your commentary:`;
     return new Promise((resolve) => {
       const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
 
-      const claude = spawn('claude', [
+      const claude = spawn(this.claudePath, [
         '--permission-mode', 'bypassPermissions',
         '--print',
         '--verbose',
@@ -5869,7 +6401,7 @@ Your commentary:`;
       // Use stream-json for real-time feedback (requires --print --verbose --include-partial-messages)
       // IMPORTANT: Exclude ANTHROPIC_API_KEY so Claude CLI uses subscription login, not API key
       const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
-      const claude = spawn('claude', [
+      const claude = spawn(this.claudePath, [
         '--permission-mode', 'bypassPermissions',
         '--print',
         '--verbose',

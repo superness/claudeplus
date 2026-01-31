@@ -101,7 +101,83 @@ const app = (function() {
     });
   }
 
-  function loadTabs() {
+  const API_BASE = 'http://localhost:8081';
+  let apiTabsLoaded = false; // Flag to track if we've synced with API
+  let pendingApiSaves = new Set(); // Track pending API save calls
+
+  async function loadTabs() {
+    try {
+      // First, try to load tabs from API
+      const apiTabs = await fetchApiTabs();
+
+      if (apiTabs && apiTabs.length > 0) {
+        // API has tabs - use them as source of truth
+        console.log('[TABS] Loaded', apiTabs.length, 'tabs from API');
+        tabs = apiTabs;
+        apiTabsLoaded = true;
+
+        // Check localStorage for any tabs not in API (migration)
+        await migrateLocalStorageTabs();
+
+        // Pick active tab
+        if (!tabs.find(t => t.id === activeTabId)) {
+          activeTabId = tabs[0].id;
+        }
+
+        // Update tabIdCounter to be higher than any existing tab
+        updateTabIdCounter();
+
+        renderTabs();
+        switchToTab(activeTabId);
+
+      } else {
+        // No API tabs - check localStorage for migration
+        console.log('[TABS] No API tabs found, checking localStorage');
+        const saved = localStorage.getItem('claude-chat-tabs');
+
+        if (saved) {
+          const data = JSON.parse(saved);
+          const localTabs = data.tabs || [];
+          activeTabId = data.activeTabId;
+          tabIdCounter = data.tabIdCounter || 0;
+
+          if (localTabs.length > 0) {
+            // Migrate all localStorage tabs to API
+            console.log('[TABS] Migrating', localTabs.length, 'tabs from localStorage to API');
+            for (const localTab of localTabs) {
+              await createTabInApi(localTab);
+              tabs.push(localTab);
+            }
+            apiTabsLoaded = true;
+
+            // Mark migration complete
+            localStorage.setItem('claude-chat-tabs-migrated', 'true');
+
+            renderTabs();
+            if (!tabs.find(t => t.id === activeTabId)) {
+              activeTabId = tabs[0].id;
+            }
+            switchToTab(activeTabId);
+          } else {
+            // No local tabs either, create default
+            const defaultDir = localStorage.getItem('claude-chat-dir') || '/mnt/c/github/claudeplus';
+            await createTab(defaultDir);
+          }
+        } else {
+          // No saved tabs anywhere, create default
+          const defaultDir = localStorage.getItem('claude-chat-dir') || '/mnt/c/github/claudeplus';
+          await createTab(defaultDir);
+        }
+      }
+    } catch (e) {
+      console.error('[TABS] Failed to load tabs:', e);
+      // Fallback to localStorage-only mode
+      loadTabsFromLocalStorage();
+    }
+  }
+
+  // Fallback function if API is unavailable
+  function loadTabsFromLocalStorage() {
     try {
       const saved = localStorage.getItem('claude-chat-tabs');
       if (saved) {
@@ -110,31 +186,272 @@ const app = (function() {
         activeTabId = data.activeTabId;
         tabIdCounter = data.tabIdCounter || 0;
 
-        // Ensure we have at least one tab
         if (tabs.length === 0) {
           const defaultDir = localStorage.getItem('claude-chat-dir') || '/mnt/c/github/claudeplus';
-          createTab(defaultDir);
+          createTabLocal(defaultDir);
         } else {
-          // Re-render tabs
           renderTabs();
-          // Switch to active tab
           if (!tabs.find(t => t.id === activeTabId)) {
             activeTabId = tabs[0].id;
           }
           switchToTab(activeTabId);
         }
       } else {
-        // No saved tabs, create default
         const defaultDir = localStorage.getItem('claude-chat-dir') || '/mnt/c/github/claudeplus';
-        createTab(defaultDir);
+        createTabLocal(defaultDir);
       }
     } catch (e) {
-      console.error('Failed to load tabs:', e);
-      createTab('/mnt/c/github/claudeplus');
+      console.error('[TABS] Failed to load from localStorage:', e);
+      createTabLocal('/mnt/c/github/claudeplus');
+    }
+  }
+
+  // Create tab locally without API (fallback)
+  function createTabLocal(directory, title = null) {
+    const tab = createTabState(directory, title);
+    tabs.push(tab);
+    activeTabId = tab.id;
+    renderTabs();
+    switchToTab(tab.id);
+    saveTabsToLocalStorage();
+    return tab;
+  }
+
+  async function fetchApiTabs() {
+    try {
+      const response = await fetch(`${API_BASE}/api/tabs`);
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
+      const data = await response.json();
+
+      // Convert API tab format to frontend tab format
+      const fetchedTabs = [];
+      for (const apiTab of (data.tabs || [])) {
+        // Fetch full tab data with messages
+        const fullTab = await fetchApiTabDetails(apiTab.tabId);
+        if (fullTab) {
+          fetchedTabs.push(fullTab);
+        }
+      }
+      return fetchedTabs;
+    } catch (e) {
+      console.warn('[TABS] Failed to fetch from API:', e.message);
+      return null;
+    }
+  }
+
+  async function fetchApiTabDetails(tabId) {
+    try {
+      const response = await fetch(`${API_BASE}/api/tabs/${encodeURIComponent(tabId)}`);
+      if (!response.ok) return null;
+      const apiTab = await response.json();
+
+      // Convert API format to frontend format
+      return convertApiTabToFrontend(apiTab);
+    } catch (e) {
+      console.warn('[TABS] Failed to fetch tab details:', tabId, e.message);
+      return null;
+    }
+  }
+
+  function convertApiTabToFrontend(apiTab) {
+    // Convert API messages to frontend format
+    // Normalize 'role' (API format) to 'type' (frontend format)
+    const messages = (apiTab.messages || []).map(msg => {
+      // Determine message type from either 'type' or 'role' field
+      let msgType = msg.type;
+      if (!msgType && msg.role) {
+        msgType = msg.role; // 'user' or 'assistant' from API
+      }
+      // Fallback for malformed messages
+      if (!msgType) {
+        msgType = 'system';
+      }
+      return {
+        type: msgType,
+        content: msg.content,
+        metadata: msg.metadata || {},
+        timestamp: msg.timestamp
+      };
+    });
+
+    return {
+      id: apiTab.tabId,
+      title: apiTab.name || apiTab.tabId,
+      directory: apiTab.workingDirectory || '/mnt/c/github/claudeplus',
+      conversationId: null,
+      isProcessing: false,
+      messages: messages,
+      totalCost: apiTab.totalCost || 0,
+      totalInputTokens: apiTab.totalInputTokens || 0,
+      totalOutputTokens: apiTab.totalOutputTokens || 0,
+      messageCount: messages.length,
+      toolLog: [],
+      lastToolState: '',
+      lastTodoState: [],
+      todos: [],
+      streamText: '',
+      typingQueue: '',
+      lastTotalLength: 0,
+      thinkingText: '',
+      hatIds: apiTab.hatIds || [],
+      pipelineId: apiTab.pipelineId || null
+    };
+  }
+
+  function convertFrontendTabToApi(tab) {
+    // Convert frontend messages to API format
+    const messages = (tab.messages || []).map(msg => ({
+      type: msg.type,
+      content: msg.content,
+      metadata: msg.metadata || {},
+      timestamp: msg.timestamp || Date.now()
+    }));
+
+    return {
+      tabId: tab.id,
+      name: tab.title,
+      messages: messages,
+      workingDirectory: tab.directory,
+      hatIds: tab.hatIds || [],
+      pipelineId: tab.pipelineId || null,
+      totalCost: tab.totalCost || 0,
+      totalInputTokens: tab.totalInputTokens || 0,
+      totalOutputTokens: tab.totalOutputTokens || 0
+    };
+  }
+
+  async function migrateLocalStorageTabs() {
+    // Check if migration was already done
+    if (localStorage.getItem('claude-chat-tabs-migrated') === 'true') {
+      return;
+    }
+
+    try {
+      const saved = localStorage.getItem('claude-chat-tabs');
+      if (!saved) return;
+
+      const data = JSON.parse(saved);
+      const localTabs = data.tabs || [];
+
+      // Find tabs in localStorage that aren't in API
+      const apiTabIds = new Set(tabs.map(t => t.id));
+      const tabsToMigrate = localTabs.filter(t => !apiTabIds.has(t.id));
+
+      if (tabsToMigrate.length > 0) {
+        console.log('[TABS] Migrating', tabsToMigrate.length, 'additional tabs from localStorage');
+
+        for (const localTab of tabsToMigrate) {
+          await createTabInApi(localTab);
+          tabs.push(localTab);
+        }
+      }
+
+      // Mark migration complete
+      localStorage.setItem('claude-chat-tabs-migrated', 'true');
+
+    } catch (e) {
+      console.warn('[TABS] Migration from localStorage failed:', e);
+    }
+  }
+
+  async function createTabInApi(tab) {
+    try {
+      const apiTab = convertFrontendTabToApi(tab);
+      const response = await fetch(`${API_BASE}/api/tabs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(apiTab)
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
+
+      console.log('[TABS] Created tab in API:', tab.id);
+      return true;
+    } catch (e) {
+      console.warn('[TABS] Failed to create tab in API:', tab.id, e.message);
+      return false;
+    }
+  }
+
+  async function updateTabInApi(tab) {
+    // Debounce API saves - don't save if we're already saving this tab
+    if (pendingApiSaves.has(tab.id)) {
+      return;
+    }
+
+    pendingApiSaves.add(tab.id);
+
+    try {
+      const apiTab = convertFrontendTabToApi(tab);
+      const response = await fetch(`${API_BASE}/api/tabs/${encodeURIComponent(tab.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(apiTab)
+      });
+
+      if (!response.ok) {
+        // Tab doesn't exist in API, create it
+        if (response.status === 404) {
+          await createTabInApi(tab);
+        } else {
+          throw new Error(`API returned ${response.status}`);
+        }
+      }
+    } catch (e) {
+      console.warn('[TABS] Failed to update tab in API:', tab.id, e.message);
+    } finally {
+      pendingApiSaves.delete(tab.id);
+    }
+  }
+
+  async function deleteTabFromApi(tabId) {
+    try {
+      const response = await fetch(`${API_BASE}/api/tabs/${encodeURIComponent(tabId)}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`API returned ${response.status}`);
+      }
+
+      console.log('[TABS] Deleted tab from API:', tabId);
+      return true;
+    } catch (e) {
+      console.warn('[TABS] Failed to delete tab from API:', tabId, e.message);
+      return false;
+    }
+  }
+
+  function updateTabIdCounter() {
+    for (const tab of tabs) {
+      const match = tab.id.match(/tab-(\d+)/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num >= tabIdCounter) {
+          tabIdCounter = num + 1;
+        }
+      }
     }
   }
 
   function saveTabs() {
+    // Always save to localStorage as backup
+    saveTabsToLocalStorage();
+
+    // If API is available, sync the active tab
+    if (apiTabsLoaded) {
+      const activeTab = getActiveTab();
+      if (activeTab) {
+        updateTabInApi(activeTab);
+      }
+    }
+  }
+
+  function saveTabsToLocalStorage() {
     try {
       localStorage.setItem('claude-chat-tabs', JSON.stringify({
         tabs,
@@ -142,17 +459,24 @@ const app = (function() {
         tabIdCounter
       }));
     } catch (e) {
-      console.error('Failed to save tabs:', e);
+      console.error('[TABS] Failed to save to localStorage:', e);
     }
   }
 
-  function createTab(directory = '/mnt/c/github/claudeplus', title = null) {
+  async function createTab(directory = '/mnt/c/github/claudeplus', title = null) {
     const tab = createTabState(directory, title);
     tabs.push(tab);
     activeTabId = tab.id;
     renderTabs();
     switchToTab(tab.id);
-    saveTabs();
+
+    // Create in API first (source of truth)
+    if (apiTabsLoaded) {
+      await createTabInApi(tab);
+    }
+
+    // Also save to localStorage as backup
+    saveTabsToLocalStorage();
 
     // Initialize with proxy if connected
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -170,7 +494,7 @@ const app = (function() {
     }));
   }
 
-  function closeTab(tabId, event) {
+  async function closeTab(tabId, event) {
     if (event) {
       event.stopPropagation();
     }
@@ -193,7 +517,14 @@ const app = (function() {
     }
 
     renderTabs();
-    saveTabs();
+
+    // Delete from API
+    if (apiTabsLoaded) {
+      await deleteTabFromApi(tabId);
+    }
+
+    // Also update localStorage backup
+    saveTabsToLocalStorage();
   }
 
   function unlockTab(tabId, event) {
@@ -457,6 +788,57 @@ const app = (function() {
       tab = getActiveTab();
     }
 
+    // Handle tab-independent messages FIRST (before the tab check)
+    switch (msg.type) {
+      case 'hats-list':
+        availableHats = msg.hats || [];
+        console.log('[HATS] Received hats list:', availableHats.length, 'hats');
+        renderHatSelector();
+        return; // Don't fall through to tab-dependent handlers
+
+      case 'hat-saved':
+        if (msg.success) {
+          loadHats(); // Reload hats list
+          closeHatEditor();
+        }
+        return;
+
+      case 'hat-deleted':
+        if (msg.success) {
+          loadHats(); // Reload hats list
+        }
+        return;
+
+      case 'hat-data':
+        if (msg.hat) {
+          openHatEditor(msg.hat);
+        }
+        return;
+
+      case 'templates-list':
+        availablePipelines = msg.templates || [];
+        renderPipelineSelector();
+        return;
+
+      case 'system':
+        // System messages don't need a tab
+        console.log('[SYSTEM]', msg.content);
+        return;
+
+      case 'api-tab-update':
+        handleApiTabUpdate(msg);
+        return;
+
+      case 'api-tab-message':
+        handleApiTabMessage(msg);
+        return;
+
+      case 'api-tab-stream':
+        handleApiTabStream(msg);
+        return;
+    }
+
+    // For all other messages, we need a valid tab
     if (!tab) return;
 
     switch (msg.type) {
@@ -490,37 +872,6 @@ const app = (function() {
       case 'claude-aborted':
         finishProcessing(tab);
         addMessage(tab, 'system', 'Request aborted.');
-        break;
-
-      // Hat message handlers (these don't need a tab context)
-      case 'hats-list':
-        availableHats = msg.hats || [];
-        renderHatSelector();
-        break;
-
-      case 'hat-saved':
-        if (msg.success) {
-          loadHats(); // Reload hats list
-          closeHatEditor();
-        }
-        break;
-
-      case 'hat-deleted':
-        if (msg.success) {
-          loadHats(); // Reload hats list
-        }
-        break;
-
-      case 'hat-data':
-        if (msg.hat) {
-          openHatEditor(msg.hat);
-        }
-        break;
-
-      // Pipeline message handlers
-      case 'templates-list':
-        availablePipelines = msg.templates || [];
-        renderPipelineSelector();
         break;
 
       // Pipeline execution events (from standard pipeline executor)
@@ -679,6 +1030,14 @@ const app = (function() {
     if (!Array.isArray(selectedHatIds)) {
       selectedHatIds = tab?.hatId && tab.hatId !== 'default' ? [tab.hatId] : [];
     }
+
+    console.log('[HAT-DEBUG] renderHatSelector called', {
+      tabId: tab?.id,
+      tabHatIds: tab?.hatIds,
+      selectedHatIds,
+      availableHatsCount: availableHats.length,
+      availableHatIds: availableHats.map(h => h.id)
+    });
 
     const selectedHats = selectedHatIds.map(id => availableHats.find(h => h.id === id)).filter(Boolean);
     const nonDefaultHats = availableHats.filter(h => !h.isDefault);
@@ -902,6 +1261,164 @@ const app = (function() {
     }
 
     closeHatEditor();
+  }
+
+  // Handle API tab updates broadcast from server
+  function handleApiTabUpdate(msg) {
+    const { eventType, tabId, tab: apiTabData } = msg;
+    console.log('[API-TAB] Update:', eventType, tabId);
+
+    if (eventType === 'tab-created') {
+      // Check if we already have this tab
+      const existingTab = tabs.find(t => t.id === tabId);
+      if (!existingTab && apiTabData) {
+        // Create new tab locally
+        const newTab = createTabState(apiTabData.workingDirectory, apiTabData.name);
+        newTab.id = tabId;
+        newTab.hatIds = apiTabData.hatIds || [];
+        tabs.push(newTab);
+        renderTabs();
+        console.log('[API-TAB] Created local tab for:', tabId);
+      }
+    } else if (eventType === 'tab-deleted') {
+      // Remove tab locally
+      const tabIndex = tabs.findIndex(t => t.id === tabId);
+      if (tabIndex !== -1) {
+        tabs.splice(tabIndex, 1);
+        // If deleted tab was active, switch to another tab
+        if (activeTabId === tabId) {
+          activeTabId = tabs.length > 0 ? tabs[0].id : null;
+          if (activeTabId) {
+            switchToTab(activeTabId);
+          }
+        }
+        renderTabs();
+        console.log('[API-TAB] Removed local tab:', tabId);
+      }
+    } else if (eventType === 'tab-updated') {
+      // Update tab metadata (not messages - those come via api-tab-message)
+      const tab = tabs.find(t => t.id === tabId);
+      if (tab && apiTabData) {
+        // Only update metadata, not messages
+        tab.title = apiTabData.name || tab.title;
+        tab.hatIds = apiTabData.hatIds || tab.hatIds;
+        renderTabs();
+        console.log('[API-TAB] Updated local tab:', tabId);
+      }
+    }
+  }
+
+  // Handle new messages in API tabs broadcast from server
+  function handleApiTabMessage(msg) {
+    const { tabId, message, isUserMessage } = msg;
+    console.log('[API-TAB] Message:', tabId, isUserMessage ? 'user' : 'assistant');
+
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) {
+      console.log('[API-TAB] Tab not found locally:', tabId);
+      return;
+    }
+
+    // Convert API message format to local format
+    const localMessage = {
+      type: message.role === 'user' ? 'user' : 'assistant',
+      content: message.content,
+      timestamp: message.timestamp
+    };
+
+    // Add message to local tab (avoid duplicates by checking timestamp)
+    const isDuplicate = tab.messages.some(m =>
+      m.type === localMessage.type &&
+      m.content === localMessage.content &&
+      Math.abs((m.timestamp || 0) - (localMessage.timestamp || 0)) < 1000
+    );
+
+    if (!isDuplicate) {
+      tab.messages.push(localMessage);
+      console.log('[API-TAB] Added message to local tab:', tabId);
+
+      // Re-render if this is the active tab
+      if (tab.id === activeTabId) {
+        renderMessages(tab);
+      }
+
+      // Update tab UI (for last activity indicator)
+      renderTabs();
+
+      // Save to localStorage as backup
+      saveTabsToLocalStorage();
+    } else {
+      console.log('[API-TAB] Duplicate message skipped');
+    }
+  }
+
+  // Handle streaming events from API chat (real-time output while API chat is running)
+  function handleApiTabStream(msg) {
+    const { tabId, eventType } = msg;
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return;
+
+    // Only process if this tab is active (for performance)
+    if (tab.id !== activeTabId) return;
+
+    // Start processing mode if not already
+    if (!tab.isProcessing) {
+      tab.isProcessing = true;
+      tab.toolLog = tab.toolLog || [];
+      tab.streamedContent = '';
+    }
+
+    switch (eventType) {
+      case 'tool_start':
+        tab.toolLog.push({ tool: msg.tool, status: 'running', input: '' });
+        updateToolList(tab);
+        updateAgentStatus(`Using ${msg.tool}...`);
+        break;
+
+      case 'tool_result':
+        // Mark tool as completed
+        const lastRunningTool = [...tab.toolLog].reverse().find(t => t.status === 'running');
+        if (lastRunningTool) {
+          lastRunningTool.status = 'completed';
+          if (msg.file) lastRunningTool.file = msg.file;
+          updateToolList(tab);
+        }
+        break;
+
+      case 'text_delta':
+        // Append streaming text
+        tab.streamedContent = (tab.streamedContent || '') + (msg.text || '');
+        // Update streaming text display
+        renderStreamingText(tab);
+        break;
+
+      case 'todo_update':
+        // Update todos display
+        if (msg.todos) {
+          tab.todos = msg.todos;
+          updateTodoList(msg.todos);
+        }
+        break;
+    }
+  }
+
+  // Render streaming text from API tab (uses same panel as regular agent stream)
+  function renderStreamingText(tab) {
+    const streamPanel = document.getElementById('streamPanel');
+    const streamContent = document.getElementById('streamContent');
+
+    if (!tab.streamedContent) return;
+
+    streamPanel.classList.add('visible');
+    // Use marked to render markdown, or just display as text
+    if (typeof marked !== 'undefined') {
+      streamContent.innerHTML = marked.parse(tab.streamedContent);
+    } else {
+      streamContent.textContent = tab.streamedContent;
+    }
+
+    // Auto-scroll to bottom
+    streamContent.scrollTop = streamContent.scrollHeight;
   }
 
   function handleAgentStream(tab, msg) {
@@ -1297,17 +1814,24 @@ const app = (function() {
 
     // Build conversation history from saved messages (last 20 exchanges)
     // IMPORTANT: Exclude the message we just added (the current user message)
+    // Note: Messages may have 'type' (frontend) or 'role' (API) format - handle both
     const history = [];
-    const msgs = tab.messages.filter(m => m.type === 'user' || m.type === 'assistant');
+    const msgs = tab.messages.filter(m => {
+      const msgType = m.type || m.role;
+      return msgType === 'user' || msgType === 'assistant';
+    });
     // Remove the last message (the one we just added) before building pairs
     const previousMsgs = msgs.slice(0, -1);
 
     // Build user/assistant pairs for history
+    // Handle both 'type' (frontend format) and 'role' (API format)
     for (let i = 0; i < previousMsgs.length; i++) {
       const msg = previousMsgs[i];
       const nextMsg = previousMsgs[i + 1];
+      const msgType = msg.type || msg.role;
+      const nextMsgType = nextMsg?.type || nextMsg?.role;
 
-      if (msg.type === 'user' && nextMsg?.type === 'assistant') {
+      if (msgType === 'user' && nextMsgType === 'assistant') {
         history.push({
           user: msg.content,
           assistant: nextMsg.content
