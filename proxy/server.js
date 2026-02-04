@@ -375,6 +375,14 @@ class ClaudeProxy {
       return;
     }
 
+    // ========== REST API: Vision Analysis Endpoint ==========
+
+    // POST /api/vision/analyze - Analyze an image with AI
+    if (req.url === '/api/vision/analyze' && req.method === 'POST') {
+      this.handleVisionAnalyze(req, res);
+      return;
+    }
+
     // ========== REST API: Tab Management Endpoints ==========
 
     // POST /api/tabs - Create a new tab
@@ -474,6 +482,25 @@ class ClaudeProxy {
       return;
     }
 
+    // GET /api/maestro/sessions - List all Maestro session log files
+    if (req.url === '/api/maestro/sessions' && req.method === 'GET') {
+      this.handleMaestroListSessions(req, res);
+      return;
+    }
+
+    // GET /api/maestro/list-sessions - Alias for sessions (backwards compatibility)
+    if (req.url === '/api/maestro/list-sessions' && req.method === 'GET') {
+      this.handleMaestroListSessions(req, res);
+      return;
+    }
+
+    // GET /api/maestro/session/:sessionId - Load a specific session log
+    if (req.url.match(/^\/api\/maestro\/session\/[^\/]+$/) && req.method === 'GET') {
+      const sessionId = decodeURIComponent(req.url.replace('/api/maestro/session/', ''));
+      this.handleMaestroGetSession(req, res, sessionId);
+      return;
+    }
+
     // Default: upgrade to WebSocket
     res.writeHead(426, { 'Content-Type': 'text/plain' });
     res.end('This service requires WebSocket connection');
@@ -495,6 +522,103 @@ class ClaudeProxy {
       });
       req.on('error', reject);
     });
+  }
+
+  // POST /api/vision/analyze - Analyze an image with AI
+  async handleVisionAnalyze(req, res) {
+    if (!this.anthropic) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Anthropic API not configured' }));
+      return;
+    }
+
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Validate required fields
+      if (!body.imageBase64) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'imageBase64 is required' }));
+        return;
+      }
+
+      if (!body.prompt) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'prompt is required' }));
+        return;
+      }
+
+      const startTime = Date.now();
+      const mediaType = body.mediaType || 'image/png';
+      const model = body.model || 'claude-sonnet-4-20250514'; // Default to Sonnet for vision
+
+      console.log(`[PROXY] [VISION] Analyzing image (${body.imageBase64.length} chars base64) with ${model}`);
+
+      // Build messages with image content
+      const messages = [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType,
+              data: body.imageBase64
+            }
+          },
+          {
+            type: 'text',
+            text: body.prompt
+          }
+        ]
+      }];
+
+      // Optional system prompt
+      const systemPrompt = body.systemPrompt || null;
+
+      const requestParams = {
+        model,
+        max_tokens: body.maxTokens || 2000,
+        messages
+      };
+
+      if (systemPrompt) {
+        requestParams.system = systemPrompt;
+      }
+
+      const response = await this.anthropic.messages.create(requestParams);
+
+      const durationMs = Date.now() - startTime;
+      const textContent = response.content[0]?.text || '';
+
+      // Extract usage
+      const inputTokens = response.usage?.input_tokens || 0;
+      const outputTokens = response.usage?.output_tokens || 0;
+
+      // Sonnet pricing: $3/1M input, $15/1M output
+      const cost = (inputTokens / 1000000) * 3.0 + (outputTokens / 1000000) * 15.0;
+
+      console.log(`[PROXY] [VISION] Complete: ${inputTokens}/${outputTokens} tokens, $${cost.toFixed(6)}, ${durationMs}ms`);
+      console.log(`[PROXY] [VISION] Response preview: ${textContent.substring(0, 200)}...`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        analysis: textContent,
+        usage: {
+          inputTokens,
+          outputTokens,
+          totalTokens: inputTokens + outputTokens,
+          estimatedCostUsd: cost,
+          durationMs
+        },
+        model
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [VISION] Error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
   }
 
   // POST /api/chat/send - Send a message and get a request ID
@@ -1863,6 +1987,86 @@ class ClaudeProxy {
 
     this.saveApiTabs();
     return aborted;
+  }
+
+  // GET /api/maestro/sessions - List all Maestro session log files
+  async handleMaestroListSessions(req, res) {
+    try {
+      const maestroLogsDir = path.join(__dirname, 'maestro-logs');
+
+      // Ensure directory exists
+      if (!fs.existsSync(maestroLogsDir)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify([]));
+        return;
+      }
+
+      // List all session files
+      const files = fs.readdirSync(maestroLogsDir)
+        .filter(f => f.startsWith('maestro-session-') && f.endsWith('.json'))
+        .map(f => {
+          const filePath = path.join(maestroLogsDir, f);
+          const stats = fs.statSync(filePath);
+
+          // Try to read entry count without loading entire file
+          let entryCount = 0;
+          try {
+            const content = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(content);
+            entryCount = data.entries?.length || 0;
+          } catch (e) {
+            // Ignore parse errors
+          }
+
+          return {
+            sessionId: f.replace('.json', ''),
+            filename: f,
+            size: stats.size,
+            mtime: stats.mtime.toISOString(),
+            entryCount
+          };
+        })
+        .sort((a, b) => new Date(b.mtime) - new Date(a.mtime)); // Most recent first
+
+      console.log(`[PROXY] [MAESTRO] Listed ${files.length} session files`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(files));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] List sessions error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/maestro/session/:sessionId - Load a specific session log
+  async handleMaestroGetSession(req, res, sessionId) {
+    try {
+      const maestroLogsDir = path.join(__dirname, 'maestro-logs');
+      const filePath = path.join(maestroLogsDir, `${sessionId}.json`);
+
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found', sessionId }));
+        return;
+      }
+
+      // Read and parse session file
+      const content = fs.readFileSync(filePath, 'utf8');
+      const sessionData = JSON.parse(content);
+
+      console.log(`[PROXY] [MAESTRO] Loaded session ${sessionId} (${sessionData.entries?.length || 0} entries)`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(sessionData));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Get session error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
   }
 
   // ========== WebSocket Maestro Handlers ==========
