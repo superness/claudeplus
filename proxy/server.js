@@ -298,6 +298,26 @@ class ClaudeProxy {
       return;
     }
 
+    // ========== Visualization Debug Log Endpoints ==========
+
+    // POST /api/viz-debug - Append debug log entry
+    if (req.url === '/api/viz-debug' && req.method === 'POST') {
+      this.handleVizDebugLog(req, res);
+      return;
+    }
+
+    // GET /api/viz-debug - Read recent debug logs
+    if (req.url === '/api/viz-debug' && req.method === 'GET') {
+      this.handleVizDebugRead(req, res);
+      return;
+    }
+
+    // DELETE /api/viz-debug - Clear debug logs
+    if (req.url === '/api/viz-debug' && req.method === 'DELETE') {
+      this.handleVizDebugClear(req, res);
+      return;
+    }
+
     // ========== REST API: Pipeline Execution Endpoints ==========
 
     // POST /api/pipeline/execute - Execute a pipeline
@@ -1285,6 +1305,116 @@ class ClaudeProxy {
 
     } catch (error) {
       console.error('[PROXY] [MAESTRO] Log list error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // ========== Visualization Debug Log Handler Methods ==========
+
+  // In-memory circular buffer for viz debug logs (last 500 entries)
+  vizDebugLogs = [];
+  vizDebugMaxEntries = 500;
+
+  // POST /api/viz-debug - Append debug log entries
+  async handleVizDebugLog(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+      const { source, entries } = body;
+
+      if (!source || !entries || !Array.isArray(entries)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'source and entries[] are required' }));
+        return;
+      }
+
+      // Add timestamp and source to each entry
+      const timestampedEntries = entries.map(entry => ({
+        timestamp: new Date().toISOString(),
+        source,
+        ...entry
+      }));
+
+      // Add to circular buffer
+      this.vizDebugLogs.push(...timestampedEntries);
+
+      // Trim to max size
+      if (this.vizDebugLogs.length > this.vizDebugMaxEntries) {
+        this.vizDebugLogs = this.vizDebugLogs.slice(-this.vizDebugMaxEntries);
+      }
+
+      // Also write to file for persistence
+      const logDir = path.join(__dirname, 'viz-debug-logs');
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+      }
+      const logFile = path.join(logDir, `${source}.jsonl`);
+      const lines = timestampedEntries.map(e => JSON.stringify(e)).join('\n') + '\n';
+      fs.appendFileSync(logFile, lines);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        added: entries.length,
+        total: this.vizDebugLogs.length
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [VIZ-DEBUG] Log error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/viz-debug - Read recent debug logs
+  handleVizDebugRead(req, res) {
+    try {
+      const url = new URL(req.url, 'http://localhost:8081');
+      const source = url.searchParams.get('source');
+      const limit = parseInt(url.searchParams.get('limit') || '100', 10);
+      const since = url.searchParams.get('since'); // ISO timestamp
+
+      let logs = this.vizDebugLogs;
+
+      // Filter by source if specified
+      if (source) {
+        logs = logs.filter(e => e.source === source);
+      }
+
+      // Filter by timestamp if specified
+      if (since) {
+        const sinceDate = new Date(since);
+        logs = logs.filter(e => new Date(e.timestamp) >= sinceDate);
+      }
+
+      // Return most recent N entries
+      const recentLogs = logs.slice(-limit);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        logs: recentLogs,
+        total: logs.length,
+        inMemory: this.vizDebugLogs.length
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [VIZ-DEBUG] Read error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // DELETE /api/viz-debug - Clear debug logs
+  handleVizDebugClear(req, res) {
+    try {
+      const cleared = this.vizDebugLogs.length;
+      this.vizDebugLogs = [];
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, cleared }));
+
+    } catch (error) {
+      console.error('[PROXY] [VIZ-DEBUG] Clear error:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }

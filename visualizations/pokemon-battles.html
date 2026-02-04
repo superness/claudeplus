@@ -688,8 +688,40 @@
         /* Attack effects */
         .attack-effect {
             position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
             pointer-events: none;
             z-index: 100;
+            animation: attackBurst 0.6s ease-out forwards;
+        }
+
+        @keyframes attackBurst {
+            0% {
+                transform: scale(0.3);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.5);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+
+        @keyframes hpDamage {
+            0% { filter: brightness(1); }
+            25% { filter: brightness(2) saturate(2); }
+            50% { filter: brightness(0.5); }
+            100% { filter: brightness(1); }
+        }
+
+        .move-name {
+            color: #ffdd44;
+            font-weight: bold;
+            text-transform: uppercase;
         }
 
         .damage-popup {
@@ -855,6 +887,52 @@
             50% { transform: translateY(5px); }
         }
 
+        /* Particle burst animation */
+        @keyframes particle-burst {
+            0% {
+                transform: translate(0, 0) scale(1);
+                opacity: 1;
+            }
+            100% {
+                transform: translate(
+                    calc(cos(var(--angle)) * var(--distance)),
+                    calc(sin(var(--angle)) * var(--distance))
+                ) scale(0);
+                opacity: 0;
+            }
+        }
+
+        /* Attack animations */
+        .attacking {
+            animation: attackMove 0.3s ease-in-out;
+        }
+
+        @keyframes attackMove {
+            0% { transform: translateX(0); }
+            50% { transform: translateX(30px); }
+            100% { transform: translateX(0); }
+        }
+
+        .hit {
+            animation: hitShake 0.3s ease-in-out;
+        }
+
+        @keyframes hitShake {
+            0%, 100% { transform: translateX(0); filter: brightness(1); }
+            25% { transform: translateX(-10px); filter: brightness(2); }
+            50% { transform: translateX(10px); filter: brightness(2); }
+            75% { transform: translateX(-5px); filter: brightness(1.5); }
+        }
+
+        .fainted {
+            animation: faint 0.5s ease-out forwards;
+        }
+
+        @keyframes faint {
+            0% { transform: translateY(0) rotate(0); opacity: 1; }
+            100% { transform: translateY(50px) rotate(45deg); opacity: 0; }
+        }
+
         /* Waiting state */
         .waiting-state {
             position: absolute;
@@ -897,15 +975,30 @@
         }
 
         .waiting-text {
-            font-size: 0.8rem;
+            font-size: 1.2rem;
             color: #fff;
             text-shadow: 2px 2px 0 #000;
+            font-weight: bold;
         }
 
         .waiting-subtext {
-            font-size: 0.5rem;
-            color: #aaa;
-            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #ffd54f;
+            margin-top: 8px;
+            text-shadow: 1px 1px 0 #000;
+        }
+
+        .waiting-agent {
+            font-size: 2rem;
+            margin-top: 15px;
+            color: #4fc3f7;
+            text-shadow: 0 0 10px #4fc3f7;
+            animation: agentReady 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes agentReady {
+            from { transform: scale(1); }
+            to { transform: scale(1.05); }
         }
 
         /* Wild tasks approaching panel */
@@ -1454,6 +1547,84 @@
         <div class="evolving-new-name" id="evolvingNewName">Congratulations!</div>
     </div>
 
+    <!-- Debug Log Panel (toggle with D key) -->
+    <div id="debugPanel" style="
+        display: none;
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        width: 450px;
+        max-height: 400px;
+        background: rgba(0,0,0,0.95);
+        border: 2px solid #ffcc00;
+        border-radius: 8px;
+        font-family: monospace;
+        font-size: 10px;
+        z-index: 9999;
+        overflow: hidden;
+    ">
+        <div style="background: #333; padding: 5px 10px; color: #ffcc00; display: flex; justify-content: space-between; align-items: center;">
+            <span>🔍 DEBUG LOGS (press D to toggle)</span>
+            <span id="debugCount">0 entries</span>
+        </div>
+        <div id="debugContent" style="
+            max-height: 350px;
+            overflow-y: auto;
+            padding: 8px;
+            color: #0f0;
+        "></div>
+    </div>
+
+    <script>
+        // Debug panel toggle with D key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'd' || e.key === 'D') {
+                const panel = document.getElementById('debugPanel');
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                if (panel.style.display === 'block') {
+                    updateDebugPanel();
+                }
+            }
+        });
+
+        function updateDebugPanel() {
+            const panel = document.getElementById('debugPanel');
+            if (panel.style.display === 'none') return;
+
+            const content = document.getElementById('debugContent');
+            const count = document.getElementById('debugCount');
+
+            if (window.pokemonDebug) {
+                const logs = window.pokemonDebug.getRecent(50);
+                count.textContent = `${window.pokemonDebug.allLogs.length} entries`;
+
+                content.innerHTML = logs.map(log => {
+                    const color = {
+                        'FETCH': '#88f',
+                        'BATTLE': '#f88',
+                        'ENEMY': '#f8f',
+                        'ANIM': '#8f8',
+                        'XP': '#ff8'
+                    }[log.category] || '#fff';
+
+                    const dataStr = Object.keys(log).filter(k => !['ts', 'category', 'message'].includes(k))
+                        .map(k => `${k}=${JSON.stringify(log[k]).substring(0, 30)}`)
+                        .join(' ');
+
+                    return `<div style="border-bottom: 1px solid #333; padding: 2px 0;">
+                        <span style="color: #666;">${log.ts.substring(11, 19)}</span>
+                        <span style="color: ${color}; font-weight: bold;">[${log.category}]</span>
+                        <span style="color: #fff;">${log.message}</span>
+                        ${dataStr ? `<div style="color: #888; padding-left: 60px; font-size: 9px;">${dataStr}</div>` : ''}
+                    </div>`;
+                }).reverse().join('');
+            }
+        }
+
+        // Update debug panel periodically
+        setInterval(updateDebugPanel, 1000);
+    </script>
+
     <script>
         // ============================================
         // POKEMON DATA
@@ -1642,62 +1813,119 @@
           'EXPLODE': { power: 35, type: 'fire', accuracy: 65 }
         });
 
-        // Generate enemy team for a task trainer
-        function generateEnemyTeam(request) {
-          const toolCount = request.tools?.length || 1;
-          const messageLen = request.message?.length || 50;
-
-          // Team size: 1-6 based on task complexity
-          // More tools = bigger team to fight through
-          const teamSize = Math.min(6, Math.max(1, Math.floor(toolCount / 2) + 1));
-
-          // Base level from message complexity
-          const baseLevel = Math.min(8, Math.floor(messageLen / 150) + 1);
-
-          const team = [];
-          const usedIndices = new Set();
-
-          for (let i = 0; i < teamSize; i++) {
-            // Pick random enemy, avoid duplicates
-            let idx;
-            do {
-              idx = Math.floor(Math.random() * ENEMY_POKEMON.length);
-            } while (usedIndices.has(idx) && usedIndices.size < ENEMY_POKEMON.length);
-            usedIndices.add(idx);
-
-            const template = ENEMY_POKEMON[idx];
-            const level = Math.max(1, baseLevel + Math.floor(Math.random() * 3) - 1);
-            const maxHP = template.baseHP + level * 3;
-
-            team.push({
-              name: template.name,
-              emoji: template.emoji,
-              type: template.type,
-              types: [template.type.toLowerCase()],
-              level,
-              hp: maxHP,
-              maxHP: maxHP,
-              moves: template.moves,
-              defeated: false,
-              xpReward: 15 + level * 5
-            });
-          }
-
-          return team;
-        }
-
         // ============================================
-        // STATE
+        // STATE - NEW MODEL: Request = Boss, Tool = Move
         // ============================================
         let agents = {};
-        let activeBattles = new Map(); // requestId -> { agent, trainer, seenTools, currentEnemy }
+        let activeBattles = new Map(); // requestId -> { agent, boss, seenTools, completedTools }
         let completedBattles = new Set();
         let totalVictories = 0;
         let totalXP = 0;
         let battleLog = []; // For battle events
+        let pendingAttacks = []; // Queue of attack animations to show
 
         // Track tool states for detecting changes
         let previousToolStates = new Map(); // requestId -> { toolId -> status }
+
+        // ============================================
+        // DEBUG LOGGING SYSTEM - sends logs to server API & localStorage
+        // ============================================
+        const DEBUG_LOG = {
+            buffer: [],
+            maxBuffer: 50,
+            flushInterval: 3000,
+            lastFlush: Date.now(),
+            allLogs: [], // Keep all logs in memory for review
+            maxAllLogs: 500,
+
+            log(category, message, data = {}) {
+                const entry = {
+                    ts: new Date().toISOString(),
+                    category,
+                    message,
+                    ...data
+                };
+                this.buffer.push(entry);
+                this.allLogs.push(entry);
+
+                // Trim allLogs if too large
+                if (this.allLogs.length > this.maxAllLogs) {
+                    this.allLogs = this.allLogs.slice(-this.maxAllLogs);
+                }
+
+                console.log(`[Pokemon ${category}]`, message, data);
+
+                // Also save to localStorage for persistence
+                try {
+                    localStorage.setItem('pokemon-debug-logs', JSON.stringify(this.allLogs.slice(-100)));
+                } catch (e) { /* ignore quota errors */ }
+
+                // Auto-flush if buffer is full
+                if (this.buffer.length >= this.maxBuffer) {
+                    this.flush();
+                }
+            },
+
+            async flush() {
+                if (this.buffer.length === 0) return;
+
+                const entries = [...this.buffer];
+                this.buffer = [];
+                this.lastFlush = Date.now();
+
+                try {
+                    await fetch('http://localhost:8081/api/viz-debug', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            source: 'pokemon-battles',
+                            entries
+                        })
+                    });
+                } catch (e) {
+                    // Silent fail - don't spam console
+                }
+            },
+
+            // Periodic flush
+            startAutoFlush() {
+                setInterval(() => {
+                    if (Date.now() - this.lastFlush > this.flushInterval && this.buffer.length > 0) {
+                        this.flush();
+                    }
+                }, this.flushInterval);
+            },
+
+            // Get recent logs for display
+            getRecent(count = 20) {
+                return this.allLogs.slice(-count);
+            },
+
+            // Clear logs
+            clear() {
+                this.allLogs = [];
+                this.buffer = [];
+                localStorage.removeItem('pokemon-debug-logs');
+            },
+
+            // Export as JSON for review
+            exportJSON() {
+                return JSON.stringify(this.allLogs, null, 2);
+            }
+        };
+
+        // Expose to window for console access
+        window.pokemonDebug = DEBUG_LOG;
+
+        // Start auto-flush
+        DEBUG_LOG.startAutoFlush();
+
+        // Convenience wrappers
+        function logFetch(msg, data) { DEBUG_LOG.log('FETCH', msg, data); }
+        function logBattle(msg, data) { DEBUG_LOG.log('BATTLE', msg, data); }
+        function logEnemy(msg, data) { DEBUG_LOG.log('ENEMY', msg, data); }
+        function logAnim(msg, data) { DEBUG_LOG.log('ANIM', msg, data); }
+        function logXP(msg, data) { DEBUG_LOG.log('XP', msg, data); }
 
         // ============================================
         // UTILITY FUNCTIONS
@@ -1858,58 +2086,78 @@
         }
 
         // Create enemy Pokemon from a running tool
-        function createEnemyFromTool(tool, request) {
-            const toolName = tool.name || 'Unknown';
-            const baseLevel = Math.min(8, Math.floor((request.message?.length || 0) / 150) + 1);
-            const level = baseLevel + Math.floor(Math.random() * 3);
+        // NEW MODEL: Each REQUEST = 1 Boss Enemy Pokemon
+        // Each TOOL COMPLETION = Agent uses a move (damages boss)
+        // REQUEST COMPLETES = Boss defeated
 
-            // Match tool to enemy type
-            let enemyTemplate;
-            switch(toolName) {
-                case 'Read':
-                    enemyTemplate = { name: 'READBLOCK', sprite: '📖', types: ['Normal'], moves: ['DEMAND', 'STALL'] };
-                    break;
-                case 'Write':
-                    enemyTemplate = { name: 'WRITELOCK', sprite: '📝', types: ['Steel'], moves: ['INSCRIBE', 'OVERWRITE'] };
-                    break;
-                case 'Edit':
-                    enemyTemplate = { name: 'MUTATOR', sprite: '✏️', types: ['Psychic'], moves: ['CHANGE', 'CORRUPT'] };
-                    break;
-                case 'Bash':
-                    enemyTemplate = { name: 'SHELLSHOCK', sprite: '💥', types: ['Fire'], moves: ['CRASH', 'EXPLODE'] };
-                    break;
-                case 'Grep':
-                    enemyTemplate = { name: 'SEARCHFAIL', sprite: '🔍', types: ['Electric'], moves: ['SCAN', 'MISS'] };
-                    break;
-                case 'Glob':
-                    enemyTemplate = { name: 'WILDCARD', sprite: '🌐', types: ['Fairy'], moves: ['MATCH', 'EXPAND'] };
-                    break;
-                case 'Task':
-                    enemyTemplate = { name: 'SUBPROCESS', sprite: '🤖', types: ['Ghost'], moves: ['SPAWN', 'RECURSE'] };
-                    break;
-                case 'WebFetch':
-                    enemyTemplate = { name: 'TIMEOUT', sprite: '⏰', types: ['Water'], moves: ['STALL', 'WAIT'] };
-                    break;
-                case 'WebSearch':
-                    enemyTemplate = { name: 'RATELMIT', sprite: '🚫', types: ['Dark'], moves: ['THROTTLE', 'DENY'] };
-                    break;
-                default:
-                    enemyTemplate = ENEMY_POKEMON[Math.floor(Math.random() * ENEMY_POKEMON.length)];
+        function createBossFromRequest(request) {
+            // Pick a boss based on message content
+            const msg = (request.message || '').toLowerCase();
+            let bossTemplate;
+
+            if (msg.includes('bug') || msg.includes('fix') || msg.includes('error')) {
+                bossTemplate = { name: 'BUGZILLA', sprite: '🐛', types: ['Bug', 'Poison'], baseHP: 80 };
+            } else if (msg.includes('test')) {
+                bossTemplate = { name: 'TESTLORD', sprite: '🧪', types: ['Psychic'], baseHP: 70 };
+            } else if (msg.includes('feature') || msg.includes('add') || msg.includes('implement')) {
+                bossTemplate = { name: 'SCOPECREEP', sprite: '👾', types: ['Ghost', 'Dark'], baseHP: 100 };
+            } else if (msg.includes('refactor') || msg.includes('clean')) {
+                bossTemplate = { name: 'LEGACYMON', sprite: '👴', types: ['Ghost', 'Steel'], baseHP: 90 };
+            } else if (msg.includes('performance') || msg.includes('slow') || msg.includes('optimize')) {
+                bossTemplate = { name: 'MEMHOG', sprite: '🐷', types: ['Normal', 'Dark'], baseHP: 85 };
+            } else if (msg.includes('deploy') || msg.includes('release')) {
+                bossTemplate = { name: 'PRODDOWN', sprite: '🔥', types: ['Fire', 'Electric'], baseHP: 75 };
+            } else if (msg.includes('security') || msg.includes('auth')) {
+                bossTemplate = { name: 'HACKTRON', sprite: '💀', types: ['Dark', 'Ghost'], baseHP: 95 };
+            } else {
+                // Pick from pool
+                const templates = [
+                    { name: 'TASKZILLA', sprite: '📋', types: ['Normal'], baseHP: 60 },
+                    { name: 'DEADLINE', sprite: '⏰', types: ['Psychic'], baseHP: 70 },
+                    { name: 'BLOCKER', sprite: '🚧', types: ['Steel'], baseHP: 80 },
+                    { name: 'DEPCONF', sprite: '📦', types: ['Poison'], baseHP: 65 },
+                    { name: 'MERGCONF', sprite: '🔀', types: ['Fighting'], baseHP: 75 }
+                ];
+                bossTemplate = templates[Math.floor(Math.random() * templates.length)];
             }
 
-            const hp = 30 + level * 5;
+            // Boss level based on message complexity
+            const level = Math.min(50, Math.floor((request.message?.length || 0) / 30) + 5);
+
+            // HP scales with level
+            const hp = bossTemplate.baseHP + level * 3;
+
             return {
-                toolId: `${tool.name}_${tool.startTime}`, // Unique identifier
-                name: enemyTemplate.name,
-                sprite: enemyTemplate.sprite,
-                types: enemyTemplate.types,
-                moves: enemyTemplate.moves || ['STRUGGLE', 'DEMAND'],
+                requestId: request.requestId,
+                name: bossTemplate.name,
+                sprite: bossTemplate.sprite,
+                types: bossTemplate.types,
+                moves: ['BLOCK', 'CONFUSE', 'DEMAND', 'STALL'],
                 level: level,
                 hp: hp,
                 maxHP: hp,
-                status: tool.status, // 'running' or 'completed'
-                xpReward: 15 + level * 5
+                xpReward: 50 + level * 10,
+                toolsProcessed: 0, // Track how many tools have been completed
+                totalTools: 0      // Will be updated as we discover tools
             };
+        }
+
+        // Get move name based on tool type - tools are now MOVES, not enemies
+        function getToolMoveName(toolName) {
+            const toolMoves = {
+                'Read': { name: 'KNOWLEDGE DRAIN', type: 'psychic', power: 30 },
+                'Write': { name: 'CODE STRIKE', type: 'steel', power: 45 },
+                'Edit': { name: 'REFACTOR RAY', type: 'psychic', power: 40 },
+                'Bash': { name: 'SHELL SLAM', type: 'fire', power: 50 },
+                'Grep': { name: 'PATTERN PIERCE', type: 'electric', power: 25 },
+                'Glob': { name: 'WILDCARD WHIP', type: 'fairy', power: 20 },
+                'Task': { name: 'DELEGATION', type: 'ghost', power: 35 },
+                'WebFetch': { name: 'NET CATCH', type: 'water', power: 30 },
+                'WebSearch': { name: 'SEARCH BEAM', type: 'electric', power: 25 },
+                'TodoWrite': { name: 'PLAN ATTACK', type: 'normal', power: 15 },
+                'AskUserQuestion': { name: 'INSIGHT', type: 'fairy', power: 20 }
+            };
+            return toolMoves[toolName] || { name: 'STRUGGLE', type: 'normal', power: 20 };
         }
 
         function getTrainerName(request) {
@@ -1924,6 +2172,213 @@
             return 'TASK MASTER';
         }
 
+        // ============================================
+        // BATTLE ANIMATION SYSTEM - NEW MODEL
+        // Boss stays on screen, tool completions = agent attacks
+        // ============================================
+        let lastAnimationTime = 0;
+        let lastBossAttackTime = 0;
+
+        // Process pending attack animations (from tool completions)
+        function animateBattles() {
+            const now = Date.now();
+
+            // Check if we have pending tool-based attacks to animate
+            if (pendingAttacks.length > 0 && now - lastAnimationTime > 800) {
+                lastAnimationTime = now;
+                const attack = pendingAttacks.shift();
+                animateToolAttack(attack);
+            }
+
+            // Boss attacks back periodically (every 3 seconds) if battle is active
+            for (const [reqId, battle] of activeBattles) {
+                if (battle.boss && battle.boss.hp > 0) {
+                    if (now - lastBossAttackTime > 3000) {
+                        lastBossAttackTime = now;
+                        animateBossAttack(battle);
+                    }
+                    break;
+                }
+            }
+
+            // Debug logging every 5 seconds
+            if (now % 5000 < 100) {
+                logAnim('Battle state', {
+                    activeBattles: activeBattles.size,
+                    pendingAttacks: pendingAttacks.length,
+                    battles: Array.from(activeBattles.entries()).map(([id, b]) => ({
+                        id: id.substring(0, 15),
+                        hasBoss: !!b.boss,
+                        bossHP: b.boss?.hp,
+                        bossMaxHP: b.boss?.maxHP,
+                        bossName: b.boss?.name,
+                        toolsProcessed: b.completedTools?.size || 0
+                    }))
+                });
+            }
+
+            requestAnimationFrame(animateBattles);
+        }
+
+        // Animate agent using a tool (deals damage to boss)
+        function animateToolAttack(attack) {
+            const { battle, toolName, moveName, damage } = attack;
+            const agent = battle.agent;
+            const boss = battle.boss;
+            if (!agent || !boss) return;
+
+            logAnim('Tool attack', { agent: agent.name, boss: boss.name, tool: toolName, move: moveName, damage });
+
+            // Show attack message
+            showMessage(`${agent.name} used <span class="move-name">${moveName}</span>!`);
+
+            // Animate agent sprite
+            const agentSprite = document.querySelector('.combatant-agent .battle-sprite');
+            if (agentSprite) {
+                agentSprite.classList.add('attacking');
+                setTimeout(() => agentSprite.classList.remove('attacking'), 500);
+            }
+
+            // Show attack effect on boss
+            setTimeout(() => {
+                const move = getToolMoveName(toolName);
+                showAttackEffect('enemy', move.type || 'Normal');
+
+                // Update boss HP display
+                const bossHPFill = document.getElementById('enemyHPFill');
+                if (bossHPFill) {
+                    bossHPFill.style.animation = 'hpDamage 0.3s ease-out';
+                    setTimeout(() => bossHPFill.style.animation = '', 300);
+
+                    // Recalculate HP display
+                    const hpPercent = Math.max(0, (boss.hp / boss.maxHP) * 100);
+                    bossHPFill.style.width = `${hpPercent}%`;
+
+                    // Color based on HP
+                    if (hpPercent > 50) {
+                        bossHPFill.style.background = 'linear-gradient(to bottom, #44ff44, #22aa22)';
+                    } else if (hpPercent > 20) {
+                        bossHPFill.style.background = 'linear-gradient(to bottom, #ffcc00, #cc9900)';
+                    } else {
+                        bossHPFill.style.background = 'linear-gradient(to bottom, #ff4444, #cc2222)';
+                    }
+                }
+
+                // Show damage number
+                createDamageNumber(damage, 'enemy');
+
+                // Show effectiveness message
+                const effectiveness = calculateTypeEffectiveness(move.type || 'Normal', boss.types);
+                if (effectiveness > 1) {
+                    setTimeout(() => showMessage("It's super effective!"), 500);
+                } else if (effectiveness < 1 && effectiveness > 0) {
+                    setTimeout(() => showMessage("It's not very effective..."), 500);
+                }
+
+                // Update HP text
+                document.getElementById('enemyHPText').textContent = `${Math.max(0, boss.hp)}/${boss.maxHP}`;
+
+            }, 300);
+        }
+
+        // Create floating damage number
+        function createDamageNumber(damage, target) {
+            const arena = document.querySelector('.battle-arena');
+            if (!arena) return;
+
+            const dmgNum = document.createElement('div');
+            dmgNum.className = 'damage-number';
+            dmgNum.textContent = `-${damage}`;
+            dmgNum.style.cssText = `
+                position: absolute;
+                ${target === 'enemy' ? 'right: 25%' : 'left: 25%'};
+                top: 35%;
+                font-size: 1.5rem;
+                color: #ff4444;
+                text-shadow: 2px 2px 0 #000;
+                animation: damageFloat 1s ease-out forwards;
+                z-index: 1000;
+            `;
+            arena.appendChild(dmgNum);
+            setTimeout(() => dmgNum.remove(), 1000);
+        }
+
+        // Boss attacks back (purely visual, doesn't actually damage agent)
+        function animateBossAttack(battle) {
+            const agent = battle.agent;
+            const boss = battle.boss;
+            if (!agent || !boss || boss.hp <= 0) return;
+
+            // Pick boss move
+            const moveName = boss.moves[Math.floor(Math.random() * boss.moves.length)];
+
+            // Show attack message
+            showMessage(`${enemy.name} used <span class="move-name">${moveName}</span>!`);
+
+            // Animate enemy sprite
+            const enemySprite = document.querySelector('.combatant-enemy .battle-sprite');
+            if (enemySprite) {
+                enemySprite.classList.add('attacking');
+                setTimeout(() => enemySprite.classList.remove('attacking'), 500);
+            }
+
+            // Show attack effect on agent
+            setTimeout(() => {
+                showAttackEffect('agent', enemy.types[0] || 'Normal');
+
+                // Agent takes visual "damage" but recovers (they're professionals!)
+                const agentHPFill = document.getElementById('agentHPFill');
+                if (agentHPFill) {
+                    agentHPFill.style.animation = 'hpDamage 0.3s ease-out';
+                    setTimeout(() => agentHPFill.style.animation = '', 300);
+                }
+            }, 300);
+        }
+
+        function showAttackEffect(target, type) {
+            const arena = document.querySelector('.battle-field');
+            if (!arena) return;
+
+            const effect = document.createElement('div');
+            effect.className = 'attack-effect';
+
+            // Position based on target
+            if (target === 'enemy') {
+                effect.style.right = '18%';
+                effect.style.top = '30%';
+            } else {
+                effect.style.left = '18%';
+                effect.style.bottom = '25%';
+            }
+
+            // Color based on type
+            const typeColors = {
+                Fire: '#ff6b35',
+                Water: '#4a90d9',
+                Grass: '#78c850',
+                Electric: '#f8d030',
+                Psychic: '#f85888',
+                Ghost: '#705898',
+                Normal: '#a8a878',
+                Fighting: '#c03028',
+                Dark: '#705848',
+                Steel: '#b8b8d0',
+                Dragon: '#7038f8',
+                Fairy: '#ee99ac'
+            };
+
+            effect.style.backgroundColor = typeColors[type] || typeColors.Normal;
+            effect.style.boxShadow = `0 0 30px ${typeColors[type] || typeColors.Normal}`;
+
+            arena.appendChild(effect);
+
+            // Remove after animation
+            setTimeout(() => effect.remove(), 600);
+        }
+
+        // Start animation loop
+        requestAnimationFrame(animateBattles);
+
         function getTrainerSprite(request) {
             const msg = (request.message || '').toLowerCase();
             if (msg.includes('bug') || msg.includes('fix') || msg.includes('error')) return '🐛';
@@ -1936,19 +2391,6 @@
             if (msg.includes('refactor') || msg.includes('clean')) return '🧹';
             if (msg.includes('deploy') || msg.includes('release')) return '🚀';
             return '📋';
-        }
-
-        // Get current enemy pokemon from trainer
-        function getCurrentEnemy(trainer) {
-            if (!trainer || !trainer.team) return null;
-            // Find next non-defeated pokemon
-            for (let i = trainer.currentPokemon; i < trainer.team.length; i++) {
-                if (!trainer.team[i].defeated) {
-                    trainer.currentPokemon = i;
-                    return trainer.team[i];
-                }
-            }
-            return null; // All defeated
         }
 
         // ============================================
@@ -1972,11 +2414,19 @@
                 return;
             }
 
+            // Check which agents are in active battles
+            const agentsInBattle = new Set();
+            for (const [reqId, battle] of activeBattles) {
+                if (battle.agent) {
+                    agentsInBattle.add(battle.agent.id);
+                }
+            }
+
             container.innerHTML = sortedAgents.map(agent => {
                 const hpPercent = (agent.hp / agent.maxHP) * 100;
                 const hpClass = hpPercent > 50 ? '' : hpPercent > 20 ? 'medium' : 'low';
                 const xpPercent = (agent.currentXP / agent.neededXP) * 100;
-                const inBattle = currentBattle && currentBattle.agent.id === agent.id;
+                const inBattle = agentsInBattle.has(agent.id);
 
                 return `
                     <div class="poke-card ${inBattle ? 'in-battle' : ''}">
@@ -2090,16 +2540,58 @@
                 // Show message about current tool
                 showMessage(`<span class="name">${agent.name}</span> is battling <span class="name">${currentEnemy.name}</span>!`);
             } else {
-                // No current enemy (between tools or waiting)
-                waitingState.style.display = 'flex';
-                waitingState.innerHTML = `
-                    <div class="waiting-text">⚔️ ${trainer.name} is thinking...</div>
-                    <div class="waiting-spinner">🔄</div>
-                `;
-                agentCombatant.style.display = 'none';
-                enemyCombatant.style.display = 'none';
-                agentHPBox.style.display = 'none';
-                enemyHPBox.style.display = 'none';
+                // No current enemy - check if we have any tools yet
+                const totalSeen = mainBattle.seenTools.size;
+                const defeated = trainer.defeatedEnemies.length;
+
+                if (totalSeen === 0) {
+                    // No tools started yet - trainer preparing
+                    waitingState.style.display = 'flex';
+                    waitingState.innerHTML = `
+                        <div class="waiting-text">⚔️ ${trainer.name} prepares for battle...</div>
+                        <div class="waiting-agent">${agent.sprite} ${agent.name} Lv.${agent.level}</div>
+                    `;
+                    agentCombatant.style.display = 'none';
+                    enemyCombatant.style.display = 'none';
+                    agentHPBox.style.display = 'none';
+                    enemyHPBox.style.display = 'none';
+                } else if (defeated < totalSeen) {
+                    // Between enemies - show last defeated, waiting for next
+                    const lastDefeated = trainer.defeatedEnemies[trainer.defeatedEnemies.length - 1];
+                    waitingState.style.display = 'flex';
+                    waitingState.innerHTML = `
+                        <div class="waiting-text">💀 ${lastDefeated?.name || 'Enemy'} fainted!</div>
+                        <div class="waiting-subtext">${trainer.name} prepares next Pokémon...</div>
+                    `;
+                    // Keep showing agent on their side
+                    agentCombatant.style.display = 'flex';
+                    document.getElementById('agentSprite').textContent = agent.sprite;
+                    document.getElementById('agentName').textContent = agent.name;
+                    document.getElementById('agentLevel').textContent = `Lv.${agent.level}`;
+                    agentHPBox.style.display = 'block';
+                    const agentHPPercent = (agent.hp / agent.maxHP) * 100;
+                    document.getElementById('agentHPFill').style.width = agentHPPercent + '%';
+                    document.getElementById('agentHPText').textContent = `${agent.hp}/${agent.maxHP}`;
+
+                    enemyCombatant.style.display = 'none';
+                    enemyHPBox.style.display = 'none';
+                } else {
+                    // All seen enemies defeated, waiting for more work
+                    waitingState.style.display = 'flex';
+                    waitingState.innerHTML = `
+                        <div class="waiting-text">✨ ${agent.name} stands ready!</div>
+                        <div class="waiting-subtext">${defeated}/${totalSeen} enemies defeated</div>
+                    `;
+                    agentCombatant.style.display = 'flex';
+                    document.getElementById('agentSprite').textContent = agent.sprite;
+                    agentHPBox.style.display = 'block';
+                    const agentHPPercent = (agent.hp / agent.maxHP) * 100;
+                    document.getElementById('agentHPFill').style.width = agentHPPercent + '%';
+                    document.getElementById('agentHPText').textContent = `${agent.hp}/${agent.maxHP}`;
+
+                    enemyCombatant.style.display = 'none';
+                    enemyHPBox.style.display = 'none';
+                }
             }
 
             // Update wild panel with all active battles
@@ -2161,9 +2653,76 @@
             document.getElementById('victoryOverlay').classList.remove('visible');
         }
 
+        // Create visual attack burst effect
+        function createAttackBurst(targetId, type = 'explosion') {
+            const target = document.getElementById(targetId);
+            if (!target) return;
+
+            const rect = target.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+
+            const colors = {
+                explosion: ['#ff6b35', '#ffcc00', '#ff3333'],
+                electric: ['#ffff00', '#88ccff', '#ffffff'],
+                psychic: ['#ff66ff', '#aa44ff', '#ffffff']
+            };
+
+            const burstColors = colors[type] || colors.explosion;
+
+            for (let i = 0; i < 12; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'attack-particle';
+                particle.style.cssText = `
+                    position: fixed;
+                    left: ${centerX}px;
+                    top: ${centerY}px;
+                    width: ${8 + Math.random() * 8}px;
+                    height: ${8 + Math.random() * 8}px;
+                    background: ${burstColors[Math.floor(Math.random() * burstColors.length)]};
+                    border-radius: 50%;
+                    pointer-events: none;
+                    z-index: 9999;
+                    animation: particle-burst 0.5s ease-out forwards;
+                    --angle: ${(i / 12) * 360}deg;
+                    --distance: ${60 + Math.random() * 40}px;
+                `;
+                document.body.appendChild(particle);
+                setTimeout(() => particle.remove(), 500);
+            }
+        }
+
+        // Check if agent should level up
+        function checkLevelUp(agent) {
+            const neededXP = Math.floor(100 * Math.pow(1.5, agent.level - 1));
+            if (agent.xp >= neededXP) {
+                agent.xp -= neededXP;
+                agent.level++;
+                agent.maxHP = 80 + agent.level * 15;
+                agent.hp = Math.min(agent.hp + 20, agent.maxHP); // Heal a bit on level up
+
+                addBattleLog(`🎉 ${agent.name} grew to Lv.${agent.level}!`, 'levelup');
+
+                // Check for evolution
+                const evolutions = agent.evolutions;
+                if (evolutions) {
+                    if (agent.level >= 25 && evolutions[2] && agent.name !== evolutions[2].name) {
+                        agent.name = evolutions[2].name;
+                        agent.sprite = evolutions[2].sprite;
+                        addBattleLog(`✨ ${evolutions[1]?.name || 'Your Pokemon'} evolved into ${agent.name}!`, 'evolve');
+                    } else if (agent.level >= 10 && evolutions[1] && agent.name !== evolutions[1].name && agent.name === evolutions[0].name) {
+                        agent.name = evolutions[1].name;
+                        agent.sprite = evolutions[1].sprite;
+                        addBattleLog(`✨ ${evolutions[0].name} evolved into ${agent.name}!`, 'evolve');
+                    }
+                }
+            }
+        }
+
         // ============================================
         // DATA FETCHING - Correlates real tool execution with battle state
         // ============================================
+
         async function fetchData() {
             try {
                 const response = await fetch('http://localhost:8081/api/chat/requests');
@@ -2174,6 +2733,12 @@
                     id: r.requestId,
                     startTime: new Date(r.startTime).getTime()
                 }));
+
+                logFetch('Fetch cycle', {
+                    totalRequests: requests.length,
+                    running: requests.filter(r => r.status === 'running').length,
+                    activeBattles: activeBattles.size
+                });
 
                 for (const request of requests) {
                     const agent = updateAgent(request.id, request);
@@ -2193,6 +2758,7 @@
                                 startTime: Date.now()
                             };
                             activeBattles.set(request.id, battle);
+                            logBattle('New battle started', { trainer: trainer.name, agent: agent?.name });
                             addBattleLog(`${trainer.name} wants to battle!`, 'challenge');
                         }
 
@@ -2201,6 +2767,8 @@
 
                         // Process each tool
                         const tools = request.tools || [];
+                        logFetch('Processing tools', { count: tools.length, tools: tools.map(t => ({ name: t.name, status: t.status })) });
+
                         for (const tool of tools) {
                             const toolId = `${tool.name}_${tool.startTime}`;
 
@@ -2209,16 +2777,33 @@
                                 const enemy = createEnemyFromTool(tool, request);
                                 battle.seenTools.set(toolId, enemy);
 
-                                if (tool.status === 'running') {
-                                    // This is the current enemy being fought
+                                logEnemy('NEW ENEMY', { name: enemy.name, hp: enemy.hp, status: tool.status });
+
+                                // ALWAYS show the enemy first, even if already completed
+                                // This ensures we see the battle happen visually
+                                if (!battle.currentEnemy || battle.currentEnemy.hp === 0) {
                                     battle.currentEnemy = enemy;
+                                    logEnemy('CURRENT ENEMY SET', { name: enemy.name });
                                     addBattleLog(`${battle.trainer.name} sent out ${enemy.name}!`, 'appear');
+
+                                    // Schedule defeat animation for already-completed tools
+                                    if (tool.status === 'completed') {
+                                        logEnemy('Tool already completed - scheduling defeat', { name: enemy.name });
+                                        enemy.scheduledDefeat = true;
+                                        // Process defeat after a short delay so battle shows
+                                        setTimeout(() => {
+                                            if (enemy.hp > 0) {
+                                                animateQuickDefeat(enemy, agent, battle);
+                                            }
+                                        }, 1500); // 1.5 seconds to see the battle
+                                    }
                                 } else if (tool.status === 'completed') {
-                                    // Tool already completed - enemy was instantly defeated
+                                    // Another tool completed while we have an active enemy - queue it
                                     enemy.hp = 0;
+                                    enemy.status = 'completed';
                                     battle.trainer.defeatedEnemies.push(enemy);
                                     battle.trainer.totalXP += enemy.xpReward;
-                                    addBattleLog(`${agent.name} defeated ${enemy.name}!`, 'defeat');
+                                    logEnemy('Queued completed tool (another enemy active)', { name: enemy.name });
                                 }
                             } else {
                                 // EXISTING TOOL - check for status change
@@ -2226,33 +2811,62 @@
                                 const prevStatus = enemy.status;
 
                                 if (prevStatus === 'running' && tool.status === 'completed') {
-                                    // TOOL COMPLETED = Enemy defeated!
-                                    enemy.status = 'completed';
-                                    enemy.hp = 0;
-                                    battle.trainer.defeatedEnemies.push(enemy);
-                                    battle.trainer.totalXP += enemy.xpReward;
+                                    // TOOL COMPLETED - but don't defeat immediately!
+                                    // Let the battle animation show for at least 2 seconds
 
-                                    // Award XP to agent
-                                    const xpGained = enemy.xpReward;
-                                    agent.xp += xpGained;
-                                    totalXP += xpGained;
+                                    if (!enemy.defeatScheduled) {
+                                        enemy.defeatScheduled = true;
+                                        enemy.defeatTime = Date.now() + 2000; // 2 seconds from now
 
-                                    addBattleLog(`${agent.name} defeated ${enemy.name}! +${xpGained} XP`, 'defeat');
+                                        logEnemy('DEFEAT SCHEDULED', { name: enemy.name, delayMs: 2000 });
 
-                                    // Check for level up
-                                    const newLevelInfo = levelFromXP(agent.xp);
-                                    if (newLevelInfo.level > agent.level) {
-                                        addBattleLog(`${agent.name} grew to level ${newLevelInfo.level}!`, 'levelup');
+                                        // Schedule the actual defeat
+                                        setTimeout(() => {
+                                            if (enemy.hp > 0) {
+                                                enemy.status = 'completed';
+                                                enemy.hp = 0;
+                                                battle.trainer.defeatedEnemies.push(enemy);
+                                                battle.trainer.totalXP += enemy.xpReward;
+
+                                                // Award XP to agent
+                                                const xpGained = enemy.xpReward;
+                                                agent.xp += xpGained;
+                                                totalXP += xpGained;
+                                                agent.victories++;
+                                                totalVictories++;
+
+                                                logXP('Enemy defeated', { agent: agent.name, enemy: enemy.name, xpGained, agentTotalXP: agent.xp, agentLevel: agent.level });
+                                                addBattleLog(`${agent.name} defeated ${enemy.name}! +${xpGained} XP`, 'defeat');
+
+                                                // Check for level up
+                                                checkLevelUp(agent);
+
+                                                // Clear current enemy and find next one
+                                                if (battle.currentEnemy === enemy) {
+                                                    battle.currentEnemy = null;
+
+                                                    // Look for next running enemy
+                                                    for (const [tid, en] of battle.seenTools.entries()) {
+                                                        if (en.status === 'running' && en.hp > 0) {
+                                                            battle.currentEnemy = en;
+                                                            logEnemy('NEXT ENEMY', { name: en.name });
+                                                            addBattleLog(`${battle.trainer.name} sent out ${en.name}!`, 'appear');
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                // Render updates
+                                                renderBattleArena();
+                                                renderTeam();
+                                                renderBattleLog();
+                                            }
+                                        }, 2000);
                                     }
 
-                                    // Find next running tool as current enemy
-                                    battle.currentEnemy = null;
-                                    for (const [tid, en] of battle.seenTools.entries()) {
-                                        if (en.status === 'running') {
-                                            battle.currentEnemy = en;
-                                            break;
-                                        }
-                                    }
+                                    // Don't clear currentEnemy here - let the timeout handle it
+                                    // Also don't look for next enemy yet - wait for current to finish
+                                    continue; // Skip the rest of this tool processing
                                 }
                             }
                         }
@@ -2264,6 +2878,13 @@
 
                         let battle = activeBattles.get(request.id);
                         if (battle) {
+                            logBattle('TASK COMPLETED - Trainer defeated', {
+                                trainer: battle.trainer.name,
+                                agent: agent?.name,
+                                enemiesDefeated: battle.seenTools.size,
+                                totalXP: battle.trainer.totalXP
+                            });
+
                             // Mark all remaining enemies as defeated
                             for (const [toolId, enemy] of battle.seenTools.entries()) {
                                 if (enemy.status === 'running') {
@@ -2286,6 +2907,7 @@
                             agent.xp += bonusXP;
                             totalXP += bonusXP;
 
+                            logXP('TRAINER DEFEATED - Bonus XP', { agent: agent?.name, bonusXP, totalAgentXP: agent?.xp });
                             addBattleLog(`${agent.name} defeated ${battle.trainer.name}! +${bonusXP} bonus XP`, 'victory');
 
                             // Clean up
@@ -2304,6 +2926,71 @@
             } catch (error) {
                 console.error('Failed to fetch:', error);
             }
+        }
+
+        // Animate a quick defeat for tools that completed before we saw them
+        function animateQuickDefeat(enemy, agent, battle) {
+            logEnemy('Quick defeat animation', { name: enemy.name });
+
+            // Show one attack from agent
+            const agentSprite = document.getElementById('agentCombatant');
+            const enemySprite = document.getElementById('enemyCombatant');
+
+            // Agent attack animation
+            if (agentSprite) {
+                agentSprite.classList.add('attacking');
+                addBattleLog(`${agent.name} used ${agent.moves[0]?.name || 'SWIFT STRIKE'}!`, 'attack');
+            }
+
+            // After a short delay, show enemy taking damage
+            setTimeout(() => {
+                if (agentSprite) agentSprite.classList.remove('attacking');
+                if (enemySprite) {
+                    enemySprite.classList.add('hit');
+                    createAttackBurst('enemyCombatant', 'explosion');
+                }
+
+                // Show critical/effective message sometimes
+                const messages = ["It's super effective!", "Critical hit!", "A powerful blow!"];
+                addBattleLog(messages[Math.floor(Math.random() * messages.length)], 'effective');
+
+            }, 300);
+
+            // After another delay, defeat the enemy
+            setTimeout(() => {
+                if (enemySprite) {
+                    enemySprite.classList.remove('hit');
+                    enemySprite.classList.add('fainted');
+                }
+
+                // Actually defeat the enemy
+                enemy.hp = 0;
+                enemy.status = 'completed';
+                battle.trainer.defeatedEnemies.push(enemy);
+                battle.trainer.totalXP += enemy.xpReward;
+
+                // Award XP to agent
+                agent.xp += enemy.xpReward;
+                totalXP += enemy.xpReward;
+                agent.victories++;
+                totalVictories++;
+
+                addBattleLog(`${enemy.name} fainted!`, 'defeat');
+                addBattleLog(`${agent.name} gained ${enemy.xpReward} EXP!`, 'xp');
+
+                // Check for level up
+                checkLevelUp(agent);
+
+                // Clear the fainted class after animation
+                setTimeout(() => {
+                    if (enemySprite) enemySprite.classList.remove('fainted');
+                    battle.currentEnemy = null;
+                    renderBattleArena();
+                    renderTeam();
+                    renderBattleLog();
+                }, 500);
+
+            }, 800);
         }
 
         // Add to battle log
