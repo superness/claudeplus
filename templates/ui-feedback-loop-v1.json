@@ -1,0 +1,111 @@
+{
+  "id": "ui-feedback-loop-v1",
+  "name": "UI Feedback Loop",
+  "description": "Captures UI screenshots, generates feedback, frames tasks, then iteratively executes each improvement via sub-pipeline until all are complete",
+  "version": "1.4.0",
+  "category": "ui-improvement",
+  "stages": [
+    {
+      "id": "capture_and_feedback",
+      "name": "Screenshot & Feedback",
+      "type": "analyzer",
+      "agent": "ui_screenshot_analyzer",
+      "description": "Capture screenshot of live UI and generate comprehensive multi-perspective feedback",
+      "decisions": [
+        {"choice": "FEEDBACK_READY", "description": "Feedback document generated and ready for framing"}
+      ]
+    },
+    {
+      "id": "frame_tasks",
+      "name": "Frame Implementation Tasks",
+      "type": "planner",
+      "agent": "ui_task_framer",
+      "description": "Convert feedback into specific, actionable code editing tasks (top 3 priority items)",
+      "inputs": ["capture_and_feedback"],
+      "decisions": [
+        {"choice": "TASKS_FRAMED", "description": "Tasks are framed and ready for execution"}
+      ]
+    },
+    {
+      "id": "execute_task",
+      "name": "Execute Task via Sub-Pipeline",
+      "type": "sub_pipeline",
+      "agent": "pipeline_executor",
+      "description": "Execute the next pending task using claude-task-v1 (plan → execute → validate)",
+      "inputs": ["frame_tasks", "track_progress"],
+      "config": {
+        "pipeline": "claude-task-v1",
+        "inheritContext": true
+      }
+    },
+    {
+      "id": "track_progress",
+      "name": "Track Progress",
+      "type": "tracker",
+      "agent": "ui_progress_tracker",
+      "description": "Update progress document and determine if more tasks remain",
+      "inputs": ["frame_tasks", "execute_task"],
+      "decisions": [
+        {"choice": "MORE_TASKS", "description": "More tasks remain in current batch - loop back to execute"},
+        {"choice": "BATCH_DONE", "description": "Current batch complete but more improvements likely - re-analyze UI"},
+        {"choice": "ALL_DONE", "description": "UI looks great, no more improvements needed"},
+        {"choice": "RETRY_TASK", "description": "Task failed - retry execution"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "conditional",
+    "description": "Screenshot → Frame 3 → Execute → Track → (more tasks | batch done → re-screenshot | all done)",
+    "connections": [
+      {
+        "from": "capture_and_feedback",
+        "to": "frame_tasks",
+        "condition": "FEEDBACK_READY",
+        "description": "Feedback generated, frame into tasks"
+      },
+      {
+        "from": "frame_tasks",
+        "to": "execute_task",
+        "condition": "TASKS_FRAMED",
+        "description": "Tasks framed, start executing"
+      },
+      {
+        "from": "execute_task",
+        "to": "track_progress",
+        "condition": "VALIDATED",
+        "description": "Sub-pipeline complete, track progress"
+      },
+      {
+        "from": "track_progress",
+        "to": "execute_task",
+        "condition": "MORE_TASKS",
+        "description": "More tasks remain, execute next one"
+      },
+      {
+        "from": "track_progress",
+        "to": "execute_task",
+        "condition": "RETRY_TASK",
+        "description": "Task failed, retry execution"
+      },
+      {
+        "from": "track_progress",
+        "to": "capture_and_feedback",
+        "condition": "BATCH_DONE",
+        "description": "Batch complete, re-analyze UI for more improvements"
+      },
+      {
+        "from": "track_progress",
+        "to": null,
+        "condition": "ALL_DONE",
+        "description": "UI looks great - pipeline finished"
+      }
+    ]
+  },
+  "metadata": {
+    "author": "Claude",
+    "created": "2026-02-02",
+    "updated": "2026-02-02",
+    "tags": ["ui", "feedback", "visual", "iterative", "loop", "sub-pipeline"],
+    "purpose": "Screenshot-driven UI improvement with iterative sub-pipeline execution"
+  }
+}

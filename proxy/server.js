@@ -277,6 +277,27 @@ class ClaudeProxy {
       return;
     }
 
+    // ========== Maestro Log Endpoint ==========
+
+    // POST /api/maestro-log - Persist Maestro orchestration log
+    if (req.url === '/api/maestro-log' && req.method === 'POST') {
+      this.handleMaestroLogSave(req, res);
+      return;
+    }
+
+    // GET /api/maestro-log/:sessionId - Read Maestro orchestration log
+    const maestroLogMatch = req.url.match(/^\/api\/maestro-log\/([^/?]+)$/);
+    if (maestroLogMatch && req.method === 'GET') {
+      this.handleMaestroLogRead(req, res, maestroLogMatch[1]);
+      return;
+    }
+
+    // GET /api/maestro-logs - List all Maestro logs
+    if (req.url === '/api/maestro-logs' && req.method === 'GET') {
+      this.handleMaestroLogList(req, res);
+      return;
+    }
+
     // ========== REST API: Chat Endpoints ==========
 
     // POST /api/chat/send - Send a message to a specific tab
@@ -379,6 +400,35 @@ class ClaudeProxy {
     if (req.url.match(/^\/api\/hats\/[^\/]+$/) && req.method === 'DELETE') {
       const hatId = decodeURIComponent(req.url.replace('/api/hats/', ''));
       this.handleHatDelete(req, res, hatId);
+      return;
+    }
+
+    // ========== REST API: Maestro Orchestration Endpoints ==========
+
+    // POST /api/maestro/execute - Start a Maestro orchestration
+    if (req.url === '/api/maestro/execute' && req.method === 'POST') {
+      this.handleMaestroExecute(req, res);
+      return;
+    }
+
+    // GET /api/maestro/status/:rootTabId - Get orchestration status
+    if (req.url.match(/^\/api\/maestro\/status\/[^\/]+$/) && req.method === 'GET') {
+      const rootTabId = decodeURIComponent(req.url.replace('/api/maestro/status/', ''));
+      this.handleMaestroStatus(req, res, rootTabId);
+      return;
+    }
+
+    // POST /api/maestro/result/:tabId - Report child result to parent
+    if (req.url.match(/^\/api\/maestro\/result\/[^\/]+$/) && req.method === 'POST') {
+      const tabId = decodeURIComponent(req.url.replace('/api/maestro/result/', ''));
+      this.handleMaestroResult(req, res, tabId);
+      return;
+    }
+
+    // POST /api/maestro/abort/:rootTabId - Abort entire orchestration tree
+    if (req.url.match(/^\/api\/maestro\/abort\/[^\/]+$/) && req.method === 'POST') {
+      const rootTabId = decodeURIComponent(req.url.replace('/api/maestro/abort/', ''));
+      this.handleMaestroAbort(req, res, rootTabId);
       return;
     }
 
@@ -598,7 +648,8 @@ class ClaudeProxy {
       toolCount: request.tools.length,
       todoCount: request.todos.length,
       streamingProgress: request.streamingText.length,
-      hasResponse: request.response !== null
+      hasResponse: request.response !== null,
+      error: request.errors && request.errors.length > 0 ? request.errors.join(', ') : null
     }));
   }
 
@@ -648,7 +699,14 @@ class ClaudeProxy {
         message: request.message.substring(0, 100) + (request.message.length > 100 ? '...' : ''),
         startTime: new Date(request.startTime).toISOString(),
         duration: Date.now() - request.startTime,
-        tabId: request.tabId
+        tabId: request.tabId,
+        // Include tool, todo, and streaming data for visualizations
+        tools: request.tools || [],
+        todos: request.todos || [],
+        streamingText: request.streamingText ? request.streamingText.slice(-500) : '',
+        errors: request.errors || [],
+        source: request.source || 'rest',
+        hatIds: request.hatIds || []
       });
     }
 
@@ -680,7 +738,9 @@ class ClaudeProxy {
         workingDirectory: body.workingDirectory || process.cwd(),
         hatIds: body.hatIds || [],
         createdAt: Date.now(),
-        lastActivity: Date.now()
+        lastActivity: Date.now(),
+        // Maestro orchestration fields (optional)
+        maestro: body.maestro || null
       };
 
       this.chatApiTabs.set(tabId, tab);
@@ -719,7 +779,14 @@ class ClaudeProxy {
         workingDirectory: tab.workingDirectory,
         hatIds: tab.hatIds,
         createdAt: new Date(tab.createdAt).toISOString(),
-        lastActivity: new Date(tab.lastActivity).toISOString()
+        lastActivity: new Date(tab.lastActivity).toISOString(),
+        // Maestro info
+        maestro: tab.maestro ? {
+          parentTabId: tab.maestro.parentTabId,
+          status: tab.maestro.status,
+          depth: tab.maestro.depth,
+          childCount: tab.maestro.childTabIds?.length || 0
+        } : null
       });
     }
 
@@ -748,7 +815,8 @@ class ClaudeProxy {
       workingDirectory: tab.workingDirectory,
       hatIds: tab.hatIds,
       createdAt: new Date(tab.createdAt).toISOString(),
-      lastActivity: new Date(tab.lastActivity).toISOString()
+      lastActivity: new Date(tab.lastActivity).toISOString(),
+      maestro: tab.maestro || null
     }));
   }
 
@@ -796,7 +864,8 @@ class ClaudeProxy {
           totalInputTokens: body.totalInputTokens || 0,
           totalOutputTokens: body.totalOutputTokens || 0,
           createdAt: Date.now(),
-          lastActivity: Date.now()
+          lastActivity: Date.now(),
+          maestro: body.maestro || null
         };
       }
 
@@ -808,6 +877,8 @@ class ClaudeProxy {
       if (body.totalCost !== undefined) tab.totalCost = body.totalCost;
       if (body.totalInputTokens !== undefined) tab.totalInputTokens = body.totalInputTokens;
       if (body.totalOutputTokens !== undefined) tab.totalOutputTokens = body.totalOutputTokens;
+      // Maestro fields
+      if (body.maestro !== undefined) tab.maestro = body.maestro;
 
       // Update messages if provided (replace entire array)
       if (body.messages !== undefined) {
@@ -838,6 +909,112 @@ class ClaudeProxy {
 
     } catch (error) {
       console.error('[PROXY] [API] Tab update error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // ========== Maestro Log Handler Methods ==========
+
+  // POST /api/maestro-log - Save Maestro orchestration log
+  async handleMaestroLogSave(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+      const { sessionId, entries } = body;
+
+      if (!sessionId || !entries) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'sessionId and entries are required' }));
+        return;
+      }
+
+      // Ensure maestro-logs directory exists
+      const logsDir = path.join(__dirname, 'maestro-logs');
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
+
+      // Save log file
+      const logPath = path.join(logsDir, `${sessionId}.json`);
+      const logData = {
+        sessionId,
+        savedAt: new Date().toISOString(),
+        entries
+      };
+
+      fs.writeFileSync(logPath, JSON.stringify(logData, null, 2));
+      console.log(`[PROXY] [MAESTRO] Log saved: ${sessionId} (${entries.length} entries)`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        sessionId,
+        entryCount: entries.length,
+        path: logPath
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Log save error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/maestro-log/:sessionId - Read a specific log
+  handleMaestroLogRead(req, res, sessionId) {
+    try {
+      const logPath = path.join(__dirname, 'maestro-logs', `${sessionId}.json`);
+
+      if (!fs.existsSync(logPath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Log not found', sessionId }));
+        return;
+      }
+
+      const logData = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(logData));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Log read error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/maestro-logs - List all logs
+  handleMaestroLogList(req, res) {
+    try {
+      const logsDir = path.join(__dirname, 'maestro-logs');
+      const logs = [];
+
+      if (fs.existsSync(logsDir)) {
+        const files = fs.readdirSync(logsDir)
+          .filter(f => f.endsWith('.json'))
+          .map(f => {
+            const filePath = path.join(logsDir, f);
+            const stats = fs.statSync(filePath);
+            const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+            return {
+              sessionId: data.sessionId,
+              entryCount: data.entries?.length || 0,
+              savedAt: data.savedAt,
+              fileSize: stats.size,
+              modified: stats.mtime.toISOString()
+            };
+          })
+          .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+
+        logs.push(...files);
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ logs }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Log list error:', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
@@ -1041,6 +1218,911 @@ class ClaudeProxy {
     }
   }
 
+  // ========== REST API: Maestro Orchestration Handler Methods ==========
+
+  // Track active Maestro orchestrations
+  // Note: this.maestroOrchestrations is initialized in constructor
+
+  // POST /api/maestro/execute - Start a new Maestro orchestration
+  async handleMaestroExecute(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      if (!body.message) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'message is required' }));
+        return;
+      }
+
+      // Generate root tab ID
+      const rootTabId = `maestro-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // Create root tab with Maestro metadata
+      const tab = {
+        name: body.name || `Maestro: ${body.message.slice(0, 40)}...`,
+        messages: [],
+        workingDirectory: body.workingDirectory || process.cwd(),
+        hatIds: [body.hatId || 'product-maestro'],
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        maestro: {
+          parentTabId: null,
+          childTabIds: [],
+          status: 'active',
+          depth: 0,
+          originalRequest: body.message,
+          pendingChildren: 0,
+          childResults: {},
+          maxParallel: body.maxParallelAgents || 3
+        }
+      };
+
+      this.chatApiTabs.set(rootTabId, tab);
+      this.saveApiTabs();
+
+      // Broadcast tab creation
+      this.broadcastTabUpdate(rootTabId, 'tab-created');
+
+      console.log(`[PROXY] [MAESTRO] Orchestration started: ${rootTabId}`);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        rootTabId,
+        status: 'started',
+        message: 'Maestro orchestration started',
+        tab: {
+          name: tab.name,
+          workingDirectory: tab.workingDirectory,
+          hatIds: tab.hatIds,
+          maestro: tab.maestro
+        }
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Execute error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // GET /api/maestro/status/:rootTabId - Get orchestration tree status
+  handleMaestroStatus(req, res, rootTabId) {
+    try {
+      const rootTab = this.chatApiTabs.get(rootTabId);
+
+      if (!rootTab) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Orchestration not found', rootTabId }));
+        return;
+      }
+
+      // Build tree of all related tabs
+      const tree = this.buildMaestroTree(rootTabId);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        rootTabId,
+        status: rootTab.maestro?.status || 'unknown',
+        tree
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Status error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // Build a tree structure of Maestro tabs
+  buildMaestroTree(tabId, visited = new Set()) {
+    if (visited.has(tabId)) return null;
+    visited.add(tabId);
+
+    const tab = this.chatApiTabs.get(tabId);
+    if (!tab) return null;
+
+    const node = {
+      tabId,
+      name: tab.name,
+      status: tab.maestro?.status || 'unknown',
+      depth: tab.maestro?.depth || 0,
+      childCount: tab.maestro?.childTabIds?.length || 0,
+      pendingChildren: tab.maestro?.pendingChildren || 0,
+      completedResults: Object.keys(tab.maestro?.childResults || {}).length,
+      children: []
+    };
+
+    // Recursively build children
+    if (tab.maestro?.childTabIds) {
+      for (const childId of tab.maestro.childTabIds) {
+        const childNode = this.buildMaestroTree(childId, visited);
+        if (childNode) {
+          node.children.push(childNode);
+        }
+      }
+    }
+
+    return node;
+  }
+
+  // POST /api/maestro/result/:tabId - Report child result to parent
+  async handleMaestroResult(req, res, tabId) {
+    try {
+      const body = await this.parseJsonBody(req);
+      const tab = this.chatApiTabs.get(tabId);
+
+      if (!tab) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Tab not found', tabId }));
+        return;
+      }
+
+      if (!tab.maestro) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Tab is not a Maestro tab', tabId }));
+        return;
+      }
+
+      // Store child result
+      const childTabId = body.childTabId;
+      tab.maestro.childResults[childTabId] = {
+        status: body.status || 'success',
+        result: body.result,
+        receivedAt: Date.now()
+      };
+
+      // Decrement pending count
+      if (tab.maestro.pendingChildren > 0) {
+        tab.maestro.pendingChildren--;
+      }
+
+      this.saveApiTabs();
+
+      // Broadcast update
+      this.broadcastTabUpdate(tabId, 'maestro-result-received', {
+        childTabId,
+        status: body.status,
+        pendingChildren: tab.maestro.pendingChildren
+      });
+
+      console.log(`[PROXY] [MAESTRO] Result received for ${tabId} from child ${childTabId}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        message: 'Result recorded',
+        tabId,
+        childTabId,
+        pendingChildren: tab.maestro.pendingChildren
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Result error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // POST /api/maestro/abort/:rootTabId - Abort entire orchestration tree
+  async handleMaestroAbort(req, res, rootTabId) {
+    try {
+      const rootTab = this.chatApiTabs.get(rootTabId);
+
+      if (!rootTab) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Orchestration not found', rootTabId }));
+        return;
+      }
+
+      // Recursively abort all tabs in the tree
+      const abortedTabs = this.abortMaestroTree(rootTabId);
+
+      console.log(`[PROXY] [MAESTRO] Aborted orchestration ${rootTabId} (${abortedTabs.length} tabs)`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        message: 'Orchestration aborted',
+        rootTabId,
+        abortedTabs
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Abort error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // Recursively abort all tabs in a Maestro tree
+  abortMaestroTree(tabId, aborted = []) {
+    const tab = this.chatApiTabs.get(tabId);
+    if (!tab) return aborted;
+
+    // Mark as aborted
+    if (tab.maestro) {
+      tab.maestro.status = 'aborted';
+    }
+    aborted.push(tabId);
+
+    // Abort children
+    if (tab.maestro?.childTabIds) {
+      for (const childId of tab.maestro.childTabIds) {
+        this.abortMaestroTree(childId, aborted);
+      }
+    }
+
+    // Kill any running processes for this tab
+    if (this.claudeChatProcesses.has(tabId)) {
+      const process = this.claudeChatProcesses.get(tabId);
+      try {
+        process.kill('SIGTERM');
+      } catch (e) {
+        console.warn(`[PROXY] [MAESTRO] Failed to kill process for ${tabId}:`, e.message);
+      }
+      this.claudeChatProcesses.delete(tabId);
+    }
+
+    this.saveApiTabs();
+    return aborted;
+  }
+
+  // ========== WebSocket Maestro Handlers ==========
+
+  // WebSocket version of Maestro execute
+  async handleMaestroExecuteWs(message, ws) {
+    try {
+      if (!message.message) {
+        ws.send(JSON.stringify({ type: 'maestro-error', error: 'message is required' }));
+        return;
+      }
+
+      // Generate root tab ID
+      const rootTabId = `maestro-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const workingDir = message.workingDir || this.workingDirectory.get(ws) || process.cwd();
+
+      // Create root tab with Maestro metadata
+      const tab = {
+        name: `Maestro: ${message.message.slice(0, 40)}...`,
+        messages: [],
+        workingDirectory: workingDir,
+        hatIds: ['product-maestro'],
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        maestro: {
+          parentTabId: null,
+          childTabIds: [],
+          status: 'active',
+          depth: 0,
+          originalRequest: message.message,
+          pendingChildren: 0,
+          childResults: {},
+          maxParallel: 3
+        }
+      };
+
+      this.chatApiTabs.set(rootTabId, tab);
+      this.saveApiTabs();
+
+      // Store WebSocket for this orchestration
+      if (!this.maestroClients) {
+        this.maestroClients = new Map();
+      }
+      this.maestroClients.set(rootTabId, ws);
+
+      // Send start notification
+      ws.send(JSON.stringify({
+        type: 'maestro-started',
+        rootTabId,
+        requestId: rootTabId
+      }));
+
+      console.log(`[PROXY] [MAESTRO-WS] Orchestration started: ${rootTabId}`);
+
+      // Execute the orchestration asynchronously
+      this.executeMaestroOrchestration(rootTabId, message.message, ws);
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO-WS] Execute error:', error);
+      ws.send(JSON.stringify({ type: 'maestro-error', error: error.message }));
+    }
+  }
+
+  // Execute the Maestro orchestration
+  async executeMaestroOrchestration(rootTabId, userMessage, ws) {
+    const tab = this.chatApiTabs.get(rootTabId);
+    if (!tab) {
+      console.log(`[PROXY] [MAESTRO] Tab not found: ${rootTabId}`);
+      return;
+    }
+
+    // Helper to safely send WebSocket messages
+    const safeSend = (data) => {
+      try {
+        if (ws && ws.readyState === 1) { // WebSocket.OPEN
+          ws.send(JSON.stringify(data));
+          console.log(`[PROXY] [MAESTRO] Sent: ${data.type}`);
+        } else {
+          console.log(`[PROXY] [MAESTRO] WebSocket not ready, skipping: ${data.type}`);
+        }
+      } catch (err) {
+        console.log(`[PROXY] [MAESTRO] WebSocket send error: ${err.message}`);
+      }
+    };
+
+    // Helper to save message to tab
+    const saveMessage = (tabId, type, content) => {
+      const targetTab = this.chatApiTabs.get(tabId);
+      if (targetTab) {
+        targetTab.messages.push({
+          type,
+          content,
+          timestamp: Date.now()
+        });
+        targetTab.lastActivity = Date.now();
+        this.saveApiTabs();
+        console.log(`[PROXY] [MAESTRO] Saved ${type} message to ${tabId}`);
+      }
+    };
+
+    try {
+      console.log(`[PROXY] [MAESTRO] Starting orchestration for: ${userMessage.substring(0, 50)}...`);
+
+      // Save the user's request to the tab
+      saveMessage(rootTabId, 'user', userMessage);
+      safeSend({ type: 'maestro-started', tabId: rootTabId, message: userMessage });
+
+      // Build the Product Maestro prompt
+      const hatContext = this.buildMultiHatContext(['product-maestro']);
+      const fullPrompt = `${hatContext}
+
+User request: ${userMessage}
+
+Evaluate this request using the ABUDDI complexity scoring system:
+
+COMPLEXITY_EVALUATION:
+- Atomic scope: X/10 (how many files/components need to be created or modified?)
+  - 1-2 files = 1-3, 3-5 files = 4-6, 6+ files = 7-10
+- Breadth: X/10 (how many different domains/expertise areas?)
+  - Single domain = 1-3, 2-3 domains = 4-6, 4+ domains = 7-10
+- Uncertainty: X/10 (how many unknowns or decisions to make?)
+  - Clear requirements = 1-3, some ambiguity = 4-6, major unknowns = 7-10
+- Dependencies: X/10 (external systems, APIs, integrations?)
+  - None/simple = 1-3, 1-2 external = 4-6, complex integration = 7-10
+- Depth: X/10 (architectural layers involved?)
+  - Single layer = 1-3, 2-3 layers = 4-6, full stack = 7-10
+- Impact: X/10 (blast radius - what could break?)
+  - Isolated new code = 1-3, touches existing = 4-6, core changes = 7-10
+- TOTAL: X/60
+
+THRESHOLD GUIDANCE:
+- 1-15: IMPLEMENT directly - truly atomic (fix a bug, add one function, simple script)
+- 16-30: DELEGATE to one Feature Owner - moderate scope (single feature, one service)
+- 31-45: DELEGATE to multiple Feature Owners - significant scope (multiple features, subsystems)
+- 46-60: ESCALATE - needs product-level planning first
+
+Be REALISTIC about scores. "Build a server" with multiple endpoints, external API integration, caching, error handling, and documentation is NOT a 19/60. That's 30-40/60 minimum.
+
+MAESTRO_DECISION: IMPLEMENT | DELEGATE | ESCALATE
+
+If DELEGATE, decompose into Feature Owner scopes:
+DECOMPOSITION:
+[SUBTASK]
+{
+  "name": "Subtask name",
+  "hat": "feature-owner",
+  "context": "What this Feature Owner should deliver (self-contained feature scope)"
+}
+[/SUBTASK]
+...more subtasks...
+
+Feature Owners will recursively decompose their scope into Sub-IC tasks if needed.
+
+If IMPLEMENT (score <= 15), provide your implementation directly.
+If ESCALATE, explain what product-level decisions are needed first.`;
+
+      // Execute with Claude
+      console.log(`[PROXY] [MAESTRO] Executing Product Maestro agent...`);
+      safeSend({ type: 'maestro-progress', tabId: rootTabId, stage: 'evaluating', message: 'Analyzing complexity...' });
+
+      const result = await this.executeMaestroAgent(rootTabId, fullPrompt, tab.workingDirectory);
+      console.log(`[PROXY] [MAESTRO] Agent result length: ${result?.length || 0}`);
+
+      // Parse the result for MAESTRO_DECISION
+      const decision = this.parseMaestroDecision(result);
+      console.log(`[PROXY] [MAESTRO] Decision: ${decision.type}, Complexity total: ${decision.complexity.total}`);
+
+      // Save the evaluation to messages
+      saveMessage(rootTabId, 'assistant', `## ABUDDI Complexity Evaluation\n\n- Atomic: ${decision.complexity.atomic}/10\n- Breadth: ${decision.complexity.breadth}/10\n- Uncertainty: ${decision.complexity.uncertainty}/10\n- Dependencies: ${decision.complexity.dependencies}/10\n- Depth: ${decision.complexity.depth}/10\n- Impact: ${decision.complexity.impact}/10\n- **Total: ${decision.complexity.total}/60**\n\n**Decision: ${decision.type}**`);
+
+      // Send evaluation to client
+      safeSend({
+        type: 'maestro-evaluation',
+        tabId: rootTabId,
+        complexity: decision.complexity,
+        decision: decision.type
+      });
+
+      if (decision.type === 'IMPLEMENT') {
+        // Simple task - return result directly
+        console.log(`[PROXY] [MAESTRO] Implementing directly (atomic task)`);
+
+        // Save the implementation result
+        saveMessage(rootTabId, 'assistant', decision.implementation || result);
+
+        tab.maestro.status = 'complete';
+        this.saveApiTabs();
+
+        safeSend({
+          type: 'maestro-complete',
+          rootTabId,
+          result: decision.implementation || result
+        });
+
+      } else if (decision.type === 'DELEGATE') {
+        // Complex task - create child tabs and delegate
+        const subtasks = decision.subtasks || [];
+        console.log(`[PROXY] [MAESTRO] Delegating to ${subtasks.length} subtasks`);
+
+        if (subtasks.length === 0) {
+          // No subtasks parsed, treat as implementation
+          console.log(`[PROXY] [MAESTRO] No subtasks parsed, treating as implementation`);
+          saveMessage(rootTabId, 'assistant', result);
+
+          tab.maestro.status = 'complete';
+          this.saveApiTabs();
+
+          safeSend({
+            type: 'maestro-complete',
+            rootTabId,
+            result: result
+          });
+          return;
+        }
+
+        // Save delegation info to messages
+        const subtaskList = subtasks.map((s, i) => `${i + 1}. **${s.name}** (${s.hat || 'sub-ic'})`).join('\n');
+        saveMessage(rootTabId, 'assistant', `## Delegating to ${subtasks.length} sub-agents\n\n${subtaskList}`);
+
+        tab.maestro.pendingChildren = subtasks.length;
+        this.saveApiTabs();
+
+        // Process in chunks of maxParallel
+        const maxParallel = tab.maestro.maxParallel || 3;
+        const results = [];
+
+        for (let i = 0; i < subtasks.length; i += maxParallel) {
+          const chunk = subtasks.slice(i, i + maxParallel);
+
+          // Create child tabs and execute in parallel
+          const chunkPromises = chunk.map(async (subtask, idx) => {
+            const childTabId = `${rootTabId}-child-${i + idx}`;
+
+            // Create child tab
+            const childTab = {
+              name: subtask.name,
+              messages: [],
+              workingDirectory: tab.workingDirectory,
+              hatIds: [subtask.hat || 'sub-ic'],
+              createdAt: Date.now(),
+              lastActivity: Date.now(),
+              maestro: {
+                parentTabId: rootTabId,
+                childTabIds: [],
+                status: 'active',
+                depth: (tab.maestro.depth || 0) + 1,
+                originalRequest: subtask.context,
+                pendingChildren: 0,
+                childResults: {}
+              }
+            };
+
+            this.chatApiTabs.set(childTabId, childTab);
+            tab.maestro.childTabIds.push(childTabId);
+            this.saveApiTabs();
+
+            // Notify client of delegation
+            safeSend({
+              type: 'maestro-delegation',
+              parentTabId: rootTabId,
+              childTab: {
+                id: childTabId,
+                name: subtask.name,
+                hat: subtask.hat || 'sub-ic',
+                context: subtask.context
+              }
+            });
+
+            // Notify agent started
+            safeSend({
+              type: 'maestro-agent-started',
+              tabId: childTabId
+            });
+            console.log(`[PROXY] [MAESTRO] Started child agent: ${childTabId}`);
+
+            try {
+              // Execute subtask
+              const childResult = await this.executeMaestroAgent(
+                childTabId,
+                `${this.buildMultiHatContext([subtask.hat || 'sub-ic'])}\n\nTask: ${subtask.context}`,
+                tab.workingDirectory
+              );
+
+              // Mark child complete
+              console.log(`[PROXY] [MAESTRO] Child agent complete: ${childTabId}, result length: ${childResult?.length || 0}`);
+              childTab.maestro.status = 'complete';
+
+              // Save the result to child tab messages
+              saveMessage(childTabId, 'user', subtask.context);
+              saveMessage(childTabId, 'assistant', childResult);
+
+              safeSend({
+                type: 'maestro-agent-complete',
+                tabId: childTabId,
+                result: childResult.substring(0, 500) + (childResult.length > 500 ? '...' : '')
+              });
+
+              // Report result to parent
+              tab.maestro.childResults[childTabId] = {
+                status: 'success',
+                result: childResult,
+                receivedAt: Date.now()
+              };
+              tab.maestro.pendingChildren--;
+              this.saveApiTabs();
+
+              return { tabId: childTabId, status: 'success', result: childResult };
+
+            } catch (childError) {
+              console.log(`[PROXY] [MAESTRO] Child agent failed: ${childTabId}, error: ${childError.message}`);
+              childTab.maestro.status = 'failed';
+
+              saveMessage(childTabId, 'user', subtask.context);
+              saveMessage(childTabId, 'assistant', `Error: ${childError.message}`);
+
+              safeSend({
+                type: 'maestro-agent-failed',
+                tabId: childTabId,
+                error: childError.message
+              });
+
+              tab.maestro.childResults[childTabId] = {
+                status: 'failed',
+                error: childError.message,
+                receivedAt: Date.now()
+              };
+              tab.maestro.pendingChildren--;
+              this.saveApiTabs();
+
+              return { tabId: childTabId, status: 'failed', error: childError.message };
+            }
+          });
+
+          const chunkResults = await Promise.all(chunkPromises);
+          results.push(...chunkResults);
+        }
+
+        // Synthesize results
+        console.log(`[PROXY] [MAESTRO] Synthesizing ${results.length} results...`);
+        safeSend({
+          type: 'maestro-synthesis',
+          tabId: rootTabId,
+          childCount: results.length
+        });
+
+        const synthesisPrompt = `${this.buildMultiHatContext(['synthesizer'])}
+
+You are synthesizing results from ${results.length} sub-agents.
+
+Original request: ${userMessage}
+
+Sub-agent results:
+${results.map((r, i) => `
+--- Agent ${i + 1} (${r.status}) ---
+${r.status === 'success' ? r.result : `ERROR: ${r.error}`}
+`).join('\n')}
+
+Provide a coherent, synthesized response that combines all successful results and notes any failures.`;
+
+        const synthesizedResult = await this.executeMaestroAgent(rootTabId, synthesisPrompt, tab.workingDirectory);
+        console.log(`[PROXY] [MAESTRO] Synthesis complete, result length: ${synthesizedResult?.length || 0}`);
+
+        // Save synthesis to messages
+        saveMessage(rootTabId, 'assistant', `## Synthesized Result\n\n${synthesizedResult}`);
+
+        tab.maestro.status = 'complete';
+        this.saveApiTabs();
+
+        safeSend({
+          type: 'maestro-complete',
+          rootTabId,
+          result: synthesizedResult
+        });
+
+      } else if (decision.type === 'ESCALATE') {
+        // Very complex - needs product-level planning first
+        console.log(`[PROXY] [MAESTRO] Escalating - too complex for direct execution`);
+
+        saveMessage(rootTabId, 'assistant', `## Escalation Required\n\nThis request scores ${decision.complexity.total}/60 and requires product-level planning before implementation.\n\n${result}`);
+
+        tab.maestro.status = 'escalated';
+        this.saveApiTabs();
+
+        safeSend({
+          type: 'maestro-escalated',
+          rootTabId,
+          complexity: decision.complexity,
+          message: 'Request requires product-level planning before implementation'
+        });
+      }
+
+      console.log(`[PROXY] [MAESTRO] Orchestration complete for: ${rootTabId}`);
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO] Orchestration error:', error);
+      tab.maestro.status = 'failed';
+      saveMessage(rootTabId, 'assistant', `## Error\n\n${error.message}`);
+      this.saveApiTabs();
+
+      safeSend({
+        type: 'maestro-error',
+        rootTabId,
+        error: error.message
+      });
+    }
+  }
+
+  // Execute a single Maestro agent using the existing Chat API
+  async executeMaestroAgent(tabId, prompt, workingDir) {
+    console.log(`[PROXY] [MAESTRO] Executing via Chat API for ${tabId} in ${workingDir}`);
+    console.log(`[PROXY] [MAESTRO] Prompt length: ${prompt.length} chars`);
+
+    // Get the tab to find its hatIds
+    const tab = this.chatApiTabs.get(tabId);
+    if (!tab) {
+      throw new Error(`Tab ${tabId} not found`);
+    }
+
+    // Send message using the existing Chat API infrastructure
+    // Instead of HTTP, call handleChatApiSend logic directly
+    const requestId = `maestro_${++this.chatApiRequestCounter}_${Date.now()}`;
+
+    // Get conversation history from tab
+    let history = [];
+    if (tab.messages && tab.messages.length > 0) {
+      const chatMessages = tab.messages.filter(m => {
+        const msgType = m.role || m.type;
+        return msgType === 'user' || msgType === 'assistant';
+      });
+
+      for (let i = 0; i < chatMessages.length - 1; i++) {
+        const userMsg = chatMessages[i];
+        const assistantMsg = chatMessages[i + 1];
+        const userType = userMsg.role || userMsg.type;
+        const assistantType = assistantMsg.role || assistantMsg.type;
+
+        if (userType === 'user' && assistantType === 'assistant') {
+          history.push({
+            user: userMsg.content,
+            assistant: assistantMsg.content
+          });
+          i++;
+        }
+      }
+    }
+
+    // Add user message to tab
+    const userMessage = {
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now()
+    };
+    tab.messages.push(userMessage);
+    tab.lastActivity = Date.now();
+    this.saveApiTabs();
+
+    // Broadcast user message to any connected UI clients
+    this.broadcastTabMessage(tabId, userMessage, true);
+    this.broadcastTabUpdate(tabId, 'tab-updated');
+
+    // Initialize request tracking
+    this.chatApiRequests.set(requestId, {
+      status: 'running',
+      response: null,
+      streamingText: '',
+      tools: [],
+      todos: [],
+      errors: [],
+      startTime: Date.now(),
+      tabId: tabId,
+      apiTab: tab,
+      message: prompt,
+      workingDirectory: workingDir,
+      hatIds: tab.hatIds || [],
+      history: history,
+      pipelineId: null
+    });
+
+    console.log(`[PROXY] [MAESTRO] Created chat request ${requestId} for tab ${tabId}`);
+
+    // Execute the chat request (this uses the same infrastructure as /api/chat/send)
+    const body = {
+      message: prompt,
+      tabId: tabId,
+      workingDirectory: workingDir,
+      hatIds: tab.hatIds || [],
+      history: history
+    };
+    this.executeChatApiRequest(requestId, body);
+
+    // Wait for the response
+    return new Promise((resolve, reject) => {
+      const timeoutMs = 600000; // 10 minute timeout for agent work
+      const pollInterval = 500;
+      const startWait = Date.now();
+
+      const checkResponse = () => {
+        const req = this.chatApiRequests.get(requestId);
+
+        if (!req) {
+          reject(new Error('Request disappeared'));
+          return;
+        }
+
+        if (req.status === 'completed') {
+          console.log(`[PROXY] [MAESTRO] Request ${requestId} completed, response length: ${req.response?.length || 0}`);
+          resolve(req.response || '');
+          return;
+        }
+
+        if (req.status === 'error') {
+          reject(new Error(req.errors.join(', ') || 'Request failed'));
+          return;
+        }
+
+        if (req.status === 'aborted') {
+          reject(new Error('Request was aborted'));
+          return;
+        }
+
+        if (Date.now() - startWait > timeoutMs) {
+          reject(new Error('Request timed out'));
+          return;
+        }
+
+        // Keep polling
+        setTimeout(checkResponse, pollInterval);
+      };
+
+      checkResponse();
+    });
+  }
+
+  // Parse Maestro decision from Claude response
+  parseMaestroDecision(response) {
+    const result = {
+      type: 'IMPLEMENT',
+      complexity: {
+        atomic: 0, breadth: 0, uncertainty: 0,
+        dependencies: 0, depth: 0, impact: 0, total: 0
+      },
+      subtasks: [],
+      implementation: response
+    };
+
+    // Parse complexity scores
+    const complexityMatch = response.match(/COMPLEXITY_EVALUATION:([\s\S]*?)(?=MAESTRO_DECISION|$)/i);
+    if (complexityMatch) {
+      const scores = complexityMatch[1];
+      const parseScore = (name) => {
+        const match = scores.match(new RegExp(`${name}[^:]*:\\s*(\\d+)`, 'i'));
+        return match ? parseInt(match[1]) : 0;
+      };
+      result.complexity = {
+        atomic: parseScore('Atomic'),
+        breadth: parseScore('Breadth'),
+        uncertainty: parseScore('Uncertainty'),
+        dependencies: parseScore('Dependencies'),
+        depth: parseScore('Depth'),
+        impact: parseScore('Impact'),
+        total: 0
+      };
+      result.complexity.total = Object.values(result.complexity).reduce((a, b) => a + b, 0);
+    }
+
+    // Parse decision
+    const decisionMatch = response.match(/MAESTRO_DECISION:\s*(IMPLEMENT|DELEGATE|ESCALATE)/i);
+    if (decisionMatch) {
+      result.type = decisionMatch[1].toUpperCase();
+    }
+
+    // Parse subtasks if DELEGATE
+    if (result.type === 'DELEGATE') {
+      const subtaskMatches = response.matchAll(/\[SUBTASK\]\s*\{([\s\S]*?)\}\s*\[\/SUBTASK\]/gi);
+      for (const match of subtaskMatches) {
+        try {
+          const subtask = JSON.parse(`{${match[1]}}`);
+          result.subtasks.push(subtask);
+        } catch (e) {
+          // Try to extract fields manually
+          const nameMatch = match[1].match(/"name"\s*:\s*"([^"]+)"/);
+          const hatMatch = match[1].match(/"hat"\s*:\s*"([^"]+)"/);
+          const contextMatch = match[1].match(/"context"\s*:\s*"([^"]+)"/);
+          if (nameMatch) {
+            result.subtasks.push({
+              name: nameMatch[1],
+              hat: hatMatch ? hatMatch[1] : 'sub-ic',
+              context: contextMatch ? contextMatch[1] : nameMatch[1]
+            });
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  // WebSocket version of Maestro abort
+  async handleMaestroAbortWs(message, ws) {
+    try {
+      const rootTabId = message.rootTabId;
+      const rootTab = this.chatApiTabs.get(rootTabId);
+
+      if (!rootTab) {
+        ws.send(JSON.stringify({
+          type: 'maestro-error',
+          error: 'Orchestration not found',
+          rootTabId
+        }));
+        return;
+      }
+
+      const abortedTabs = this.abortMaestroTree(rootTabId);
+
+      console.log(`[PROXY] [MAESTRO-WS] Aborted ${rootTabId} (${abortedTabs.length} tabs)`);
+
+      ws.send(JSON.stringify({
+        type: 'maestro-aborted',
+        rootTabId,
+        abortedTabs
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO-WS] Abort error:', error);
+      ws.send(JSON.stringify({ type: 'maestro-error', error: error.message }));
+    }
+  }
+
+  // WebSocket version of Maestro status
+  async handleMaestroStatusWs(message, ws) {
+    try {
+      const rootTabId = message.rootTabId;
+      const rootTab = this.chatApiTabs.get(rootTabId);
+
+      if (!rootTab) {
+        ws.send(JSON.stringify({
+          type: 'maestro-error',
+          error: 'Orchestration not found',
+          rootTabId
+        }));
+        return;
+      }
+
+      const tree = this.buildMaestroTree(rootTabId);
+
+      ws.send(JSON.stringify({
+        type: 'maestro-status',
+        rootTabId,
+        status: rootTab.maestro?.status || 'unknown',
+        tree
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [MAESTRO-WS] Status error:', error);
+      ws.send(JSON.stringify({ type: 'maestro-error', error: error.message }));
+    }
+  }
+
+  // ========== End WebSocket Maestro Handlers ==========
+
   // Execute a chat request via REST API
   async executeChatApiRequest(requestId, body) {
     const request = this.chatApiRequests.get(requestId);
@@ -1065,7 +2147,14 @@ class ClaudeProxy {
         contextMessages = `\n\nPrevious conversation:\n${contextMessages}\n\n---\n\nCurrent request: `;
       }
 
-      const fullMessage = hatContext + contextMessages + body.message;
+      // If a systemPrompt was provided in the request body, prepend it
+      let systemPromptPrefix = '';
+      if (body.systemPrompt) {
+        systemPromptPrefix = `<agent-system-prompt>\n${body.systemPrompt}\n</agent-system-prompt>\n\n`;
+        console.log(`[PROXY] [API] Using custom system prompt (${body.systemPrompt.length} chars) for request ${requestId}`);
+      }
+
+      const fullMessage = systemPromptPrefix + hatContext + contextMessages + body.message;
 
       // Spawn Claude with streaming
       const { ANTHROPIC_API_KEY: _apiKey, ...cleanEnv } = process.env;
@@ -3318,9 +4407,34 @@ Generate the complete pipeline system now:`;
           env: { ...cleanEnv, PWD: workingDir }
         });
 
-        // Track the process so we can abort it
-        this.claudeChatProcesses.set(conversationId, claude);
-        console.log(`[PROXY] [ABORT] Registered Claude process with conversationId: ${conversationId}`);
+        // Generate a unique requestId for dashboard visualization
+        const requestId = `chat_ws_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Track the process so we can abort it (store requestId alongside for cleanup)
+        this.claudeChatProcesses.set(conversationId, { process: claude, requestId: requestId });
+        console.log(`[PROXY] [ABORT] Registered Claude process with conversationId: ${conversationId}, requestId: ${requestId}`);
+
+        // Track in chatApiRequests for dashboard visualization
+        const requestTracker = {
+          status: 'running',
+          response: null,
+          streamingText: '',
+          tools: [],
+          todos: [],
+          errors: [],
+          startTime: Date.now(),
+          tabId: tabId,
+          apiTab: apiTab,
+          message: message.message,
+          workingDirectory: workingDir,
+          hatIds: hatIds,
+          history: history,
+          pipelineId: null,
+          conversationId: conversationId,  // For abort lookup
+          source: 'websocket'  // Mark as WebSocket-originated for dashboard differentiation
+        };
+        this.chatApiRequests.set(requestId, requestTracker);
+        console.log(`[PROXY] [CHAT-VIZ] Tracking WebSocket request: ${requestId} for tab ${tabId}`);
 
         let lineBuffer = '';
         let streamingText = '';
@@ -3336,6 +4450,35 @@ Generate the complete pipeline system now:`;
               tabId: tabId, // Include tabId so client routes to correct tab
               content: { eventType, ...data }
             }));
+          }
+
+          // Also update chatApiRequests for dashboard visualization
+          const req = this.chatApiRequests.get(requestId);
+          if (req) {
+            if (eventType === 'tool_start' && data.tool) {
+              req.tools.push({
+                name: data.tool,
+                status: 'running',
+                startTime: Date.now()
+              });
+            } else if (eventType === 'tool_result') {
+              // Mark the most recent running tool as completed
+              const runningTool = req.tools.slice().reverse().find(t => t.status === 'running');
+              if (runningTool) {
+                runningTool.status = 'completed';
+                runningTool.duration = Date.now() - runningTool.startTime;
+              }
+            } else if (eventType === 'file_operation' && data.file) {
+              // Also track file in the tool entry
+              const lastTool = req.tools[req.tools.length - 1];
+              if (lastTool) {
+                lastTool.file = data.file;
+              }
+            } else if (eventType === 'todo_update' && data.todos) {
+              req.todos = data.todos;
+            } else if (eventType === 'text_delta') {
+              req.streamingText = streamingText;
+            }
           }
         };
 
@@ -3506,6 +4649,20 @@ Generate the complete pipeline system now:`;
           // Remove from tracking
           this.claudeChatProcesses.delete(conversationId);
 
+          // Update chatApiRequests with final status
+          const req = this.chatApiRequests.get(requestId);
+          if (req) {
+            req.status = code === 0 ? 'completed' : 'error';
+            req.response = streamingText.trim();
+            req.streamingText = streamingText;
+            if (code !== 0) {
+              req.errors.push(`Process exited with code ${code}`);
+            }
+            // Schedule cleanup after 5 minutes
+            setTimeout(() => this.chatApiRequests.delete(requestId), 300000);
+            console.log(`[PROXY] [CHAT-VIZ] Request ${requestId} ${req.status} (code ${code})`);
+          }
+
           // Broadcast completion
           broadcastEvent('complete', {
             duration: Date.now() - parseInt(conversationId.split('_')[1]) || 0,
@@ -3554,6 +4711,17 @@ Generate the complete pipeline system now:`;
         claude.on('error', (error) => {
           console.error('[PROXY] Claude Chat spawn error:', error);
           this.claudeChatProcesses.delete(conversationId);
+
+          // Update chatApiRequests with error status
+          const req = this.chatApiRequests.get(requestId);
+          if (req) {
+            req.status = 'error';
+            req.errors.push(`Spawn error: ${error.message}`);
+            // Schedule cleanup after 5 minutes
+            setTimeout(() => this.chatApiRequests.delete(requestId), 300000);
+            console.log(`[PROXY] [CHAT-VIZ] Request ${requestId} error: ${error.message}`);
+          }
+
           ws.send(JSON.stringify({
             type: 'error',
             tabId: tabId,
@@ -3579,12 +4747,26 @@ Generate the complete pipeline system now:`;
       const tabId = message.tabId;
       console.log(`[PROXY] [ABORT] Abort requested for conversationId: ${conversationId}, tabId: ${tabId}`);
       console.log(`[PROXY] [ABORT] Active processes: ${Array.from(this.claudeChatProcesses.keys()).join(', ') || 'none'}`);
-      const claude = this.claudeChatProcesses.get(conversationId);
+      const tracked = this.claudeChatProcesses.get(conversationId);
 
-      if (claude) {
+      if (tracked) {
+        const claude = tracked.process || tracked;  // Handle both old and new format
+        const requestId = tracked.requestId;
         console.log(`[PROXY] [ABORT] Found process, killing with SIGTERM...`);
         claude.kill('SIGTERM');
         this.claudeChatProcesses.delete(conversationId);
+
+        // Update chatApiRequests status if tracked
+        if (requestId) {
+          const req = this.chatApiRequests.get(requestId);
+          if (req) {
+            req.status = 'aborted';
+            // Schedule cleanup after 5 minutes
+            setTimeout(() => this.chatApiRequests.delete(requestId), 300000);
+            console.log(`[PROXY] [CHAT-VIZ] Request ${requestId} aborted`);
+          }
+        }
+
         ws.send(JSON.stringify({
           type: 'claude-aborted',
           tabId: tabId,
@@ -3601,6 +4783,33 @@ Generate the complete pipeline system now:`;
           warning: 'No active process found'
         }));
       }
+
+    } else if (message.type === 'maestro-init') {
+      // Initialize Maestro orchestration client
+      console.log(`[PROXY] Maestro client initialized`);
+      this.clientTypes.set(ws, 'maestro');
+      if (message.workingDir) {
+        this.workingDirectory.set(ws, message.workingDir);
+      }
+      ws.send(JSON.stringify({
+        type: 'maestro-ready',
+        message: 'Maestro orchestration ready'
+      }));
+
+    } else if (message.type === 'maestro-execute') {
+      // Execute Maestro orchestration via WebSocket
+      console.log(`[PROXY] Maestro execute request: ${message.message.substring(0, 100)}...`);
+      await this.handleMaestroExecuteWs(message, ws);
+
+    } else if (message.type === 'maestro-abort') {
+      // Abort running orchestration via WebSocket
+      console.log(`[PROXY] Maestro abort request for: ${message.rootTabId}`);
+      await this.handleMaestroAbortWs(message, ws);
+
+    } else if (message.type === 'maestro-status') {
+      // Get orchestration status via WebSocket
+      console.log(`[PROXY] Maestro status request for: ${message.rootTabId}`);
+      await this.handleMaestroStatusWs(message, ws);
 
     } // DISABLED: Dragon-vision system disabled
     // else if (message.type === 'dragon-command') {

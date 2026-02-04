@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound Waves - Chat API Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(180deg, #0a0a15 0%, #15101f 100%);
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .overlay {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            background: rgba(15, 10, 25, 0.9);
+            padding: 15px 25px;
+            border-radius: 30px;
+            border: 1px solid rgba(150, 100, 255, 0.3);
+            backdrop-filter: blur(10px);
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .meter {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .meter-label {
+            font-size: 0.7rem;
+            color: #8866aa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .meter-value {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #cc88ff;
+        }
+
+        .meter-bar {
+            width: 60px;
+            height: 4px;
+            background: rgba(100, 50, 150, 0.3);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .meter-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #8844ff, #ff44aa);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .channel-labels {
+            position: fixed;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 60px;
+        }
+
+        .channel-label {
+            font-size: 0.75rem;
+            color: #6644aa;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            letter-spacing: 2px;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: rgba(20, 15, 35, 0.95);
+            border: 1px solid rgba(150, 100, 255, 0.4);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.85rem;
+            pointer-events: none;
+            z-index: 200;
+            max-width: 280px;
+            display: none;
+        }
+
+        .tooltip h4 {
+            color: #cc88ff;
+            margin-bottom: 8px;
+        }
+
+        .now-playing {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 10, 25, 0.9);
+            padding: 12px 25px;
+            border-radius: 20px;
+            border: 1px solid rgba(150, 100, 255, 0.2);
+            font-size: 0.85rem;
+            color: #aa88cc;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .now-playing .indicator {
+            width: 8px;
+            height: 8px;
+            background: #ff4488;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="now-playing">
+        <div class="indicator"></div>
+        <span id="nowPlaying">Waiting for signals...</span>
+    </div>
+
+    <div class="channel-labels" id="channelLabels"></div>
+
+    <div class="overlay">
+        <div class="meter">
+            <div class="meter-value" id="requestCount">0</div>
+            <div class="meter-bar"><div class="meter-fill" id="requestFill" style="width: 0%"></div></div>
+            <div class="meter-label">Requests</div>
+        </div>
+        <div class="meter">
+            <div class="meter-value" id="toolCount">0</div>
+            <div class="meter-bar"><div class="meter-fill" id="toolFill" style="width: 0%"></div></div>
+            <div class="meter-label">Tools</div>
+        </div>
+        <div class="meter">
+            <div class="meter-value" id="frequency">0</div>
+            <div class="meter-bar"><div class="meter-fill" id="freqFill" style="width: 0%"></div></div>
+            <div class="meter-label">Hz (Events/s)</div>
+        </div>
+        <div class="meter">
+            <div class="meter-value" id="amplitude">0</div>
+            <div class="meter-bar"><div class="meter-fill" id="ampFill" style="width: 0%"></div></div>
+            <div class="meter-label">Amplitude</div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
+
+        let width, height;
+        let time = 0;
+        let channels = [];
+        let events = []; // For frequency calculation
+        let lastEventCount = 0;
+
+        // Tool -> Sound characteristics
+        const TOOL_SOUNDS = {
+            'Read': { frequency: 440, color: '#4488ff', waveType: 'sine', name: 'Read' },
+            'Grep': { frequency: 523, color: '#6688ff', waveType: 'sine', name: 'Grep' },
+            'Glob': { frequency: 392, color: '#44aaff', waveType: 'sine', name: 'Glob' },
+            'Write': { frequency: 330, color: '#44ff88', waveType: 'square', name: 'Write' },
+            'Edit': { frequency: 349, color: '#88ff44', waveType: 'square', name: 'Edit' },
+            'Bash': { frequency: 220, color: '#ff4466', waveType: 'sawtooth', name: 'Bash' },
+            'Task': { frequency: 165, color: '#aa44ff', waveType: 'triangle', name: 'Task' },
+            'TodoWrite': { frequency: 587, color: '#aaff44', waveType: 'sine', name: 'Todo' },
+            'WebFetch': { frequency: 494, color: '#ffaa44', waveType: 'sine', name: 'WebFetch' },
+            'default': { frequency: 400, color: '#888888', waveType: 'sine', name: 'Unknown' }
+        };
+
+        class Channel {
+            constructor(request, yPosition) {
+                this.request = request;
+                this.id = request.id;
+                this.y = yPosition;
+                this.waves = [];
+                this.baseAmplitude = 30;
+                this.color = request.status === 'running' ? '#cc88ff' : '#664488';
+                this.active = request.status === 'running';
+            }
+
+            update(request) {
+                this.request = request;
+                this.active = request.status === 'running';
+                this.color = this.active ? '#cc88ff' : '#664488';
+
+                // Update waves based on tools
+                const toolMap = new Map();
+                for (const tool of request.tools || []) {
+                    const toolId = `${tool.name}_${tool.startTime}`;
+                    toolMap.set(toolId, tool);
+                }
+
+                // Remove old waves
+                this.waves = this.waves.filter(w => toolMap.has(w.id));
+
+                // Add or update waves
+                for (const [toolId, tool] of toolMap) {
+                    let wave = this.waves.find(w => w.id === toolId);
+                    if (!wave) {
+                        const sound = TOOL_SOUNDS[tool.name] || TOOL_SOUNDS.default;
+                        wave = {
+                            id: toolId,
+                            tool: tool,
+                            frequency: sound.frequency,
+                            color: sound.color,
+                            waveType: sound.waveType,
+                            phase: Math.random() * Math.PI * 2,
+                            amplitude: tool.status === 'running' ? 1 : 0.3,
+                            targetAmplitude: tool.status === 'running' ? 1 : 0.3
+                        };
+                        this.waves.push(wave);
+                    } else {
+                        wave.tool = tool;
+                        wave.targetAmplitude = tool.status === 'running' ? 1 : 0.3;
+                    }
+                    wave.amplitude += (wave.targetAmplitude - wave.amplitude) * 0.1;
+                }
+            }
+
+            draw(ctx, channelHeight) {
+                const startY = this.y;
+                const centerY = startY + channelHeight / 2;
+
+                // Channel background
+                ctx.save();
+                ctx.fillStyle = this.active ? 'rgba(100, 50, 150, 0.1)' : 'rgba(50, 30, 80, 0.05)';
+                ctx.fillRect(60, startY, width - 80, channelHeight);
+                ctx.restore();
+
+                // Channel border
+                ctx.save();
+                ctx.strokeStyle = this.active ? 'rgba(150, 100, 255, 0.3)' : 'rgba(100, 70, 150, 0.15)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(60, startY);
+                ctx.lineTo(width - 20, startY);
+                ctx.stroke();
+                ctx.restore();
+
+                // Combined waveform
+                if (this.waves.length > 0) {
+                    ctx.save();
+                    ctx.beginPath();
+
+                    const step = 2;
+                    for (let x = 60; x < width - 20; x += step) {
+                        let y = 0;
+
+                        // Sum all waves
+                        for (const wave of this.waves) {
+                            const t = (time * 0.05 + x * 0.01) + wave.phase;
+                            const freq = wave.frequency / 100;
+                            let waveY;
+
+                            switch (wave.waveType) {
+                                case 'square':
+                                    waveY = Math.sign(Math.sin(t * freq)) * this.baseAmplitude * wave.amplitude;
+                                    break;
+                                case 'sawtooth':
+                                    waveY = ((t * freq) % (Math.PI * 2) / Math.PI - 1) * this.baseAmplitude * wave.amplitude;
+                                    break;
+                                case 'triangle':
+                                    waveY = Math.abs((t * freq) % (Math.PI * 2) / Math.PI - 1) * 2 * this.baseAmplitude * wave.amplitude - this.baseAmplitude * wave.amplitude;
+                                    break;
+                                default: // sine
+                                    waveY = Math.sin(t * freq) * this.baseAmplitude * wave.amplitude;
+                            }
+
+                            y += waveY / this.waves.length;
+                        }
+
+                        if (x === 60) {
+                            ctx.moveTo(x, centerY + y);
+                        } else {
+                            ctx.lineTo(x, centerY + y);
+                        }
+                    }
+
+                    // Gradient stroke
+                    const gradient = ctx.createLinearGradient(60, 0, width - 20, 0);
+                    if (this.waves.length === 1) {
+                        gradient.addColorStop(0, this.waves[0].color);
+                        gradient.addColorStop(1, this.waves[0].color);
+                    } else {
+                        this.waves.forEach((wave, i) => {
+                            gradient.addColorStop(i / (this.waves.length - 1), wave.color);
+                        });
+                    }
+
+                    ctx.strokeStyle = gradient;
+                    ctx.lineWidth = 2;
+                    ctx.shadowBlur = this.active ? 10 : 0;
+                    ctx.shadowColor = this.waves[0]?.color || '#8844ff';
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // Glow effect for active channels
+                    if (this.active) {
+                        ctx.save();
+                        ctx.beginPath();
+                        for (let x = 60; x < width - 20; x += step) {
+                            let y = 0;
+                            for (const wave of this.waves) {
+                                const t = (time * 0.05 + x * 0.01) + wave.phase;
+                                const freq = wave.frequency / 100;
+                                y += Math.sin(t * freq) * this.baseAmplitude * wave.amplitude / this.waves.length;
+                            }
+                            if (x === 60) {
+                                ctx.moveTo(x, centerY + y);
+                            } else {
+                                ctx.lineTo(x, centerY + y);
+                            }
+                        }
+                        ctx.strokeStyle = 'rgba(200, 150, 255, 0.3)';
+                        ctx.lineWidth = 6;
+                        ctx.filter = 'blur(4px)';
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                } else {
+                    // Flat line for inactive channels
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(60, centerY);
+                    ctx.lineTo(width - 20, centerY);
+                    ctx.strokeStyle = 'rgba(100, 70, 150, 0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // Request ID label
+                ctx.save();
+                ctx.fillStyle = this.active ? '#aa88cc' : '#665588';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.id.slice(-8), 55, centerY);
+                ctx.restore();
+            }
+
+            containsPoint(x, y, channelHeight) {
+                return x >= 60 && x <= width - 20 &&
+                       y >= this.y && y <= this.y + channelHeight;
+            }
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            layoutChannels();
+        }
+
+        function layoutChannels() {
+            if (channels.length === 0) return;
+
+            const marginTop = 80;
+            const marginBottom = 100;
+            const availableHeight = height - marginTop - marginBottom;
+            const channelHeight = Math.min(100, availableHeight / channels.length);
+
+            channels.forEach((channel, i) => {
+                channel.y = marginTop + i * channelHeight;
+            });
+        }
+
+        function render() {
+            time++;
+
+            // Clear with fade
+            ctx.fillStyle = 'rgba(10, 10, 20, 0.15)';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw channels
+            const channelHeight = channels.length > 0 ?
+                (height - 180) / channels.length : 100;
+
+            for (const channel of channels) {
+                channel.draw(ctx, channelHeight);
+            }
+
+            // Calculate and update meters
+            const now = Date.now();
+            events = events.filter(e => now - e < 1000);
+            const frequency = events.length;
+
+            let totalAmplitude = 0;
+            let runningTools = 0;
+            for (const channel of channels) {
+                for (const wave of channel.waves) {
+                    if (wave.tool.status === 'running') {
+                        totalAmplitude += wave.amplitude;
+                        runningTools++;
+                    }
+                }
+            }
+            const avgAmplitude = runningTools > 0 ? (totalAmplitude / runningTools * 100).toFixed(0) : 0;
+
+            document.getElementById('requestCount').textContent = channels.length;
+            document.getElementById('requestFill').style.width = Math.min(100, channels.length * 20) + '%';
+
+            const totalTools = channels.reduce((sum, c) => sum + c.waves.length, 0);
+            document.getElementById('toolCount').textContent = totalTools;
+            document.getElementById('toolFill').style.width = Math.min(100, totalTools * 10) + '%';
+
+            document.getElementById('frequency').textContent = frequency;
+            document.getElementById('freqFill').style.width = Math.min(100, frequency * 10) + '%';
+
+            document.getElementById('amplitude').textContent = avgAmplitude + '%';
+            document.getElementById('ampFill').style.width = avgAmplitude + '%';
+
+            // Now playing
+            const activeChannel = channels.find(c => c.active);
+            if (activeChannel && activeChannel.waves.length > 0) {
+                const toolNames = activeChannel.waves
+                    .filter(w => w.tool.status === 'running')
+                    .map(w => w.tool.name)
+                    .join(' + ');
+                document.getElementById('nowPlaying').textContent =
+                    toolNames ? `♪ ${activeChannel.id.slice(-8)}: ${toolNames}` : 'Processing...';
+            } else if (channels.length > 0) {
+                document.getElementById('nowPlaying').textContent = 'All channels idle';
+            } else {
+                document.getElementById('nowPlaying').textContent = 'Waiting for signals...';
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        let previousToolCount = 0;
+
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:8081/api/chat/requests');
+                const data = await response.json();
+
+                const requests = (data.requests || []).map(r => ({
+                    id: r.requestId,
+                    status: r.status,
+                    message: r.message,
+                    tools: r.tools || [],
+                    source: r.source
+                }));
+
+                // Count tools for event tracking
+                const currentToolCount = requests.reduce((sum, r) => sum + (r.tools?.length || 0), 0);
+                if (currentToolCount > previousToolCount) {
+                    events.push(Date.now());
+                }
+                previousToolCount = currentToolCount;
+
+                // Update channels
+                const currentIds = new Set(requests.map(r => r.id));
+                channels = channels.filter(c => currentIds.has(c.id));
+
+                for (const request of requests) {
+                    let channel = channels.find(c => c.id === request.id);
+                    if (channel) {
+                        channel.update(request);
+                    } else {
+                        channel = new Channel(request, 0);
+                        channel.update(request);
+                        channels.push(channel);
+                    }
+                }
+
+                layoutChannels();
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+            }
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            const x = e.clientX;
+            const y = e.clientY;
+
+            const channelHeight = channels.length > 0 ?
+                (height - 180) / channels.length : 100;
+
+            const hovered = channels.find(c => c.containsPoint(x, y, channelHeight));
+
+            if (hovered) {
+                tooltip.style.display = 'block';
+                tooltip.style.left = (x + 15) + 'px';
+                tooltip.style.top = (y + 15) + 'px';
+
+                const toolsList = hovered.waves.map(w => {
+                    const sound = TOOL_SOUNDS[w.tool.name] || TOOL_SOUNDS.default;
+                    return `<div style="color:${sound.color};margin:2px 0">
+                        ♪ ${w.tool.name} (${sound.frequency}Hz ${sound.waveType}) - ${w.tool.status}
+                    </div>`;
+                }).join('');
+
+                tooltip.innerHTML = `
+                    <h4>🎵 Channel: ${hovered.id.slice(-12)}</h4>
+                    <div style="color:#aaa;margin:4px 0">Status: ${hovered.request.status}</div>
+                    <div style="color:#aaa;margin:4px 0">Active waves: ${hovered.waves.filter(w => w.tool.status === 'running').length}</div>
+                    ${toolsList}
+                    ${hovered.request.message ? `<div style="color:#888;font-style:italic;margin-top:8px">"${hovered.request.message.slice(0, 50)}..."</div>` : ''}
+                `;
+            } else {
+                tooltip.style.display = 'none';
+            }
+        });
+
+        resize();
+        window.addEventListener('resize', resize);
+
+        fetchData();
+        setInterval(fetchData, 1000);
+
+        render();
+    </script>
+</body>
+</html>

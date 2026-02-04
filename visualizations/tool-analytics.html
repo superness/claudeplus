@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tool Analytics - Claude Chat API</title>
+    <style>
+        :root {
+            --bg: #0f0f17;
+            --bg-card: #16161f;
+            --bg-bar: #1e1e2a;
+            --text: #e4e4ed;
+            --text-dim: #8888a0;
+            --text-muted: #555566;
+            --border: #2a2a3a;
+            --accent: #6366f1;
+            --success: #22c55e;
+            --warning: #eab308;
+            --error: #ef4444;
+            --cyan: #06b6d4;
+            --pink: #ec4899;
+            --orange: #f97316;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), var(--cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .refresh-info {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .card-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        /* Tool Usage Bar Chart */
+        .bar-chart {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bar-label {
+            width: 100px;
+            font-size: 13px;
+            color: var(--text-dim);
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .bar-container {
+            flex: 1;
+            height: 28px;
+            background: var(--bg-bar);
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            padding-left: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            min-width: 30px;
+        }
+
+        .bar-fill.Read { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+        .bar-fill.Write { background: linear-gradient(90deg, #22c55e, #4ade80); }
+        .bar-fill.Edit { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+        .bar-fill.Bash { background: linear-gradient(90deg, #ef4444, #f87171); }
+        .bar-fill.Grep { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+        .bar-fill.Glob { background: linear-gradient(90deg, #06b6d4, #22d3ee); }
+        .bar-fill.Task { background: linear-gradient(90deg, #ec4899, #f472b6); }
+        .bar-fill.WebFetch { background: linear-gradient(90deg, #14b8a6, #2dd4bf); }
+        .bar-fill.WebSearch { background: linear-gradient(90deg, #6366f1, #818cf8); }
+        .bar-fill.AskUserQuestion { background: linear-gradient(90deg, #f97316, #fb923c); }
+        .bar-fill.TodoWrite { background: linear-gradient(90deg, #84cc16, #a3e635); }
+        .bar-fill.other { background: linear-gradient(90deg, #64748b, #94a3b8); }
+
+        /* Duration Chart */
+        .duration-chart {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .duration-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .duration-tool {
+            width: 100px;
+            font-size: 13px;
+            color: var(--text-dim);
+            text-align: right;
+        }
+
+        .duration-bar-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .duration-bar {
+            height: 20px;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .duration-value {
+            font-size: 12px;
+            color: var(--text-muted);
+            min-width: 60px;
+        }
+
+        /* Status Pie */
+        .status-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            padding: 20px;
+        }
+
+        .status-ring {
+            width: 160px;
+            height: 160px;
+            position: relative;
+        }
+
+        .status-ring svg {
+            transform: rotate(-90deg);
+        }
+
+        .status-ring-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .status-ring-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .status-ring-label {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-legend {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.running { background: var(--warning); }
+        .legend-dot.completed { background: var(--success); }
+        .legend-dot.error { background: var(--error); }
+        .legend-dot.aborted { background: var(--accent); }
+
+        .legend-count {
+            color: var(--text);
+            font-weight: 600;
+            margin-left: auto;
+        }
+
+        /* Source Distribution */
+        .source-bars {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .source-bar {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .source-bar-visual {
+            width: 80px;
+            height: 150px;
+            background: var(--bg-bar);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            overflow: hidden;
+        }
+
+        .source-bar-fill {
+            width: 100%;
+            border-radius: 0 0 8px 8px;
+            transition: height 0.5s ease;
+        }
+
+        .source-bar-fill.websocket {
+            background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+        }
+
+        .source-bar-fill.rest {
+            background: linear-gradient(180deg, #22c55e, #15803d);
+        }
+
+        .source-bar-label {
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .source-bar-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        /* Hat Usage */
+        .hat-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .hat-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: var(--bg-bar);
+            border-radius: 20px;
+            font-size: 13px;
+        }
+
+        .hat-item-count {
+            background: var(--accent);
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .stat-box {
+            background: var(--bg-bar);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-box-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-box-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Tool Analytics</h1>
+        <span class="refresh-info">Updates every 2 seconds</span>
+    </div>
+
+    <div class="grid">
+        <!-- Tool Usage -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Tool Usage</div>
+                    <div class="card-subtitle">Frequency distribution</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="bar-chart" id="toolUsageChart"></div>
+            </div>
+        </div>
+
+        <!-- Average Duration -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Average Duration</div>
+                    <div class="card-subtitle">Time per tool type</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="duration-chart" id="durationChart"></div>
+            </div>
+        </div>
+
+        <!-- Request Status -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Request Status</div>
+                    <div class="card-subtitle">Current state distribution</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="status-container" id="statusChart"></div>
+            </div>
+        </div>
+
+        <!-- Source Distribution -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Source Distribution</div>
+                    <div class="card-subtitle">WebSocket vs REST API</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="source-bars" id="sourceChart"></div>
+            </div>
+        </div>
+
+        <!-- Hat Usage -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Hat Usage</div>
+                    <div class="card-subtitle">Active context personas</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="hat-list" id="hatList"></div>
+            </div>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Quick Stats</div>
+                    <div class="card-subtitle">Session overview</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="stats-grid" id="quickStats"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8081';
+        const POLL_INTERVAL = 2000;
+
+        function formatDuration(ms) {
+            if (!ms || ms === 0) return '0ms';
+            if (ms < 1000) return `${Math.round(ms)}ms`;
+            if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+            return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+        }
+
+        function renderToolUsage(tools) {
+            const counts = {};
+            tools.forEach(t => {
+                counts[t.name] = (counts[t.name] || 0) + 1;
+            });
+
+            const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+            const max = sorted.length > 0 ? sorted[0][1] : 1;
+
+            const container = document.getElementById('toolUsageChart');
+            container.innerHTML = sorted.slice(0, 10).map(([name, count]) => `
+                <div class="bar-row">
+                    <span class="bar-label">${name}</span>
+                    <div class="bar-container">
+                        <div class="bar-fill ${name}" style="width: ${(count / max) * 100}%">${count}</div>
+                    </div>
+                </div>
+            `).join('') || '<div class="bar-row"><span class="bar-label" style="width:100%;text-align:center;color:var(--text-muted)">No tool data</span></div>';
+        }
+
+        function renderDurationChart(tools) {
+            const durations = {};
+            const counts = {};
+
+            tools.filter(t => t.duration).forEach(t => {
+                durations[t.name] = (durations[t.name] || 0) + t.duration;
+                counts[t.name] = (counts[t.name] || 0) + 1;
+            });
+
+            const averages = Object.entries(durations).map(([name, total]) => ({
+                name,
+                avg: total / counts[name]
+            })).sort((a, b) => b.avg - a.avg);
+
+            const max = averages.length > 0 ? averages[0].avg : 1;
+
+            const container = document.getElementById('durationChart');
+            container.innerHTML = averages.slice(0, 8).map(({ name, avg }) => `
+                <div class="duration-row">
+                    <span class="duration-tool">${name}</span>
+                    <div class="duration-bar-container">
+                        <div class="duration-bar bar-fill ${name}" style="width: ${(avg / max) * 100}%; min-width: 20px;"></div>
+                        <span class="duration-value">${formatDuration(avg)}</span>
+                    </div>
+                </div>
+            `).join('') || '<div style="color:var(--text-muted);text-align:center">No duration data</div>';
+        }
+
+        function renderStatusChart(requests) {
+            const counts = { running: 0, completed: 0, error: 0, aborted: 0 };
+            requests.forEach(r => {
+                if (counts.hasOwnProperty(r.status)) {
+                    counts[r.status]++;
+                }
+            });
+
+            const total = requests.length || 1;
+            const colors = { running: '#eab308', completed: '#22c55e', error: '#ef4444', aborted: '#6366f1' };
+
+            // Calculate stroke dasharray for ring
+            const radius = 70;
+            const circumference = 2 * Math.PI * radius;
+            let offset = 0;
+            const segments = [];
+
+            Object.entries(counts).filter(([,c]) => c > 0).forEach(([status, count]) => {
+                const percent = count / total;
+                const dashLength = percent * circumference;
+                segments.push({
+                    color: colors[status],
+                    dasharray: `${dashLength} ${circumference - dashLength}`,
+                    dashoffset: -offset
+                });
+                offset += dashLength;
+            });
+
+            const container = document.getElementById('statusChart');
+            container.innerHTML = `
+                <div class="status-ring">
+                    <svg viewBox="0 0 160 160">
+                        ${segments.map(s => `
+                            <circle cx="80" cy="80" r="${radius}" fill="none" stroke="${s.color}" stroke-width="16"
+                                stroke-dasharray="${s.dasharray}" stroke-dashoffset="${s.dashoffset}" />
+                        `).join('')}
+                    </svg>
+                    <div class="status-ring-center">
+                        <div class="status-ring-value">${total}</div>
+                        <div class="status-ring-label">Total</div>
+                    </div>
+                </div>
+                <div class="status-legend">
+                    ${Object.entries(counts).map(([status, count]) => `
+                        <div class="legend-item">
+                            <div class="legend-dot ${status}"></div>
+                            <span>${status.charAt(0).toUpperCase() + status.slice(1)}</span>
+                            <span class="legend-count">${count}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderSourceChart(requests) {
+            const ws = requests.filter(r => r.source === 'websocket').length;
+            const rest = requests.filter(r => r.source === 'rest' || !r.source).length;
+            const max = Math.max(ws, rest, 1);
+
+            const container = document.getElementById('sourceChart');
+            container.innerHTML = `
+                <div class="source-bar">
+                    <div class="source-bar-visual">
+                        <div class="source-bar-fill websocket" style="height: ${(ws / max) * 100}%"></div>
+                    </div>
+                    <div class="source-bar-value">${ws}</div>
+                    <div class="source-bar-label">WebSocket</div>
+                </div>
+                <div class="source-bar">
+                    <div class="source-bar-visual">
+                        <div class="source-bar-fill rest" style="height: ${(rest / max) * 100}%"></div>
+                    </div>
+                    <div class="source-bar-value">${rest}</div>
+                    <div class="source-bar-label">REST API</div>
+                </div>
+            `;
+        }
+
+        function renderHatList(requests) {
+            const hatCounts = {};
+            requests.forEach(r => {
+                (r.hatIds || []).forEach(h => {
+                    hatCounts[h] = (hatCounts[h] || 0) + 1;
+                });
+            });
+
+            const sorted = Object.entries(hatCounts).sort((a, b) => b[1] - a[1]);
+
+            const container = document.getElementById('hatList');
+            container.innerHTML = sorted.map(([name, count]) => `
+                <div class="hat-item">
+                    <span>${name}</span>
+                    <span class="hat-item-count">${count}</span>
+                </div>
+            `).join('') || '<div style="color:var(--text-muted)">No hats active</div>';
+        }
+
+        function renderQuickStats(requests, tools) {
+            const completedRequests = requests.filter(r => r.status === 'completed');
+            const avgDuration = completedRequests.length > 0
+                ? completedRequests.reduce((sum, r) => sum + (r.duration || 0), 0) / completedRequests.length
+                : 0;
+
+            const toolsWithDuration = tools.filter(t => t.duration);
+            const avgToolDuration = toolsWithDuration.length > 0
+                ? toolsWithDuration.reduce((sum, t) => sum + t.duration, 0) / toolsWithDuration.length
+                : 0;
+
+            const uniqueTabs = new Set(requests.map(r => r.tabId)).size;
+            const errorRate = requests.length > 0
+                ? ((requests.filter(r => r.status === 'error').length / requests.length) * 100).toFixed(1)
+                : 0;
+
+            const container = document.getElementById('quickStats');
+            container.innerHTML = `
+                <div class="stat-box">
+                    <div class="stat-box-value">${requests.length}</div>
+                    <div class="stat-box-label">Total Requests</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-box-value">${tools.length}</div>
+                    <div class="stat-box-label">Total Tools</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-box-value">${formatDuration(avgDuration)}</div>
+                    <div class="stat-box-label">Avg Request Time</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-box-value">${formatDuration(avgToolDuration)}</div>
+                    <div class="stat-box-label">Avg Tool Time</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-box-value">${uniqueTabs}</div>
+                    <div class="stat-box-label">Active Tabs</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-box-value">${errorRate}%</div>
+                    <div class="stat-box-label">Error Rate</div>
+                </div>
+            `;
+        }
+
+        async function fetchAndRender() {
+            try {
+                const response = await fetch(`${API_BASE}/api/chat/requests`);
+                const data = await response.json();
+                const requests = Array.isArray(data.requests) ? data.requests : [];
+
+                // Collect all tools
+                const allTools = requests.flatMap(r => r.tools || []);
+
+                renderToolUsage(allTools);
+                renderDurationChart(allTools);
+                renderStatusChart(requests);
+                renderSourceChart(requests);
+                renderHatList(requests);
+                renderQuickStats(requests, allTools);
+
+            } catch (error) {
+                console.error('Failed to fetch:', error);
+            }
+        }
+
+        fetchAndRender();
+        setInterval(fetchAndRender, POLL_INTERVAL);
+    </script>
+</body>
+</html>

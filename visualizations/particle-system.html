@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle System - Chat API Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0f;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(10, 10, 15, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(100, 100, 255, 0.3);
+            backdrop-filter: blur(10px);
+            max-width: 300px;
+        }
+
+        .overlay h1 {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            color: #8888ff;
+        }
+
+        .stats {
+            display: grid;
+            gap: 8px;
+            font-size: 0.85rem;
+        }
+
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: rgba(50, 50, 100, 0.3);
+            border-radius: 6px;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: #aaaaff;
+        }
+
+        .legend {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(100, 100, 255, 0.2);
+        }
+
+        .legend h3 {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        .legend-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.75rem;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .info-tooltip {
+            position: fixed;
+            background: rgba(20, 20, 30, 0.95);
+            border: 1px solid rgba(100, 100, 255, 0.5);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.85rem;
+            pointer-events: none;
+            z-index: 200;
+            max-width: 280px;
+            display: none;
+        }
+
+        .info-tooltip h4 {
+            color: #8888ff;
+            margin-bottom: 8px;
+        }
+
+        .info-tooltip .detail {
+            color: #aaa;
+            margin: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay">
+        <h1>⚛️ Particle System</h1>
+        <div class="stats">
+            <div class="stat">
+                <span>Active Emitters</span>
+                <span class="stat-value" id="emitterCount">0</span>
+            </div>
+            <div class="stat">
+                <span>Total Particles</span>
+                <span class="stat-value" id="particleCount">0</span>
+            </div>
+            <div class="stat">
+                <span>Tools Active</span>
+                <span class="stat-value" id="toolCount">0</span>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>Particle Types</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #4488ff"></div>
+                    <span>Read</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #44ff88"></div>
+                    <span>Write</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #ffaa44"></div>
+                    <span>Edit</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #ff4466"></div>
+                    <span>Bash</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #aa44ff"></div>
+                    <span>Grep</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #44ffff"></div>
+                    <span>Task</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="info-tooltip" id="tooltip"></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
+
+        let width, height;
+        let emitters = [];
+        let particles = [];
+        let mouseX = 0, mouseY = 0;
+
+        const TOOL_COLORS = {
+            'Read': '#4488ff',
+            'Write': '#44ff88',
+            'Edit': '#ffaa44',
+            'Bash': '#ff4466',
+            'Grep': '#aa44ff',
+            'Glob': '#44ddff',
+            'Task': '#44ffff',
+            'WebFetch': '#ffff44',
+            'WebSearch': '#ff88ff',
+            'TodoWrite': '#88ff88',
+            'EnterPlanMode': '#8888ff',
+            'ExitPlanMode': '#88ffff',
+            'AskUserQuestion': '#ffbb88',
+            'default': '#888888'
+        };
+
+        const STATUS_GLOW = {
+            'running': { color: '#ffaa00', intensity: 1.5 },
+            'completed': { color: '#00ff88', intensity: 0.8 },
+            'error': { color: '#ff4444', intensity: 2 },
+            'aborted': { color: '#8844ff', intensity: 0.6 }
+        };
+
+        class Particle {
+            constructor(x, y, color, speed, angle, life, size) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.life = life;
+                this.maxLife = life;
+                this.size = size;
+                this.decay = 0.98;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= this.decay;
+                this.vy *= this.decay;
+                this.life--;
+                return this.life > 0;
+            }
+
+            draw(ctx) {
+                const alpha = this.life / this.maxLife;
+                ctx.save();
+                ctx.globalAlpha = alpha * 0.8;
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = this.size * 2;
+                ctx.shadowColor = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Emitter {
+            constructor(request) {
+                this.request = request;
+                this.id = request.id;
+                this.x = Math.random() * (width - 200) + 100;
+                this.y = Math.random() * (height - 200) + 100;
+                this.targetX = this.x;
+                this.targetY = this.y;
+                this.radius = 30;
+                this.status = request.status;
+                this.tools = request.tools || [];
+                this.age = 0;
+                this.particleRate = this.status === 'running' ? 3 : 0.5;
+                this.orbitAngle = 0;
+            }
+
+            update(request) {
+                this.request = request;
+                this.status = request.status;
+                this.tools = request.tools || [];
+                this.particleRate = this.status === 'running' ? 3 : 0.5;
+            }
+
+            emit() {
+                this.age++;
+                this.orbitAngle += 0.02;
+
+                // Gentle floating motion
+                if (this.age % 120 === 0) {
+                    this.targetX = Math.max(100, Math.min(width - 100, this.x + (Math.random() - 0.5) * 100));
+                    this.targetY = Math.max(100, Math.min(height - 100, this.y + (Math.random() - 0.5) * 100));
+                }
+                this.x += (this.targetX - this.x) * 0.01;
+                this.y += (this.targetY - this.y) * 0.01;
+
+                const emitted = [];
+
+                // Emit particles based on active tools
+                const runningTools = this.tools.filter(t => t.status === 'running');
+
+                if (runningTools.length > 0) {
+                    // Burst particles for running tools
+                    for (const tool of runningTools) {
+                        if (Math.random() < 0.3) {
+                            const color = TOOL_COLORS[tool.name] || TOOL_COLORS.default;
+                            const angle = Math.random() * Math.PI * 2;
+                            const speed = 1 + Math.random() * 2;
+                            const life = 60 + Math.random() * 60;
+                            const size = 2 + Math.random() * 3;
+                            emitted.push(new Particle(this.x, this.y, color, speed, angle, life, size));
+                        }
+                    }
+                } else if (this.status === 'running') {
+                    // Ambient particles when running but no tools active
+                    if (Math.random() < 0.1) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = 0.5 + Math.random();
+                        const life = 40 + Math.random() * 40;
+                        emitted.push(new Particle(this.x, this.y, '#444488', speed, angle, life, 2));
+                    }
+                } else if (this.status === 'completed') {
+                    // Occasional sparkle for completed
+                    if (Math.random() < 0.02) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = 0.3;
+                        const life = 80;
+                        emitted.push(new Particle(this.x, this.y, '#44ff88', speed, angle, life, 1.5));
+                    }
+                }
+
+                return emitted;
+            }
+
+            draw(ctx) {
+                const glow = STATUS_GLOW[this.status] || STATUS_GLOW.completed;
+
+                // Outer glow ring
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius + 10, 0, Math.PI * 2);
+                ctx.strokeStyle = glow.color;
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.3 * glow.intensity;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = glow.color;
+                ctx.stroke();
+                ctx.restore();
+
+                // Core
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.radius
+                );
+                gradient.addColorStop(0, glow.color);
+                gradient.addColorStop(0.5, glow.color + '44');
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.globalAlpha = 0.6;
+                ctx.fill();
+                ctx.restore();
+
+                // Tool orbits
+                const runningTools = this.tools.filter(t => t.status === 'running');
+                runningTools.forEach((tool, i) => {
+                    const orbitRadius = this.radius + 20 + i * 12;
+                    const angle = this.orbitAngle + (i * Math.PI * 2 / runningTools.length);
+                    const tx = this.x + Math.cos(angle) * orbitRadius;
+                    const ty = this.y + Math.sin(angle) * orbitRadius;
+                    const color = TOOL_COLORS[tool.name] || TOOL_COLORS.default;
+
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 5, 0, Math.PI * 2);
+                    ctx.fillStyle = color;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = color;
+                    ctx.fill();
+                    ctx.restore();
+
+                    // Trail
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, orbitRadius, angle - 0.5, angle);
+                    ctx.strokeStyle = color;
+                    ctx.globalAlpha = 0.3;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.restore();
+                });
+
+                // Center label
+                ctx.save();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.globalAlpha = 0.7;
+                const shortId = this.id.slice(-8);
+                ctx.fillText(shortId, this.x, this.y);
+                ctx.restore();
+            }
+
+            containsPoint(x, y) {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                return Math.sqrt(dx * dx + dy * dy) < this.radius + 20;
+            }
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+
+        function render() {
+            // Clear with trail effect
+            ctx.fillStyle = 'rgba(10, 10, 15, 0.15)';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw connection lines between emitters
+            ctx.save();
+            ctx.strokeStyle = 'rgba(100, 100, 255, 0.1)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < emitters.length; i++) {
+                for (let j = i + 1; j < emitters.length; j++) {
+                    const dx = emitters[j].x - emitters[i].x;
+                    const dy = emitters[j].y - emitters[i].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 300) {
+                        ctx.globalAlpha = (1 - dist / 300) * 0.2;
+                        ctx.beginPath();
+                        ctx.moveTo(emitters[i].x, emitters[i].y);
+                        ctx.lineTo(emitters[j].x, emitters[j].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+            ctx.restore();
+
+            // Update and draw particles
+            particles = particles.filter(p => p.update());
+            particles.forEach(p => p.draw(ctx));
+
+            // Emit and draw emitters
+            for (const emitter of emitters) {
+                const newParticles = emitter.emit();
+                particles.push(...newParticles);
+                emitter.draw(ctx);
+            }
+
+            // Update stats
+            document.getElementById('emitterCount').textContent = emitters.length;
+            document.getElementById('particleCount').textContent = particles.length;
+            const activeTools = emitters.reduce((sum, e) =>
+                sum + (e.tools?.filter(t => t.status === 'running').length || 0), 0);
+            document.getElementById('toolCount').textContent = activeTools;
+
+            requestAnimationFrame(render);
+        }
+
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:8081/api/chat/requests');
+                const data = await response.json();
+
+                const requests = (data.requests || []).map(r => ({
+                    id: r.requestId,
+                    status: r.status,
+                    message: r.message,
+                    tools: r.tools || [],
+                    duration: r.duration,
+                    source: r.source
+                }));
+
+                // Update existing emitters or create new ones
+                const currentIds = new Set(emitters.map(e => e.id));
+                const newIds = new Set(requests.map(r => r.id));
+
+                // Remove old emitters
+                emitters = emitters.filter(e => newIds.has(e.id));
+
+                // Update or add emitters
+                for (const request of requests) {
+                    const existing = emitters.find(e => e.id === request.id);
+                    if (existing) {
+                        existing.update(request);
+                    } else {
+                        emitters.push(new Emitter(request));
+                    }
+                }
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+            }
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+
+            const hovered = emitters.find(em => em.containsPoint(mouseX, mouseY));
+            if (hovered) {
+                tooltip.style.display = 'block';
+                tooltip.style.left = (mouseX + 15) + 'px';
+                tooltip.style.top = (mouseY + 15) + 'px';
+
+                const toolList = (hovered.tools || []).map(t =>
+                    `${t.name}: ${t.status}${t.duration ? ` (${t.duration}ms)` : ''}`
+                ).join('<br>');
+
+                tooltip.innerHTML = `
+                    <h4>${hovered.id.slice(-12)}</h4>
+                    <div class="detail">Status: ${hovered.status}</div>
+                    <div class="detail">Source: ${hovered.request.source || 'unknown'}</div>
+                    <div class="detail">Tools: ${hovered.tools?.length || 0}</div>
+                    ${toolList ? `<div class="detail" style="margin-top:8px">${toolList}</div>` : ''}
+                    ${hovered.request.message ? `<div class="detail" style="margin-top:8px;font-style:italic">"${hovered.request.message.slice(0, 50)}..."</div>` : ''}
+                `;
+            } else {
+                tooltip.style.display = 'none';
+            }
+        });
+
+        resize();
+        window.addEventListener('resize', resize);
+
+        // Start fetching data
+        fetchData();
+        setInterval(fetchData, 1000);
+
+        // Start render loop
+        render();
+    </script>
+</body>
+</html>

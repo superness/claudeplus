@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ecosystem - Chat API Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(180deg, #1a2a1a 0%, #0a1510 50%, #050a08 100%);
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(10, 25, 20, 0.9);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(100, 200, 150, 0.3);
+            backdrop-filter: blur(10px);
+            max-width: 280px;
+        }
+
+        .overlay h1 {
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+            color: #88ddaa;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ecosystem-stats {
+            display: grid;
+            gap: 10px;
+        }
+
+        .stat-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(50, 100, 80, 0.2);
+            border-radius: 8px;
+            border-left: 3px solid;
+        }
+
+        .stat-card.producers { border-color: #44dd88; }
+        .stat-card.consumers { border-color: #dd8844; }
+        .stat-card.decomposers { border-color: #8844dd; }
+        .stat-card.energy { border-color: #dddd44; }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #aaddcc;
+        }
+
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .legend {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(100, 200, 150, 0.2);
+        }
+
+        .legend h3 {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 10px;
+        }
+
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.7rem;
+            color: #aaa;
+        }
+
+        .legend-icon {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: rgba(10, 30, 25, 0.95);
+            border: 1px solid rgba(100, 200, 150, 0.5);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.85rem;
+            pointer-events: none;
+            z-index: 200;
+            max-width: 280px;
+            display: none;
+        }
+
+        .tooltip h4 {
+            color: #88ddaa;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay">
+        <h1>🌿 Ecosystem</h1>
+        <div class="ecosystem-stats">
+            <div class="stat-card producers">
+                <span class="stat-label">Producers (Read)</span>
+                <span class="stat-value" id="producerCount">0</span>
+            </div>
+            <div class="stat-card consumers">
+                <span class="stat-label">Consumers (Write/Edit)</span>
+                <span class="stat-value" id="consumerCount">0</span>
+            </div>
+            <div class="stat-card decomposers">
+                <span class="stat-label">Decomposers (Bash)</span>
+                <span class="stat-value" id="decomposerCount">0</span>
+            </div>
+            <div class="stat-card energy">
+                <span class="stat-label">Energy (Requests)</span>
+                <span class="stat-value" id="energyCount">0</span>
+            </div>
+        </div>
+        <div class="legend">
+            <h3>Species</h3>
+            <div class="legend-grid">
+                <div class="legend-item">
+                    <div class="legend-icon" style="background: #44dd88"></div>
+                    <span>Read (Plant)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-icon" style="background: #dd8844"></div>
+                    <span>Write (Herbivore)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-icon" style="background: #dd4466"></div>
+                    <span>Bash (Predator)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-icon" style="background: #8844dd"></div>
+                    <span>Task (Apex)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-icon" style="background: #4488dd"></div>
+                    <span>Grep (Scavenger)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-icon" style="background: #dddd44"></div>
+                    <span>Request (Sun)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
+
+        let width, height;
+        let organisms = [];
+        let suns = []; // Requests as energy sources
+        let particles = []; // Ambient particles
+        let time = 0;
+
+        // Tool -> Organism mapping (trophic levels)
+        const SPECIES = {
+            'Read': { type: 'producer', color: '#44dd88', size: 15, speed: 0.3, shape: 'plant' },
+            'Glob': { type: 'producer', color: '#44aa88', size: 12, speed: 0.2, shape: 'plant' },
+            'Grep': { type: 'scavenger', color: '#4488dd', size: 14, speed: 0.8, shape: 'circle' },
+            'Write': { type: 'consumer', color: '#dd8844', size: 18, speed: 0.6, shape: 'triangle' },
+            'Edit': { type: 'consumer', color: '#ddaa44', size: 16, speed: 0.5, shape: 'triangle' },
+            'Bash': { type: 'predator', color: '#dd4466', size: 20, speed: 1.0, shape: 'diamond' },
+            'Task': { type: 'apex', color: '#8844dd', size: 25, speed: 1.2, shape: 'star' },
+            'TodoWrite': { type: 'symbiont', color: '#88dd44', size: 10, speed: 0.4, shape: 'circle' },
+            'default': { type: 'unknown', color: '#888888', size: 12, speed: 0.5, shape: 'circle' }
+        };
+
+        class Sun {
+            constructor(request) {
+                this.request = request;
+                this.id = request.id;
+                this.x = Math.random() * width * 0.8 + width * 0.1;
+                this.y = Math.random() * height * 0.3 + 50;
+                this.radius = 40;
+                this.energy = request.status === 'running' ? 1 : 0.3;
+                this.phase = Math.random() * Math.PI * 2;
+            }
+
+            update(request) {
+                this.request = request;
+                this.energy = request.status === 'running' ? 1 : 0.3;
+            }
+
+            draw(ctx) {
+                const pulse = Math.sin(time * 0.03 + this.phase) * 0.1;
+                const brightness = this.energy + pulse;
+
+                // Rays
+                ctx.save();
+                for (let i = 0; i < 12; i++) {
+                    const angle = (i / 12) * Math.PI * 2 + time * 0.01;
+                    const rayLength = this.radius * (1.5 + pulse);
+                    const x1 = this.x + Math.cos(angle) * this.radius;
+                    const y1 = this.y + Math.sin(angle) * this.radius;
+                    const x2 = this.x + Math.cos(angle) * rayLength;
+                    const y2 = this.y + Math.sin(angle) * rayLength;
+
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.strokeStyle = `rgba(255, 220, 100, ${brightness * 0.3})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Core glow
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.radius * 2
+                );
+                gradient.addColorStop(0, `rgba(255, 230, 150, ${brightness})`);
+                gradient.addColorStop(0.3, `rgba(255, 200, 100, ${brightness * 0.6})`);
+                gradient.addColorStop(1, 'transparent');
+
+                ctx.save();
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                // Core
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * 0.6, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffee88';
+                ctx.shadowBlur = 30;
+                ctx.shadowColor = '#ffdd44';
+                ctx.fill();
+                ctx.restore();
+
+                // Label
+                ctx.save();
+                ctx.fillStyle = '#553300';
+                ctx.font = '9px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.id.slice(-6), this.x, this.y);
+                ctx.restore();
+            }
+
+            containsPoint(x, y) {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                return Math.sqrt(dx * dx + dy * dy) < this.radius;
+            }
+        }
+
+        class Organism {
+            constructor(tool, parentSun) {
+                this.tool = tool;
+                this.parentSun = parentSun;
+                this.species = SPECIES[tool.name] || SPECIES.default;
+
+                // Spawn near parent sun
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 100 + Math.random() * 150;
+                this.x = parentSun.x + Math.cos(angle) * dist;
+                this.y = Math.min(height - 50, parentSun.y + Math.sin(angle) * dist + 100);
+
+                this.vx = 0;
+                this.vy = 0;
+                this.angle = Math.random() * Math.PI * 2;
+                this.size = this.species.size;
+                this.energy = 1;
+                this.age = 0;
+                this.id = `${tool.name}_${tool.startTime}`;
+            }
+
+            update() {
+                this.age++;
+
+                // Behavior based on species type
+                const speed = this.species.speed;
+
+                if (this.species.type === 'producer') {
+                    // Plants sway gently, move toward nearest sun
+                    this.angle += Math.sin(time * 0.02 + this.x * 0.01) * 0.05;
+
+                    // Phototropism - grow toward sun
+                    if (this.parentSun && this.y < this.parentSun.y + 200) {
+                        this.vy += 0.02; // Sink down (roots)
+                    }
+                } else if (this.species.type === 'consumer' || this.species.type === 'scavenger') {
+                    // Herbivores wander and occasionally move toward producers
+                    this.angle += (Math.random() - 0.5) * 0.2;
+                    this.vx += Math.cos(this.angle) * speed * 0.1;
+                    this.vy += Math.sin(this.angle) * speed * 0.1;
+                } else if (this.species.type === 'predator' || this.species.type === 'apex') {
+                    // Predators are more aggressive in movement
+                    this.angle += (Math.random() - 0.5) * 0.3;
+                    this.vx += Math.cos(this.angle) * speed * 0.15;
+                    this.vy += Math.sin(this.angle) * speed * 0.15;
+                }
+
+                // Apply velocity with friction
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= 0.95;
+                this.vy *= 0.95;
+
+                // Boundary
+                this.x = Math.max(50, Math.min(width - 50, this.x));
+                this.y = Math.max(100, Math.min(height - 50, this.y));
+
+                // Energy decay for completed tools
+                if (this.tool.status !== 'running') {
+                    this.energy *= 0.998;
+                }
+            }
+
+            draw(ctx) {
+                const alpha = Math.min(1, this.energy);
+                const pulse = this.tool.status === 'running' ? Math.sin(time * 0.1) * 0.2 : 0;
+                const displaySize = this.size * (1 + pulse);
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(this.x, this.y);
+
+                // Draw based on shape
+                ctx.fillStyle = this.species.color;
+                ctx.shadowBlur = this.tool.status === 'running' ? 15 : 5;
+                ctx.shadowColor = this.species.color;
+
+                if (this.species.shape === 'plant') {
+                    // Plant shape - branching structure
+                    ctx.strokeStyle = this.species.color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(0, displaySize);
+                    ctx.lineTo(0, -displaySize);
+
+                    // Branches
+                    ctx.moveTo(0, -displaySize * 0.3);
+                    ctx.lineTo(-displaySize * 0.6, -displaySize * 0.8);
+                    ctx.moveTo(0, -displaySize * 0.5);
+                    ctx.lineTo(displaySize * 0.5, -displaySize * 0.9);
+                    ctx.stroke();
+
+                    // Leaves
+                    ctx.beginPath();
+                    ctx.arc(-displaySize * 0.6, -displaySize * 0.8, 4, 0, Math.PI * 2);
+                    ctx.arc(displaySize * 0.5, -displaySize * 0.9, 4, 0, Math.PI * 2);
+                    ctx.arc(0, -displaySize, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (this.species.shape === 'triangle') {
+                    // Consumer - fish-like triangle
+                    ctx.rotate(this.angle);
+                    ctx.beginPath();
+                    ctx.moveTo(displaySize, 0);
+                    ctx.lineTo(-displaySize * 0.7, -displaySize * 0.5);
+                    ctx.lineTo(-displaySize * 0.7, displaySize * 0.5);
+                    ctx.closePath();
+                    ctx.fill();
+                } else if (this.species.shape === 'diamond') {
+                    // Predator - diamond
+                    ctx.rotate(this.angle);
+                    ctx.beginPath();
+                    ctx.moveTo(0, -displaySize);
+                    ctx.lineTo(displaySize * 0.6, 0);
+                    ctx.lineTo(0, displaySize);
+                    ctx.lineTo(-displaySize * 0.6, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                } else if (this.species.shape === 'star') {
+                    // Apex - star
+                    ctx.beginPath();
+                    for (let i = 0; i < 5; i++) {
+                        const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+                        const innerAngle = angle + Math.PI / 5;
+                        const outerRadius = displaySize;
+                        const innerRadius = displaySize * 0.5;
+
+                        if (i === 0) {
+                            ctx.moveTo(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius);
+                        } else {
+                            ctx.lineTo(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius);
+                        }
+                        ctx.lineTo(Math.cos(innerAngle) * innerRadius, Math.sin(innerAngle) * innerRadius);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                } else {
+                    // Default circle
+                    ctx.beginPath();
+                    ctx.arc(0, 0, displaySize * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            containsPoint(x, y) {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                return Math.sqrt(dx * dx + dy * dy) < this.size;
+            }
+        }
+
+        class AmbientParticle {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = height + 10;
+                this.size = 1 + Math.random() * 2;
+                this.speed = 0.2 + Math.random() * 0.3;
+                this.drift = (Math.random() - 0.5) * 0.5;
+                this.alpha = 0.3 + Math.random() * 0.4;
+            }
+
+            update() {
+                this.y -= this.speed;
+                this.x += this.drift;
+                this.drift += (Math.random() - 0.5) * 0.1;
+                return this.y > -10;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = '#88ddaa';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+
+        function render() {
+            time++;
+
+            // Background with gradient
+            const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+            bgGradient.addColorStop(0, 'rgba(20, 30, 25, 0.1)');
+            bgGradient.addColorStop(1, 'rgba(5, 15, 10, 0.1)');
+            ctx.fillStyle = bgGradient;
+            ctx.fillRect(0, 0, width, height);
+
+            // Ground
+            ctx.save();
+            ctx.fillStyle = 'rgba(30, 50, 40, 0.3)';
+            ctx.fillRect(0, height - 30, width, 30);
+            ctx.restore();
+
+            // Ambient particles (spores/pollen)
+            if (Math.random() < 0.1) {
+                particles.push(new AmbientParticle());
+            }
+            particles = particles.filter(p => p.update());
+            particles.forEach(p => p.draw(ctx));
+
+            // Draw suns (requests as energy sources)
+            for (const sun of suns) {
+                sun.draw(ctx);
+            }
+
+            // Update and draw organisms
+            for (const org of organisms) {
+                org.update();
+                org.draw(ctx);
+            }
+
+            // Filter out dead organisms
+            organisms = organisms.filter(o => o.energy > 0.1);
+
+            // Update stats
+            const producers = organisms.filter(o => o.species.type === 'producer').length;
+            const consumers = organisms.filter(o => o.species.type === 'consumer' || o.species.type === 'scavenger').length;
+            const decomposers = organisms.filter(o => o.species.type === 'predator' || o.species.type === 'apex').length;
+
+            document.getElementById('producerCount').textContent = producers;
+            document.getElementById('consumerCount').textContent = consumers;
+            document.getElementById('decomposerCount').textContent = decomposers;
+            document.getElementById('energyCount').textContent = suns.filter(s => s.energy > 0.5).length;
+
+            requestAnimationFrame(render);
+        }
+
+        let previousOrganismIds = new Set();
+
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:8081/api/chat/requests');
+                const data = await response.json();
+
+                const requests = (data.requests || []).map(r => ({
+                    id: r.requestId,
+                    status: r.status,
+                    message: r.message,
+                    tools: r.tools || [],
+                    source: r.source
+                }));
+
+                // Update suns (requests)
+                const currentSunIds = new Set(requests.map(r => r.id));
+                suns = suns.filter(s => currentSunIds.has(s.id));
+
+                for (const request of requests) {
+                    let sun = suns.find(s => s.id === request.id);
+                    if (sun) {
+                        sun.update(request);
+                    } else {
+                        sun = new Sun(request);
+                        suns.push(sun);
+                    }
+
+                    // Create organisms for tools
+                    for (const tool of request.tools || []) {
+                        const orgId = `${request.id}_${tool.name}_${tool.startTime}`;
+                        if (!previousOrganismIds.has(orgId)) {
+                            organisms.push(new Organism(tool, sun));
+                        }
+                    }
+                }
+
+                // Update organism IDs
+                previousOrganismIds = new Set(organisms.map(o => o.id));
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+            }
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            const x = e.clientX;
+            const y = e.clientY;
+
+            let hovered = null;
+            let type = '';
+
+            for (const sun of suns) {
+                if (sun.containsPoint(x, y)) {
+                    hovered = sun;
+                    type = 'sun';
+                    break;
+                }
+            }
+
+            if (!hovered) {
+                for (const org of organisms) {
+                    if (org.containsPoint(x, y)) {
+                        hovered = org;
+                        type = 'organism';
+                        break;
+                    }
+                }
+            }
+
+            if (hovered) {
+                tooltip.style.display = 'block';
+                tooltip.style.left = (x + 15) + 'px';
+                tooltip.style.top = (y + 15) + 'px';
+
+                if (type === 'sun') {
+                    tooltip.innerHTML = `
+                        <h4>☀️ Request (Energy Source)</h4>
+                        <div style="color:#aaa;margin:4px 0">ID: ${hovered.id}</div>
+                        <div style="color:#aaa;margin:4px 0">Status: ${hovered.request.status}</div>
+                        <div style="color:#aaa;margin:4px 0">Tools spawned: ${hovered.request.tools?.length || 0}</div>
+                        ${hovered.request.message ? `<div style="color:#888;font-style:italic;margin-top:8px">"${hovered.request.message.slice(0, 50)}..."</div>` : ''}
+                    `;
+                } else {
+                    tooltip.innerHTML = `
+                        <h4>${hovered.tool.name} (${hovered.species.type})</h4>
+                        <div style="color:#aaa;margin:4px 0">Status: ${hovered.tool.status}</div>
+                        <div style="color:#aaa;margin:4px 0">Energy: ${Math.round(hovered.energy * 100)}%</div>
+                        <div style="color:#aaa;margin:4px 0">Age: ${hovered.age} ticks</div>
+                        ${hovered.tool.file ? `<div style="color:#888;margin-top:8px">File: ${hovered.tool.file}</div>` : ''}
+                    `;
+                }
+            } else {
+                tooltip.style.display = 'none';
+            }
+        });
+
+        resize();
+        window.addEventListener('resize', resize);
+
+        fetchData();
+        setInterval(fetchData, 1000);
+
+        render();
+    </script>
+</body>
+</html>

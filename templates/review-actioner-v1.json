@@ -1,0 +1,228 @@
+{
+  "id": "review-actioner-v1",
+  "name": "Review Action Implementation Pipeline V1",
+  "description": "Reads area owner reviews and implements fixes for each action item. Processes issues by priority, making code changes and validating them.",
+  "version": "1.0.0",
+  "category": "implementation",
+  "stages": [
+    {
+      "id": "review_parser",
+      "name": "Review Parser",
+      "type": "analyzer",
+      "agent": "review_parser",
+      "description": "Parse the area owner review and extract prioritized action items",
+      "decisions": [
+        {"choice": "actions_found", "description": "Action items extracted successfully"},
+        {"choice": "no_actions", "description": "No actionable items found"},
+        {"choice": "review_not_found", "description": "Review file not found"}
+      ]
+    },
+    {
+      "id": "critical_fixer",
+      "name": "Critical Issues Fixer",
+      "type": "implementer",
+      "agent": "issue_implementer",
+      "description": "Address critical issues that must be fixed immediately",
+      "inputs": ["review_parser"],
+      "context": {
+        "priority": "critical",
+        "instruction": "Fix CRITICAL issues only. These are blockers that must be addressed."
+      },
+      "decisions": [
+        {"choice": "fixes_applied", "description": "Critical fixes applied successfully"},
+        {"choice": "no_critical_issues", "description": "No critical issues to fix"},
+        {"choice": "fix_failed", "description": "Could not apply fix, needs manual intervention"}
+      ]
+    },
+    {
+      "id": "high_fixer",
+      "name": "High Priority Fixer",
+      "type": "implementer",
+      "agent": "issue_implementer",
+      "description": "Address high priority issues",
+      "inputs": ["review_parser", "critical_fixer"],
+      "context": {
+        "priority": "high",
+        "instruction": "Fix HIGH priority issues. These significantly impact quality."
+      },
+      "decisions": [
+        {"choice": "fixes_applied", "description": "High priority fixes applied"},
+        {"choice": "no_high_issues", "description": "No high priority issues to fix"},
+        {"choice": "fix_failed", "description": "Could not apply fix, needs manual intervention"}
+      ]
+    },
+    {
+      "id": "medium_fixer",
+      "name": "Medium Priority Fixer",
+      "type": "implementer",
+      "agent": "issue_implementer",
+      "description": "Address medium priority issues (quick wins)",
+      "inputs": ["review_parser", "high_fixer"],
+      "context": {
+        "priority": "medium",
+        "instruction": "Fix MEDIUM priority issues. Focus on quick wins with good impact."
+      },
+      "decisions": [
+        {"choice": "fixes_applied", "description": "Medium priority fixes applied"},
+        {"choice": "no_medium_issues", "description": "No medium priority issues to fix"},
+        {"choice": "fix_failed", "description": "Could not apply fix, needs manual intervention"},
+        {"choice": "skip_remaining", "description": "Skip remaining medium issues for now"}
+      ]
+    },
+    {
+      "id": "validator",
+      "name": "Change Validator",
+      "type": "validator",
+      "agent": "change_validator",
+      "description": "Validate all changes by running tests and type checks",
+      "inputs": ["critical_fixer", "high_fixer", "medium_fixer"],
+      "decisions": [
+        {"choice": "validation_passed", "description": "All changes validated successfully"},
+        {"choice": "validation_failed", "description": "Some changes broke tests/types"},
+        {"choice": "no_changes_made", "description": "No changes were made to validate"}
+      ]
+    },
+    {
+      "id": "summary",
+      "name": "Action Summary",
+      "type": "synthesis",
+      "agent": "action_summarizer",
+      "description": "Summarize all changes made and remaining items",
+      "inputs": ["review_parser", "critical_fixer", "high_fixer", "medium_fixer", "validator"],
+      "decisions": [
+        {"choice": "summary_complete", "description": "Summary generated"},
+        {"choice": "needs_followup", "description": "Important items need manual followup"}
+      ]
+    }
+  ],
+  "flow": {
+    "type": "sequential",
+    "description": "Process review feedback in priority order, validate, then summarize",
+    "connections": [
+      {
+        "from": "review_parser",
+        "to": "critical_fixer",
+        "condition": "actions_found",
+        "description": "Actions found, start with critical issues"
+      },
+      {
+        "from": "review_parser",
+        "to": "summary",
+        "condition": "no_actions",
+        "description": "No actions needed, generate summary"
+      },
+      {
+        "from": "review_parser",
+        "to": null,
+        "condition": "review_not_found",
+        "description": "Review not found - PIPELINE ENDS"
+      },
+      {
+        "from": "critical_fixer",
+        "to": "high_fixer",
+        "condition": "fixes_applied",
+        "description": "Critical fixes done, move to high priority"
+      },
+      {
+        "from": "critical_fixer",
+        "to": "high_fixer",
+        "condition": "no_critical_issues",
+        "description": "No critical issues, move to high priority"
+      },
+      {
+        "from": "critical_fixer",
+        "to": "high_fixer",
+        "condition": "fix_failed",
+        "description": "Critical fix failed, continue with high priority"
+      },
+      {
+        "from": "high_fixer",
+        "to": "medium_fixer",
+        "condition": "fixes_applied",
+        "description": "High fixes done, move to medium priority"
+      },
+      {
+        "from": "high_fixer",
+        "to": "medium_fixer",
+        "condition": "no_high_issues",
+        "description": "No high issues, move to medium priority"
+      },
+      {
+        "from": "high_fixer",
+        "to": "medium_fixer",
+        "condition": "fix_failed",
+        "description": "High fix failed, continue with medium priority"
+      },
+      {
+        "from": "medium_fixer",
+        "to": "validator",
+        "condition": "fixes_applied",
+        "description": "Medium fixes done, validate all changes"
+      },
+      {
+        "from": "medium_fixer",
+        "to": "validator",
+        "condition": "no_medium_issues",
+        "description": "No medium issues, validate what we have"
+      },
+      {
+        "from": "medium_fixer",
+        "to": "validator",
+        "condition": "fix_failed",
+        "description": "Medium fix failed, validate what we have"
+      },
+      {
+        "from": "medium_fixer",
+        "to": "validator",
+        "condition": "skip_remaining",
+        "description": "Skipping remaining, validate what we have"
+      },
+      {
+        "from": "validator",
+        "to": "summary",
+        "condition": "validation_passed",
+        "description": "Validation passed, generate summary"
+      },
+      {
+        "from": "validator",
+        "to": "summary",
+        "condition": "validation_failed",
+        "description": "Validation failed, generate summary with issues"
+      },
+      {
+        "from": "validator",
+        "to": "summary",
+        "condition": "no_changes_made",
+        "description": "No changes to validate, generate summary"
+      },
+      {
+        "from": "summary",
+        "to": null,
+        "condition": "summary_complete",
+        "description": "Summary complete - PIPELINE ENDS"
+      },
+      {
+        "from": "summary",
+        "to": null,
+        "condition": "needs_followup",
+        "description": "Followup needed - PIPELINE ENDS"
+      }
+    ]
+  },
+  "inputs": {
+    "required": ["review_path"],
+    "context": {
+      "review_path": "Path to the area owner review markdown file",
+      "feature_name": "Name of the feature being actioned"
+    }
+  },
+  "outputs": {
+    "primary": "docs/actions/{feature_name}_ACTION_LOG.md",
+    "secondary": ["git commits for each fix"]
+  },
+  "metadata": {
+    "tags": ["implementation", "action", "fix", "review-followup"],
+    "author": "Claude Plus Development System",
+    "estimatedDuration": "20-60 minutes per review"
+  }
+}

@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Build Visualizer - Feature Owner System</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #0a0a0f 100%);
+      min-height: 100vh;
+      color: #e0e0e0;
+      padding: 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+      padding: 20px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .header h1 {
+      font-size: 24px;
+      color: #00d4ff;
+      margin-bottom: 10px;
+      text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+    }
+
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      margin-top: 15px;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: bold;
+      color: #00ff88;
+      text-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 5px 15px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    .status-running {
+      background: rgba(0, 212, 255, 0.2);
+      color: #00d4ff;
+      border: 1px solid #00d4ff;
+      animation: pulse 2s infinite;
+    }
+
+    .status-failed {
+      background: rgba(255, 68, 68, 0.2);
+      color: #ff4444;
+      border: 1px solid #ff4444;
+    }
+
+    .status-completed {
+      background: rgba(0, 255, 136, 0.2);
+      color: #00ff88;
+      border: 1px solid #00ff88;
+    }
+
+    .stat-value.time {
+      color: #00d4ff;
+      text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+      font-size: 28px;
+    }
+
+    .error-summary {
+      margin-top: 15px;
+      padding: 12px 18px;
+      background: rgba(255, 68, 68, 0.15);
+      border: 1px solid rgba(255, 68, 68, 0.5);
+      border-radius: 8px;
+      border-left: 4px solid #ff4444;
+      text-align: left;
+    }
+
+    .error-summary-title {
+      font-size: 12px;
+      font-weight: bold;
+      color: #ff4444;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .error-summary-message {
+      font-size: 13px;
+      color: #ff8888;
+      line-height: 1.5;
+    }
+
+    .error-summary-components {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #ffaaaa;
+    }
+
+    .error-summary-components span {
+      display: inline-block;
+      background: rgba(255, 68, 68, 0.3);
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin: 2px 4px 2px 0;
+    }
+
+    .error-summary-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .action-btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      border: 1px solid;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: inherit;
+    }
+
+    .action-icon {
+      font-size: 14px;
+    }
+
+    .action-retry {
+      background: rgba(0, 212, 255, 0.2);
+      border-color: #00d4ff;
+      color: #00d4ff;
+    }
+
+    .action-retry:hover {
+      background: rgba(0, 212, 255, 0.4);
+      box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+    }
+
+    .action-logs {
+      background: rgba(255, 200, 0, 0.2);
+      border-color: #ffc800;
+      color: #ffc800;
+    }
+
+    .action-logs:hover {
+      background: rgba(255, 200, 0, 0.4);
+      box-shadow: 0 0 10px rgba(255, 200, 0, 0.5);
+    }
+
+    .action-cancel {
+      background: rgba(255, 68, 68, 0.2);
+      border-color: #ff4444;
+      color: #ff4444;
+    }
+
+    .action-cancel:hover {
+      background: rgba(255, 68, 68, 0.4);
+      box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(0, 212, 255, 0.5); }
+      50% { opacity: 0.7; box-shadow: 0 0 20px rgba(0, 212, 255, 0.8); }
+    }
+
+    .pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .batch {
+      display: flex;
+      align-items: stretch;
+      gap: 15px;
+    }
+
+    .batch-info {
+      width: 200px;
+      padding: 15px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .batch-id {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+
+    .batch-name {
+      font-size: 14px;
+      font-weight: bold;
+      color: #fff;
+    }
+
+    .batch-mode {
+      font-size: 10px;
+      color: #888;
+      margin-top: 5px;
+    }
+
+    .components {
+      flex: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+      align-items: center;
+    }
+
+    .component {
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px solid;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+
+    .component-pending {
+      background: rgba(100, 100, 100, 0.2);
+      border-color: #444;
+      color: #666;
+    }
+
+    .component-running {
+      background: rgba(0, 212, 255, 0.2);
+      border-color: #00d4ff;
+      color: #00d4ff;
+      animation: componentPulse 1.5s infinite;
+    }
+
+    @keyframes componentPulse {
+      0%, 100% { box-shadow: 0 0 5px rgba(0, 212, 255, 0.5); }
+      50% { box-shadow: 0 0 15px rgba(0, 212, 255, 0.8), 0 0 30px rgba(0, 212, 255, 0.4); }
+    }
+
+    .component-completed {
+      background: rgba(0, 255, 136, 0.2);
+      border-color: #00ff88;
+      color: #00ff88;
+    }
+
+    .component-failed {
+      background: rgba(255, 68, 68, 0.25);
+      border-color: #ff4444;
+      color: #ff4444;
+      animation: failedPulse 2s infinite;
+      box-shadow: 0 0 8px rgba(255, 68, 68, 0.4);
+    }
+
+    @keyframes failedPulse {
+      0%, 100% { box-shadow: 0 0 8px rgba(255, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 16px rgba(255, 68, 68, 0.7), 0 0 24px rgba(255, 68, 68, 0.3); }
+    }
+
+    .gate {
+      width: 150px;
+      padding: 15px 10px;
+      text-align: center;
+      border-radius: 8px;
+      border: 2px solid;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .gate:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+    }
+
+    .gate-tooltip {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 12px;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s, visibility 0.2s;
+      z-index: 100;
+      margin-bottom: 8px;
+    }
+
+    .gate:hover .gate-tooltip {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .gate-tooltip::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: rgba(0, 0, 0, 0.95);
+    }
+
+    .gate-pending {
+      background: rgba(100, 100, 100, 0.1);
+      border-color: #333;
+      color: #555;
+    }
+
+    .gate-evaluating {
+      background: rgba(255, 200, 0, 0.1);
+      border-color: #ffc800;
+      color: #ffc800;
+      animation: gatePulse 1s infinite;
+    }
+
+    @keyframes gatePulse {
+      0%, 100% { box-shadow: 0 0 10px rgba(255, 200, 0, 0.3); }
+      50% { box-shadow: 0 0 25px rgba(255, 200, 0, 0.6); }
+    }
+
+    .gate-passed {
+      background: rgba(0, 255, 136, 0.15);
+      border-color: #00ff88;
+      color: #00ff88;
+    }
+
+    .gate-failed {
+      background: rgba(255, 68, 68, 0.15);
+      border-color: #ff4444;
+      color: #ff4444;
+    }
+
+    .gate-icon {
+      font-size: 24px;
+      margin-bottom: 5px;
+    }
+
+    .gate-name {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: bold;
+    }
+
+    .gate-label {
+      font-size: 13px;
+      margin-top: 5px;
+      opacity: 1;
+      font-weight: 500;
+    }
+
+    .gate-pattern {
+      font-size: 10px;
+      position: absolute;
+      top: 5px;
+      right: 8px;
+      opacity: 0.7;
+    }
+
+    .connector {
+      width: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-size: 20px;
+    }
+
+    .connector-active {
+      color: #00d4ff;
+    }
+
+    .connector-done {
+      color: #00ff88;
+    }
+
+    .log-panel {
+      max-width: 1200px;
+      margin: 30px auto 0;
+      padding: 15px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .log-header {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .log-entries {
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .log-time {
+      color: #666;
+      margin-right: 10px;
+    }
+
+    .log-message {
+      color: #aaa;
+    }
+
+    .log-message.success {
+      color: #00ff88;
+    }
+
+    .log-message.error {
+      color: #ff4444;
+    }
+
+    .log-message.info {
+      color: #00d4ff;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+      margin-top: 15px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00d4ff, #00ff88);
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+
+    .update-indicator {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 8px 15px;
+      background: rgba(0,0,0,0.8);
+      border-radius: 20px;
+      font-size: 11px;
+      color: #666;
+      border: 1px solid #333;
+    }
+
+    .update-indicator.active {
+      color: #00d4ff;
+      border-color: #00d4ff;
+    }
+
+    .current-component {
+      margin-top: 15px;
+      padding: 10px 15px;
+      background: rgba(0, 212, 255, 0.1);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .current-label {
+      color: #888;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .current-value {
+      color: #00d4ff;
+      font-weight: bold;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="update-indicator" id="updateIndicator">
+    <span id="updateStatus">Connecting...</span>
+  </div>
+
+  <div class="header">
+    <h1>FEATURE OWNER SYSTEM BUILD</h1>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="componentsComplete">0</div>
+        <div class="stat-label">Components</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="gatesPassed">0</div>
+        <div class="stat-label">Gates Passed</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="progressPercent">0%</div>
+        <div class="stat-label">Progress</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value time" id="elapsedTime">--:--</div>
+        <div class="stat-label">Elapsed</div>
+      </div>
+    </div>
+    <div id="statusBadge" class="status-badge status-running">INITIALIZING</div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+    </div>
+    <div class="error-summary" id="errorSummary" style="display: none;">
+      <div class="error-summary-title">⚠ Build Failed</div>
+      <div class="error-summary-message" id="errorMessage">An error occurred during the build process.</div>
+      <div class="error-summary-components" id="failedComponents"></div>
+      <div class="error-summary-actions" id="errorActions">
+        <button class="action-btn action-retry" onclick="retryBuild()" title="Retry the failed build">
+          <span class="action-icon">↻</span> Retry Build
+        </button>
+        <button class="action-btn action-logs" onclick="scrollToLogs()" title="View detailed build logs">
+          <span class="action-icon">☰</span> View Logs
+        </button>
+        <button class="action-btn action-cancel" onclick="cancelBuild()" title="Cancel and reset">
+          <span class="action-icon">✕</span> Cancel
+        </button>
+      </div>
+    </div>
+    <div class="current-component" id="currentComponent" style="display: none;">
+      <div class="current-label">Currently Building</div>
+      <div class="current-value" id="currentComponentName">-</div>
+    </div>
+  </div>
+
+  <div class="pipeline" id="pipeline">
+    <!-- Will be populated by JS -->
+  </div>
+
+  <div class="log-panel">
+    <div class="log-header">Build Log</div>
+    <div class="log-entries" id="logEntries">
+      <div class="log-entry">
+        <span class="log-time">--:--:--</span>
+        <span class="log-message">Waiting for build data...</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BUILD_STATE_PATH = '/mnt/c/github/claudeplus/multi-drive/feature-owner-system/build-state.json';
+    const MANIFEST_PATH = '/mnt/c/github/claudeplus/multi-drive/feature-owner-system/build-manifest.json';
+
+    let manifest = null;
+    let lastState = null;
+    let updateInterval = null;
+
+    // Batch and component definitions from manifest
+    const BATCHES = [
+      { id: 'PEB-0', name: 'Foundation', gate: 'CHECKPOINT-0', components: ['0.1-schemas', '0.2-validator', '0.3-storage', '0.4-audit-logger'], parallel: true },
+      { id: 'PEB-1', name: 'Core Components', gate: 'CHECKPOINT-1', components: ['1.1-scorer', '1.2-extractor', '2.1-agent-types', '2.2-registry', '7.1-tool-registry', '7.3-core-tools'], parallel: true },
+      { id: 'PEB-2', name: 'Integration Layer', gate: 'CHECKPOINT-2', components: ['1.3-assessor', '2.3-factory', '3.1-parser', '7.2-tool-executor'], parallel: true },
+      { id: 'PEB-3', name: 'Routing & Orchestration', gate: 'CHECKPOINT-3', components: ['3.2-router', '3.3-decision-validator', '4.1-maestro-handler'], parallel: false },
+      { id: 'PEB-4', name: 'Maestro & Feature Owners', gate: 'CHECKPOINT-4', components: ['4.2-delegation', '4.3-synthesizer', '5.1-base-owner', '5.2-initial-owners', '5.3-executor'], parallel: true },
+      { id: 'PEB-5', name: 'Advanced Features', gate: 'CHECKPOINT-5', components: ['6.1-domain-analyzer', '6.2-knowledge-compiler', '6.3-tool-selector', '6.4-agent-generator', '6.5-teaching-orchestrator', '8.1-knowledge-base', '8.2-conversation-memory', '8.3-decision-history'], parallel: true },
+      { id: 'PEB-6', name: 'E2E & Learning', gate: 'CHECKPOINT-6', components: ['9.1-integration-tests', '9.2-e2e-scenarios', '9.3-performance-validation', '10.1-calibrator', '10.2-routing-learner', '10.3-performance-tracker'], parallel: false }
+    ];
+
+    const GATE_NAMES = {
+      'CHECKPOINT-0': 'Foundation',
+      'CHECKPOINT-1': 'Core',
+      'CHECKPOINT-2': 'Integration',
+      'CHECKPOINT-3': 'Orchestration',
+      'CHECKPOINT-4': 'Agents',
+      'CHECKPOINT-5': 'Advanced',
+      'CHECKPOINT-6': 'Complete'
+    };
+
+    function renderPipeline(state) {
+      const pipeline = document.getElementById('pipeline');
+      const completedIds = new Set((state?.completedComponents || []).map(c => c.id));
+      const passedGates = new Set((state?.passedGates || []).map(g => g.id));
+      const currentBatch = state?.currentBatch;
+      const runningComponents = new Set(state?.currentComponents || []);
+
+      let html = '';
+
+      BATCHES.forEach((batch, index) => {
+        const isCurrentBatch = batch.id === currentBatch;
+        const allComplete = batch.components.every(c => completedIds.has(c));
+        const gatePassed = passedGates.has(batch.gate);
+        const gateEvaluating = isCurrentBatch && allComplete && !gatePassed;
+
+        // Connector from previous gate
+        if (index > 0) {
+          const prevGatePassed = passedGates.has(BATCHES[index-1].gate);
+          html += `<div class="connector ${prevGatePassed ? 'connector-done' : ''}" style="margin-left: 215px;">↓</div>`;
+        }
+
+        html += `<div class="batch">`;
+
+        // Batch info
+        html += `
+          <div class="batch-info">
+            <div class="batch-id">${batch.id}</div>
+            <div class="batch-name">${batch.name}</div>
+            <div class="batch-mode">${batch.parallel ? '⚡ Parallel' : '→ Sequential'}</div>
+          </div>
+        `;
+
+        // Components
+        html += `<div class="components">`;
+        batch.components.forEach(comp => {
+          const failedComps = new Set(state?.failedComponents || []);
+          let status = 'pending';
+          let icon = '○';
+          if (failedComps.has(comp)) {
+            status = 'failed';
+            icon = '✕';
+          } else if (completedIds.has(comp)) {
+            status = 'completed';
+            icon = '✓';
+          } else if (runningComponents.has(comp)) {
+            status = 'running';
+            icon = '⟳';
+          }
+
+          html += `<div class="component component-${status}" title="${comp}">${icon} ${comp}</div>`;
+        });
+        html += `</div>`;
+
+        // Connector to gate
+        html += `<div class="connector ${allComplete ? 'connector-active' : ''}">→</div>`;
+
+        // Gate
+        let gateStatus = 'pending';
+        let gateIcon = '◇';
+        let gatePattern = '○'; // Empty circle pattern for pending
+        if (gatePassed) {
+          gateStatus = 'passed';
+          gateIcon = '✓';
+          gatePattern = '●'; // Filled circle pattern
+        } else if (gateEvaluating) {
+          gateStatus = 'evaluating';
+          gateIcon = '⟳';
+          gatePattern = '◐'; // Half-filled pattern
+        }
+
+        const gateTooltip = gatePassed ?
+          `All ${batch.components.length} components passed` :
+          gateEvaluating ?
+            'Evaluating gate conditions...' :
+            `Waiting for ${batch.components.filter(c => !completedIds.has(c)).length} components`;
+
+        html += `
+          <div class="gate gate-${gateStatus}" aria-label="${batch.gate}: ${gateTooltip}">
+            <div class="gate-tooltip">${batch.gate}: ${gateTooltip}</div>
+            <div class="gate-pattern">${gatePattern}</div>
+            <div class="gate-icon">${gateIcon}</div>
+            <div class="gate-name">${batch.gate.replace('CHECKPOINT-', 'CP-')}</div>
+            <div class="gate-label">${GATE_NAMES[batch.gate]}</div>
+          </div>
+        `;
+
+        html += `</div>`;
+      });
+
+      pipeline.innerHTML = html;
+    }
+
+    function updateStats(state) {
+      const completed = (state?.completedComponents || []).length;
+      const gatesPassed = (state?.passedGates || []).length;
+      const total = 36;
+      const percent = Math.round((completed / total) * 100);
+
+      document.getElementById('componentsComplete').textContent = `${completed}/${total}`;
+      document.getElementById('gatesPassed').textContent = `${gatesPassed}/7`;
+      document.getElementById('progressPercent').textContent = `${percent}%`;
+      document.getElementById('progressBar').style.width = `${percent}%`;
+
+      // Status badge with icon
+      const badge = document.getElementById('statusBadge');
+      badge.className = 'status-badge';
+      let statusIcon = '';
+      if (state?.status === 'running') {
+        badge.classList.add('status-running');
+        statusIcon = '⟳ ';
+        badge.textContent = statusIcon + 'BUILDING';
+      } else if (state?.status === 'completed') {
+        badge.classList.add('status-completed');
+        statusIcon = '✓ ';
+        badge.textContent = statusIcon + 'COMPLETED';
+      } else if (state?.status === 'failed') {
+        badge.classList.add('status-failed');
+        statusIcon = '✕ ';
+        badge.textContent = statusIcon + 'FAILED';
+      } else {
+        badge.classList.add('status-running');
+        badge.textContent = '◇ ' + (state?.status?.toUpperCase() || 'UNKNOWN');
+      }
+
+      // Show error summary for failed builds
+      const errorSummary = document.getElementById('errorSummary');
+      if (state?.status === 'failed') {
+        errorSummary.style.display = 'block';
+
+        // Get error message from log
+        const errorEntries = (state?.log || []).filter(e =>
+          e.message.includes('FAIL') || e.message.includes('error') || e.message.includes('Error')
+        );
+        if (errorEntries.length > 0) {
+          document.getElementById('errorMessage').textContent = errorEntries[errorEntries.length - 1].message;
+        }
+
+        // Show failed components
+        const failedComps = state?.failedComponents || [];
+        if (failedComps.length > 0) {
+          document.getElementById('failedComponents').innerHTML =
+            'Failed: ' + failedComps.map(c => `<span>${c}</span>`).join('');
+        }
+      } else {
+        errorSummary.style.display = 'none';
+      }
+
+      // Current component
+      const currentDiv = document.getElementById('currentComponent');
+      const currentComponents = state?.currentComponents || [];
+      if (currentComponents.length > 0) {
+        currentDiv.style.display = 'block';
+        document.getElementById('currentComponentName').textContent = currentComponents.join(', ');
+      } else if (state?.currentBatch) {
+        currentDiv.style.display = 'block';
+        document.getElementById('currentComponentName').textContent = `${state.currentBatch} - Gate Evaluation`;
+      } else {
+        currentDiv.style.display = 'none';
+      }
+    }
+
+    function updateLog(state) {
+      const entries = state?.log || [];
+      const logDiv = document.getElementById('logEntries');
+
+      const recentEntries = entries.slice(-20).reverse();
+
+      logDiv.innerHTML = recentEntries.map(entry => {
+        const time = new Date(entry.timestamp).toLocaleTimeString();
+        let msgClass = '';
+        if (entry.message.includes('SUCCESS') || entry.message.includes('passed')) msgClass = 'success';
+        else if (entry.message.includes('FAIL') || entry.message.includes('error')) msgClass = 'error';
+        else if (entry.message.includes('started') || entry.message.includes('Executing')) msgClass = 'info';
+
+        return `
+          <div class="log-entry">
+            <span class="log-time">${time}</span>
+            <span class="log-message ${msgClass}">${entry.message}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function fetchState() {
+      try {
+        // Try WebSocket API first, fall back to file fetch
+        const response = await fetch(`/api/file?path=${encodeURIComponent(BUILD_STATE_PATH)}`);
+        if (response.ok) {
+          const state = await response.json();
+          return state;
+        }
+      } catch (e) {
+        console.log('Fetch error:', e);
+      }
+      return null;
+    }
+
+    async function update() {
+      const indicator = document.getElementById('updateIndicator');
+      indicator.classList.add('active');
+      document.getElementById('updateStatus').textContent = 'Updating...';
+
+      try {
+        const state = await fetchState();
+        if (state) {
+          lastState = state;
+          renderPipeline(state);
+          updateStats(state);
+          updateLog(state);
+          startElapsedTimer(state);
+          document.getElementById('updateStatus').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        } else {
+          document.getElementById('updateStatus').textContent = 'No data';
+        }
+      } catch (e) {
+        document.getElementById('updateStatus').textContent = 'Error';
+        console.error('Update error:', e);
+      }
+
+      setTimeout(() => indicator.classList.remove('active'), 500);
+    }
+
+    // Initial render with empty state
+    renderPipeline({});
+
+    // Try to connect and start updates
+    update();
+    updateInterval = setInterval(update, 2000);
+
+    // Also support manual file loading via drag & drop
+    document.body.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.body.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith('.json')) {
+        const text = await file.text();
+        const state = JSON.parse(text);
+        lastState = state;
+        renderPipeline(state);
+        updateStats(state);
+        updateLog(state);
+        startElapsedTimer(state);
+      }
+    });
+
+    // Elapsed time tracking
+    let buildStartTime = null;
+    let elapsedInterval = null;
+
+    function updateElapsedTime() {
+      if (!buildStartTime) return;
+
+      const elapsed = Date.now() - buildStartTime;
+      const minutes = Math.floor(elapsed / 60000);
+      const seconds = Math.floor((elapsed % 60000) / 1000);
+
+      document.getElementById('elapsedTime').textContent =
+        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    function startElapsedTimer(state) {
+      // Get start time from first log entry or state
+      if (state?.log?.length > 0 && !buildStartTime) {
+        buildStartTime = new Date(state.log[0].timestamp).getTime();
+      } else if (state?.startTime && !buildStartTime) {
+        buildStartTime = new Date(state.startTime).getTime();
+      }
+
+      if (state?.status === 'running' && !elapsedInterval) {
+        elapsedInterval = setInterval(updateElapsedTime, 1000);
+        updateElapsedTime();
+      } else if (state?.status !== 'running' && elapsedInterval) {
+        clearInterval(elapsedInterval);
+        elapsedInterval = null;
+        updateElapsedTime(); // Show final time
+      }
+    }
+
+    function retryBuild() {
+      console.log('Retry build requested');
+      // Could POST to /api/build/retry or trigger WebSocket message
+      alert('Retry build triggered. Refresh page to see progress.');
+    }
+
+    function scrollToLogs() {
+      document.querySelector('.log-panel').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelBuild() {
+      if (confirm('Are you sure you want to cancel this build?')) {
+        console.log('Cancel build requested');
+        // Could POST to /api/build/cancel or trigger WebSocket message
+      }
+    }
+  </script>
+</body>
+</html>

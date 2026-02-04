@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravity Wells - Chat API Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000005;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: rgba(0, 5, 20, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(100, 150, 255, 0.2);
+            backdrop-filter: blur(10px);
+            max-width: 260px;
+        }
+
+        .overlay h1 {
+            font-size: 1rem;
+            margin-bottom: 15px;
+            color: #88aaff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        .stat-box {
+            padding: 10px;
+            background: rgba(50, 80, 150, 0.15);
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #88ccff;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: #668899;
+            margin-top: 2px;
+        }
+
+        .mass-legend {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(100, 150, 255, 0.15);
+        }
+
+        .mass-legend h3 {
+            font-size: 0.75rem;
+            color: #556677;
+            margin-bottom: 8px;
+        }
+
+        .mass-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 5px 0;
+            font-size: 0.75rem;
+            color: #889999;
+        }
+
+        .mass-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: rgba(0, 10, 30, 0.95);
+            border: 1px solid rgba(100, 150, 255, 0.4);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.85rem;
+            pointer-events: none;
+            z-index: 200;
+            max-width: 280px;
+            display: none;
+        }
+
+        .tooltip h4 {
+            color: #88aaff;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay">
+        <h1>🌌 Gravity Wells</h1>
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-value" id="wellCount">0</div>
+                <div class="stat-label">WELLS</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="orbitCount">0</div>
+                <div class="stat-label">ORBITERS</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="totalMass">0</div>
+                <div class="stat-label">TOTAL MASS</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value" id="activeCount">0</div>
+                <div class="stat-label">ACTIVE</div>
+            </div>
+        </div>
+        <div class="mass-legend">
+            <h3>Orbital Classes</h3>
+            <div class="mass-item">
+                <div class="mass-dot" style="background: #4488ff"></div>
+                <span>Read/Grep - Light mass</span>
+            </div>
+            <div class="mass-item">
+                <div class="mass-dot" style="background: #44ff88"></div>
+                <span>Write/Edit - Medium mass</span>
+            </div>
+            <div class="mass-item">
+                <div class="mass-dot" style="background: #ff4466"></div>
+                <span>Bash - Heavy mass</span>
+            </div>
+            <div class="mass-item">
+                <div class="mass-dot" style="background: #aa44ff"></div>
+                <span>Task - Massive</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
+
+        let width, height;
+        let wells = [];
+        let time = 0;
+        let starfield = [];
+
+        const TOOL_MASS = {
+            'Read': { mass: 1, color: '#4488ff', class: 'light' },
+            'Grep': { mass: 1.2, color: '#6688ff', class: 'light' },
+            'Glob': { mass: 1, color: '#44aaff', class: 'light' },
+            'Write': { mass: 2, color: '#44ff88', class: 'medium' },
+            'Edit': { mass: 1.8, color: '#88ff44', class: 'medium' },
+            'TodoWrite': { mass: 1.5, color: '#aaff44', class: 'medium' },
+            'Bash': { mass: 3, color: '#ff4466', class: 'heavy' },
+            'Task': { mass: 5, color: '#aa44ff', class: 'massive' },
+            'WebFetch': { mass: 2.5, color: '#ffaa44', class: 'medium' },
+            'WebSearch': { mass: 2.5, color: '#ffcc44', class: 'medium' },
+            'default': { mass: 1.5, color: '#888888', class: 'unknown' }
+        };
+
+        const STATUS_COLORS = {
+            'running': '#ffaa00',
+            'completed': '#44ff88',
+            'error': '#ff4444',
+            'aborted': '#8844ff'
+        };
+
+        class Star {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.size = Math.random() * 1.5;
+                this.twinkle = Math.random() * Math.PI * 2;
+                this.speed = 0.02 + Math.random() * 0.03;
+            }
+
+            draw(ctx) {
+                const alpha = 0.3 + Math.sin(time * this.speed + this.twinkle) * 0.2;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Orbiter {
+            constructor(tool, wellX, wellY, orbitIndex) {
+                this.tool = tool;
+                this.id = `${tool.name}_${tool.startTime}`;
+                const massData = TOOL_MASS[tool.name] || TOOL_MASS.default;
+                this.mass = massData.mass;
+                this.color = massData.color;
+                this.size = 4 + this.mass * 2;
+
+                // Orbital parameters
+                this.orbitRadius = 60 + orbitIndex * 25 + Math.random() * 10;
+                this.angle = Math.random() * Math.PI * 2;
+                this.angularSpeed = (0.02 + Math.random() * 0.01) / (1 + orbitIndex * 0.3);
+                this.eccentricity = 0.1 + Math.random() * 0.2;
+                this.inclination = (Math.random() - 0.5) * 0.3;
+
+                this.x = 0;
+                this.y = 0;
+                this.trail = [];
+            }
+
+            update(wellX, wellY, wellActive) {
+                // Speed boost when well is active
+                const speedMult = wellActive ? 1.5 : 1;
+                this.angle += this.angularSpeed * speedMult;
+
+                // Elliptical orbit
+                const r = this.orbitRadius * (1 - this.eccentricity * Math.cos(this.angle));
+                this.x = wellX + Math.cos(this.angle) * r;
+                this.y = wellY + Math.sin(this.angle) * r * (1 - Math.abs(this.inclination));
+
+                // Trail
+                this.trail.push({ x: this.x, y: this.y, alpha: 1 });
+                if (this.trail.length > 20) {
+                    this.trail.shift();
+                }
+                this.trail.forEach(t => t.alpha *= 0.9);
+            }
+
+            draw(ctx) {
+                // Trail
+                ctx.save();
+                for (let i = 0; i < this.trail.length - 1; i++) {
+                    const t = this.trail[i];
+                    ctx.globalAlpha = t.alpha * 0.3;
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, this.size * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+
+                // Active glow for running tools
+                if (this.tool.status === 'running') {
+                    ctx.save();
+                    const gradient = ctx.createRadialGradient(
+                        this.x, this.y, 0,
+                        this.x, this.y, this.size * 3
+                    );
+                    gradient.addColorStop(0, this.color + 'aa');
+                    gradient.addColorStop(1, 'transparent');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size * 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Body
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            containsPoint(x, y) {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                return Math.sqrt(dx * dx + dy * dy) < this.size + 5;
+            }
+        }
+
+        class GravityWell {
+            constructor(request) {
+                this.request = request;
+                this.id = request.id;
+                this.x = Math.random() * (width - 200) + 100;
+                this.y = Math.random() * (height - 200) + 100;
+                this.radius = 35;
+                this.orbiters = [];
+                this.status = request.status;
+                this.phase = Math.random() * Math.PI * 2;
+                this.distortionGrid = this.generateDistortionGrid();
+            }
+
+            generateDistortionGrid() {
+                const grid = [];
+                const gridSize = 15;
+                for (let i = -gridSize; i <= gridSize; i++) {
+                    for (let j = -gridSize; j <= gridSize; j++) {
+                        if (Math.abs(i) > 3 || Math.abs(j) > 3) {
+                            grid.push({ i, j });
+                        }
+                    }
+                }
+                return grid;
+            }
+
+            update(request) {
+                this.request = request;
+                this.status = request.status;
+
+                // Update orbiters based on tools
+                const toolIds = new Set((request.tools || []).map(t => `${t.name}_${t.startTime}`));
+                this.orbiters = this.orbiters.filter(o => toolIds.has(o.id));
+
+                for (const tool of request.tools || []) {
+                    const toolId = `${tool.name}_${tool.startTime}`;
+                    let orbiter = this.orbiters.find(o => o.id === toolId);
+                    if (!orbiter) {
+                        orbiter = new Orbiter(tool, this.x, this.y, this.orbiters.length);
+                        this.orbiters.push(orbiter);
+                    } else {
+                        orbiter.tool = tool;
+                    }
+                }
+
+                // Update orbiter positions
+                for (const orbiter of this.orbiters) {
+                    orbiter.update(this.x, this.y, this.status === 'running');
+                }
+            }
+
+            draw(ctx) {
+                const isActive = this.status === 'running';
+                const pulse = Math.sin(time * 0.05 + this.phase) * 0.1;
+                const coreColor = STATUS_COLORS[this.status] || STATUS_COLORS.completed;
+
+                // Spacetime distortion grid
+                ctx.save();
+                ctx.strokeStyle = 'rgba(60, 100, 180, 0.15)';
+                ctx.lineWidth = 0.5;
+
+                for (const point of this.distortionGrid) {
+                    const baseX = this.x + point.i * 20;
+                    const baseY = this.y + point.j * 20;
+                    const dx = baseX - this.x;
+                    const dy = baseY - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    // Gravity distortion
+                    const pull = Math.min(0.5, 150 / (dist + 50));
+                    const distortedX = baseX - (dx * pull * 0.3);
+                    const distortedY = baseY - (dy * pull * 0.3);
+
+                    ctx.beginPath();
+                    ctx.arc(distortedX, distortedY, 1, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Event horizon rings
+                for (let i = 3; i > 0; i--) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius + i * 15, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(${isActive ? '255, 150, 50' : '100, 150, 255'}, ${0.1 / i})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // Accretion disk effect
+                if (isActive) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius + 20, 0, Math.PI * 2);
+                    const diskGradient = ctx.createRadialGradient(
+                        this.x, this.y, this.radius,
+                        this.x, this.y, this.radius + 40
+                    );
+                    diskGradient.addColorStop(0, 'rgba(255, 150, 50, 0.3)');
+                    diskGradient.addColorStop(0.5, 'rgba(255, 100, 50, 0.1)');
+                    diskGradient.addColorStop(1, 'transparent');
+                    ctx.fillStyle = diskGradient;
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Core (black hole with glow)
+                const coreGradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, this.radius
+                );
+                coreGradient.addColorStop(0, '#000000');
+                coreGradient.addColorStop(0.6, '#000000');
+                coreGradient.addColorStop(0.8, coreColor + '44');
+                coreGradient.addColorStop(1, coreColor + '00');
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * (1 + pulse * 0.2), 0, Math.PI * 2);
+                ctx.fillStyle = coreGradient;
+                ctx.fill();
+                ctx.restore();
+
+                // Bright rim
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * 0.85, 0, Math.PI * 2);
+                ctx.strokeStyle = coreColor;
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = coreColor;
+                ctx.stroke();
+                ctx.restore();
+
+                // Draw orbiters
+                for (const orbiter of this.orbiters) {
+                    orbiter.draw(ctx);
+                }
+
+                // Label
+                ctx.save();
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.font = '9px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.id.slice(-8), this.x, this.y + this.radius + 15);
+                ctx.restore();
+            }
+
+            containsPoint(x, y) {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                return Math.sqrt(dx * dx + dy * dy) < this.radius + 10;
+            }
+
+            getOrbiterAt(x, y) {
+                for (const orbiter of this.orbiters) {
+                    if (orbiter.containsPoint(x, y)) {
+                        return orbiter;
+                    }
+                }
+                return null;
+            }
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+
+            // Regenerate starfield
+            starfield = [];
+            for (let i = 0; i < 200; i++) {
+                starfield.push(new Star());
+            }
+        }
+
+        function render() {
+            time++;
+
+            // Clear
+            ctx.fillStyle = '#000005';
+            ctx.fillRect(0, 0, width, height);
+
+            // Starfield
+            for (const star of starfield) {
+                star.draw(ctx);
+            }
+
+            // Draw wells
+            for (const well of wells) {
+                well.draw(ctx);
+            }
+
+            // Stats
+            let totalOrbiters = 0;
+            let totalMass = 0;
+            let activeWells = 0;
+
+            for (const well of wells) {
+                totalOrbiters += well.orbiters.length;
+                for (const orbiter of well.orbiters) {
+                    totalMass += orbiter.mass;
+                }
+                if (well.status === 'running') activeWells++;
+            }
+
+            document.getElementById('wellCount').textContent = wells.length;
+            document.getElementById('orbitCount').textContent = totalOrbiters;
+            document.getElementById('totalMass').textContent = Math.round(totalMass * 10) / 10;
+            document.getElementById('activeCount').textContent = activeWells;
+
+            requestAnimationFrame(render);
+        }
+
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:8081/api/chat/requests');
+                const data = await response.json();
+
+                const requests = (data.requests || []).map(r => ({
+                    id: r.requestId,
+                    status: r.status,
+                    message: r.message,
+                    tools: r.tools || [],
+                    source: r.source
+                }));
+
+                // Update wells
+                const currentIds = new Set(requests.map(r => r.id));
+                wells = wells.filter(w => currentIds.has(w.id));
+
+                for (const request of requests) {
+                    let well = wells.find(w => w.id === request.id);
+                    if (well) {
+                        well.update(request);
+                    } else {
+                        well = new GravityWell(request);
+                        well.update(request);
+                        wells.push(well);
+                    }
+                }
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+            }
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            const x = e.clientX;
+            const y = e.clientY;
+
+            let hovered = null;
+            let type = '';
+
+            for (const well of wells) {
+                const orbiter = well.getOrbiterAt(x, y);
+                if (orbiter) {
+                    hovered = orbiter;
+                    type = 'orbiter';
+                    break;
+                }
+                if (well.containsPoint(x, y)) {
+                    hovered = well;
+                    type = 'well';
+                    break;
+                }
+            }
+
+            if (hovered) {
+                tooltip.style.display = 'block';
+                tooltip.style.left = (x + 15) + 'px';
+                tooltip.style.top = (y + 15) + 'px';
+
+                if (type === 'well') {
+                    tooltip.innerHTML = `
+                        <h4>🌌 Gravity Well</h4>
+                        <div style="color:#aaa;margin:4px 0">Request: ${hovered.id}</div>
+                        <div style="color:#aaa;margin:4px 0">Status: ${hovered.status}</div>
+                        <div style="color:#aaa;margin:4px 0">Orbiters: ${hovered.orbiters.length}</div>
+                        ${hovered.request.message ? `<div style="color:#888;font-style:italic;margin-top:8px">"${hovered.request.message.slice(0, 50)}..."</div>` : ''}
+                    `;
+                } else {
+                    const massData = TOOL_MASS[hovered.tool.name] || TOOL_MASS.default;
+                    tooltip.innerHTML = `
+                        <h4>☄️ ${hovered.tool.name}</h4>
+                        <div style="color:#aaa;margin:4px 0">Status: ${hovered.tool.status}</div>
+                        <div style="color:#aaa;margin:4px 0">Mass class: ${massData.class}</div>
+                        <div style="color:#aaa;margin:4px 0">Orbital radius: ${Math.round(hovered.orbitRadius)}</div>
+                        ${hovered.tool.duration ? `<div style="color:#aaa;margin:4px 0">Duration: ${hovered.tool.duration}ms</div>` : ''}
+                        ${hovered.tool.file ? `<div style="color:#888;margin-top:8px">File: ${hovered.tool.file}</div>` : ''}
+                    `;
+                }
+            } else {
+                tooltip.style.display = 'none';
+            }
+        });
+
+        resize();
+        window.addEventListener('resize', resize);
+
+        fetchData();
+        setInterval(fetchData, 1000);
+
+        render();
+    </script>
+</body>
+</html>

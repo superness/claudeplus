@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activity Monitor - Claude Chat API</title>
+    <style>
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-elevated: #1a1a24;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-purple: #8b5cf6;
+            --accent-cyan: #06b6d4;
+            --border: #2d2d3a;
+            --glow-blue: rgba(59, 130, 246, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+            gap: 1px;
+            background: var(--border);
+        }
+
+        .header {
+            grid-column: 1 / -1;
+            background: var(--bg-card);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header h1::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-green); }
+            50% { opacity: 0.7; box-shadow: 0 0 0 8px transparent; }
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 32px;
+        }
+
+        .header-stat {
+            text-align: center;
+        }
+
+        .header-stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        .header-stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .main-panel {
+            background: var(--bg-dark);
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .side-panel {
+            background: var(--bg-card);
+            overflow-y: auto;
+            border-left: 1px solid var(--border);
+        }
+
+        .side-panel-header {
+            padding: 16px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 14px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .request-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            margin-bottom: 16px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            transition: all 0.2s ease;
+        }
+
+        .request-card:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 20px var(--glow-blue);
+        }
+
+        .request-card.running {
+            border-color: var(--accent-amber);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .status-indicator.running {
+            background: var(--accent-amber);
+            animation: blink 1s infinite;
+        }
+
+        .status-indicator.completed {
+            background: var(--accent-green);
+        }
+
+        .status-indicator.error {
+            background: var(--accent-red);
+        }
+
+        .status-indicator.aborted {
+            background: var(--accent-purple);
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .request-id {
+            font-family: 'SF Mono', monospace;
+            font-size: 13px;
+            color: var(--accent-cyan);
+        }
+
+        .source-tag {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .source-tag.websocket {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+        }
+
+        .source-tag.rest {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--accent-green);
+        }
+
+        .card-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .card-body {
+            padding: 16px 20px;
+        }
+
+        .message-preview {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            line-height: 1.5;
+        }
+
+        .streaming-output {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'SF Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            max-height: 200px;
+            overflow-y: auto;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .streaming-output.active::after {
+            content: '|';
+            animation: cursor 0.8s infinite;
+            color: var(--accent-blue);
+        }
+
+        @keyframes cursor {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        .tools-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .tool-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 16px;
+            font-size: 11px;
+            font-weight: 500;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+        }
+
+        .tool-chip.running {
+            border-color: var(--accent-amber);
+            color: var(--accent-amber);
+        }
+
+        .tool-chip.completed {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        .tool-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .tool-chip.running .tool-dot {
+            animation: blink 0.5s infinite;
+        }
+
+        /* Side panel: Event log */
+        .event-list {
+            padding: 0;
+        }
+
+        .event-item {
+            display: flex;
+            gap: 12px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+
+        .event-time {
+            font-family: 'SF Mono', monospace;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            width: 70px;
+        }
+
+        .event-type {
+            flex-shrink: 0;
+            width: 80px;
+            font-weight: 600;
+        }
+
+        .event-type.tool-start { color: var(--accent-amber); }
+        .event-type.tool-end { color: var(--accent-green); }
+        .event-type.request-start { color: var(--accent-blue); }
+        .event-type.request-end { color: var(--accent-cyan); }
+        .event-type.error { color: var(--accent-red); }
+
+        .event-detail {
+            color: var(--text-secondary);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .hats-container {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .hat-tag {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: rgba(139, 92, 246, 0.15);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 4px;
+            color: var(--accent-purple);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 300px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .abort-btn {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .abort-btn:hover {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .duration {
+            font-family: 'SF Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>Activity Monitor</h1>
+            <div class="header-stats">
+                <div class="header-stat">
+                    <div class="header-stat-value" id="activeCount">0</div>
+                    <div class="header-stat-label">Active</div>
+                </div>
+                <div class="header-stat">
+                    <div class="header-stat-value" id="totalTools">0</div>
+                    <div class="header-stat-label">Tools Run</div>
+                </div>
+                <div class="header-stat">
+                    <div class="header-stat-value" id="avgDuration">0s</div>
+                    <div class="header-stat-label">Avg Duration</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-panel" id="mainPanel"></div>
+
+        <div class="side-panel">
+            <div class="side-panel-header">Event Log</div>
+            <div class="event-list" id="eventList"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8081';
+        const POLL_INTERVAL = 800;
+        let eventLog = [];
+        let lastToolCounts = {};
+
+        function formatTime(date) {
+            return new Date(date).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+
+        function formatDuration(ms) {
+            if (!ms) return '...';
+            if (ms < 1000) return `${ms}ms`;
+            if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+            return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+        }
+
+        function truncateId(id) {
+            if (!id || id.length <= 20) return id;
+            return id.slice(0, 10) + '...' + id.slice(-6);
+        }
+
+        function truncateText(text, max = 150) {
+            if (!text) return '';
+            return text.length > max ? text.slice(0, max) + '...' : text;
+        }
+
+        function addEvent(type, detail, time = new Date()) {
+            eventLog.unshift({ type, detail, time });
+            if (eventLog.length > 100) eventLog.pop();
+            renderEventLog();
+        }
+
+        function renderEventLog() {
+            const container = document.getElementById('eventList');
+            container.innerHTML = eventLog.map(e => `
+                <div class="event-item">
+                    <span class="event-time">${formatTime(e.time)}</span>
+                    <span class="event-type ${e.type.replace(/\s+/g, '-').toLowerCase()}">${e.type}</span>
+                    <span class="event-detail">${e.detail}</span>
+                </div>
+            `).join('');
+        }
+
+        function renderRequest(request) {
+            const isRunning = request.status === 'running';
+            const tools = request.tools || [];
+            const hats = request.hatIds || [];
+
+            const toolChips = tools.slice(-8).map(t => `
+                <span class="tool-chip ${t.status}">
+                    <span class="tool-dot"></span>
+                    ${t.name}${t.file ? ` (${t.file.split('/').pop().slice(0, 15)})` : ''}
+                </span>
+            `).join('');
+
+            const hatTags = hats.map(h => `<span class="hat-tag">${h}</span>`).join('');
+
+            return `
+                <div class="request-card ${isRunning ? 'running' : ''}">
+                    <div class="card-header">
+                        <div class="card-info">
+                            <span class="status-indicator ${request.status}"></span>
+                            <span class="request-id">${truncateId(request.requestId)}</span>
+                            <span class="source-tag ${request.source || 'rest'}">${request.source === 'websocket' ? 'WS' : 'REST'}</span>
+                        </div>
+                        <div class="card-meta">
+                            <span class="duration">${formatDuration(request.duration)}</span>
+                            ${isRunning ? `<button class="abort-btn" onclick="abortRequest('${request.requestId}')">Abort</button>` : ''}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="message-preview">${truncateText(request.message, 200) || 'No message'}</div>
+
+                        ${isRunning && request.streamingText ? `
+                            <div class="streaming-output active">${truncateText(request.streamingText, 500)}</div>
+                        ` : ''}
+
+                        ${tools.length > 0 ? `<div class="tools-row">${toolChips}</div>` : ''}
+
+                        ${hats.length > 0 ? `<div class="hats-container">${hatTags}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function abortRequest(requestId) {
+            try {
+                await fetch(`${API_BASE}/api/chat/abort/${requestId}`, { method: 'POST' });
+                addEvent('Abort', `Request ${truncateId(requestId)} aborted`);
+            } catch (e) {
+                console.error('Abort failed:', e);
+            }
+        }
+
+        async function fetchAndRender() {
+            try {
+                const response = await fetch(`${API_BASE}/api/chat/requests`);
+                const data = await response.json();
+                const requests = Array.isArray(data.requests) ? data.requests : [];
+
+                // Update stats
+                const activeCount = requests.filter(r => r.status === 'running').length;
+                const totalTools = requests.reduce((sum, r) => sum + (r.tools || []).length, 0);
+                const completedRequests = requests.filter(r => r.status === 'completed');
+                const avgDuration = completedRequests.length > 0
+                    ? completedRequests.reduce((sum, r) => sum + (r.duration || 0), 0) / completedRequests.length
+                    : 0;
+
+                document.getElementById('activeCount').textContent = activeCount;
+                document.getElementById('totalTools').textContent = totalTools;
+                document.getElementById('avgDuration').textContent = formatDuration(avgDuration);
+
+                // Detect new events for event log
+                requests.forEach(req => {
+                    const key = req.requestId;
+                    const prevToolCount = lastToolCounts[key] || 0;
+                    const currentToolCount = (req.tools || []).length;
+
+                    if (currentToolCount > prevToolCount) {
+                        const newTools = req.tools.slice(prevToolCount);
+                        newTools.forEach(t => {
+                            addEvent('Tool Start', `${t.name} in ${truncateId(key)}`);
+                        });
+                    }
+
+                    // Check for completed tools
+                    (req.tools || []).forEach((t, i) => {
+                        const toolKey = `${key}_${i}`;
+                        if (!lastToolCounts[toolKey] && t.status === 'completed') {
+                            addEvent('Tool End', `${t.name} (${formatDuration(t.duration)})`);
+                            lastToolCounts[toolKey] = true;
+                        }
+                    });
+
+                    lastToolCounts[key] = currentToolCount;
+                });
+
+                // Render
+                const container = document.getElementById('mainPanel');
+                if (requests.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                            <p>Waiting for activity...</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Sort by start time, running first
+                requests.sort((a, b) => {
+                    if (a.status === 'running' && b.status !== 'running') return -1;
+                    if (b.status === 'running' && a.status !== 'running') return 1;
+                    return new Date(b.startTime) - new Date(a.startTime);
+                });
+
+                container.innerHTML = requests.map(renderRequest).join('');
+
+            } catch (error) {
+                console.error('Failed to fetch:', error);
+            }
+        }
+
+        // Initial render
+        fetchAndRender();
+        setInterval(fetchAndRender, POLL_INTERVAL);
+    </script>
+</body>
+</html>

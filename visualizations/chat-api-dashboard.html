@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat API Dashboard</title>
+  <style>
+    :root {
+      /* Status Colors */
+      --status-pending: #6b7280;
+      --status-running: #f59e0b;
+      --status-completed: #10b981;
+      --status-error: #ef4444;
+      --status-aborted: #8b5cf6;
+
+      /* Tool Type Colors */
+      --tool-read: #3b82f6;
+      --tool-write: #10b981;
+      --tool-edit: #f59e0b;
+      --tool-bash: #ef4444;
+      --tool-grep: #8b5cf6;
+      --tool-glob: #06b6d4;
+      --tool-task: #ec4899;
+
+      /* UI Colors */
+      --bg-primary: #0f0f1a;
+      --bg-secondary: #1a1a2e;
+      --bg-card: #262637;
+      --border-color: #374151;
+      --text-primary: #f1f1f1;
+      --text-secondary: #9ca3af;
+      --accent: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    h1::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--status-running);
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      background: var(--bg-secondary);
+      padding: 12px 16px;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .panel-body {
+      padding: 16px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    /* Request Card */
+    .request-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .request-card:last-child {
+      margin-bottom: 0;
+    }
+
+    .request-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .request-id {
+      font-family: 'Consolas', monospace;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .status-badge {
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .status-running { background: var(--status-running); color: #000; }
+    .status-completed { background: var(--status-completed); color: #fff; }
+    .status-error { background: var(--status-error); color: #fff; }
+    .status-aborted { background: var(--status-aborted); color: #fff; }
+
+    .source-badge {
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      margin-left: 6px;
+    }
+    .source-websocket { background: #3b82f6; color: #fff; }
+    .source-rest { background: #10b981; color: #fff; }
+
+    .request-message {
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+
+    .request-meta {
+      display: flex;
+      gap: 16px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    /* Tool Pills */
+    .tools-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .tool-pill {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: 'Consolas', monospace;
+    }
+
+    .tool-pill.Read { background: var(--tool-read); }
+    .tool-pill.Write { background: var(--tool-write); }
+    .tool-pill.Edit { background: var(--tool-edit); color: #000; }
+    .tool-pill.Bash { background: var(--tool-bash); }
+    .tool-pill.Grep { background: var(--tool-grep); }
+    .tool-pill.Glob { background: var(--tool-glob); }
+    .tool-pill.Task { background: var(--tool-task); }
+
+    .tool-pill .spinner {
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .no-tools {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-style: italic;
+    }
+
+    /* Todo List */
+    .todos-container {
+      margin-top: 10px;
+      padding: 8px;
+      background: var(--bg-primary);
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+
+    .todos-header {
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text-secondary);
+    }
+
+    .todo-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .todo-item:last-child {
+      border-bottom: none;
+    }
+
+    .todo-check {
+      width: 16px;
+      text-align: center;
+    }
+
+    .todo-completed .todo-check { color: var(--status-completed); }
+    .todo-in_progress .todo-check { color: var(--status-running); animation: spin 2s linear infinite; }
+    .todo-pending .todo-check { color: var(--text-secondary); }
+
+    .todo-completed .todo-text { color: var(--text-secondary); text-decoration: line-through; }
+    .todo-in_progress .todo-text { color: var(--status-running); font-weight: 500; }
+
+    /* Streaming Preview */
+    .streaming-preview {
+      margin-top: 10px;
+      padding: 8px;
+      background: var(--bg-primary);
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+
+    .streaming-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .streaming-content {
+      font-family: 'Consolas', monospace;
+      font-size: 0.8rem;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      max-height: 80px;
+      overflow-y: auto;
+      color: var(--text-primary);
+    }
+
+    /* Errors */
+    .errors-container {
+      margin-top: 10px;
+      padding: 8px;
+      background: rgba(239, 68, 68, 0.1);
+      border-radius: 4px;
+      border: 1px solid var(--status-error);
+    }
+
+    .error-label {
+      font-size: 0.75rem;
+      color: var(--status-error);
+      margin-bottom: 4px;
+    }
+
+    .error-item {
+      font-family: 'Consolas', monospace;
+      font-size: 0.75rem;
+      color: var(--status-error);
+      padding: 2px 0;
+    }
+
+    .error-indicator {
+      margin-top: 6px;
+      font-size: 0.75rem;
+      color: var(--status-error);
+    }
+
+    .tools-summary {
+      margin-top: 6px;
+    }
+
+    .tools-summary .tool-pill {
+      font-size: 0.7rem;
+      padding: 2px 6px;
+    }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      padding-left: 20px;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--border-color);
+    }
+
+    .timeline-event {
+      position: relative;
+      padding: 8px 0;
+      font-size: 0.85rem;
+    }
+
+    .timeline-event::before {
+      content: '';
+      position: absolute;
+      left: -20px;
+      top: 12px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .timeline-event.tool::before { background: var(--tool-read); }
+    .timeline-event.text::before { background: var(--status-completed); }
+    .timeline-event.error::before { background: var(--status-error); }
+
+    .timeline-time {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-family: 'Consolas', monospace;
+    }
+
+    /* Streaming Text */
+    .streaming-text {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      padding: 12px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .streaming-text .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      background: var(--accent);
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    /* Progress Bar */
+    .progress-bar {
+      height: 4px;
+      background: var(--bg-primary);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.3s ease;
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-secondary);
+    }
+
+    /* Actions */
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover {
+      opacity: 0.8;
+    }
+
+    .btn-abort {
+      background: var(--status-error);
+      color: #fff;
+    }
+
+    .btn-view {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    /* Responsive */
+    @media (max-width: 1000px) {
+      .dashboard {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Chat API Request Dashboard</h1>
+
+  <div class="dashboard">
+    <!-- Active Requests Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Active Requests</span>
+        <span id="active-count">0</span>
+      </div>
+      <div class="panel-body" id="active-requests">
+        <div class="empty-state">No active requests</div>
+      </div>
+    </div>
+
+    <!-- Recent Requests Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Recent Completed</span>
+        <span id="completed-count">0</span>
+      </div>
+      <div class="panel-body" id="completed-requests">
+        <div class="empty-state">No completed requests</div>
+      </div>
+    </div>
+
+    <!-- Live Streaming Panel -->
+    <div class="panel" style="grid-column: 1 / -1;">
+      <div class="panel-header">
+        <span>Live Stream</span>
+        <span id="stream-request-id">-</span>
+      </div>
+      <div class="panel-body">
+        <div class="streaming-text" id="stream-output">
+          Waiting for active request...<span class="cursor"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Event Timeline Panel -->
+    <div class="panel" style="grid-column: 1 / -1;">
+      <div class="panel-header">
+        <span>Event Timeline</span>
+        <button class="btn btn-view" onclick="clearTimeline()">Clear</button>
+      </div>
+      <div class="panel-body">
+        <div class="timeline" id="timeline">
+          <div class="empty-state">Events will appear here</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:8081';
+    let pollInterval = null;
+    let currentStreamRequest = null;
+
+    // Start polling for requests
+    async function startPolling() {
+      await fetchRequests();
+      pollInterval = setInterval(fetchRequests, 1000);
+    }
+
+    // Fetch all requests
+    async function fetchRequests() {
+      try {
+        const response = await fetch(`${API_BASE}/api/chat/requests`);
+        const data = await response.json();
+
+        const requests = data.requests || data;
+        const active = requests.filter(r => r.status === 'running');
+        const completed = requests.filter(r => r.status !== 'running');
+
+        renderActiveRequests(active);
+        renderCompletedRequests(completed);
+
+        // Stream the first active request
+        if (active.length > 0) {
+          const firstActive = active[0];
+          currentStreamRequest = firstActive.requestId;
+          document.getElementById('stream-request-id').textContent = firstActive.requestId;
+
+          // Update stream output from the list data directly
+          if (firstActive.streamingText) {
+            const outputEl = document.getElementById('stream-output');
+            outputEl.innerHTML = escapeHtml(firstActive.streamingText) + '<span class="cursor"></span>';
+            outputEl.scrollTop = outputEl.scrollHeight;
+          }
+        } else {
+          currentStreamRequest = null;
+          document.getElementById('stream-request-id').textContent = '-';
+          document.getElementById('stream-output').innerHTML = 'Waiting for active request...<span class="cursor"></span>';
+        }
+      } catch (error) {
+        console.error('Failed to fetch requests:', error);
+      }
+    }
+
+    // Render active requests
+    function renderActiveRequests(requests) {
+      const container = document.getElementById('active-requests');
+      document.getElementById('active-count').textContent = requests.length;
+
+      if (requests.length === 0) {
+        container.innerHTML = '<div class="empty-state">No active requests</div>';
+        return;
+      }
+
+      container.innerHTML = requests.map(req => `
+        <div class="request-card">
+          <div class="request-header">
+            <span class="request-id">${req.requestId}</span>
+            <span class="source-badge source-${req.source || 'rest'}">${req.source || 'rest'}</span>
+            <span class="status-badge status-${req.status}">${req.status}</span>
+          </div>
+          <div class="request-message">${escapeHtml(truncate(req.message, 150))}</div>
+          <div class="request-meta">
+            <span>Duration: ${formatDuration(req.duration)}</span>
+            <span>Tab: ${req.tabId || 'N/A'}</span>
+            ${req.hatIds && req.hatIds.length > 0 ? `<span>Hats: ${req.hatIds.join(', ')}</span>` : ''}
+          </div>
+          ${req.tools && req.tools.length > 0 ? `
+            <div class="tools-container">
+              ${req.tools.map(t => `
+                <span class="tool-pill ${t.name}" title="${t.file || t.name}">
+                  ${t.status === 'running' ? '<span class="spinner"></span>' : '✓'}
+                  ${t.name}${t.file ? ': ' + truncateFile(t.file) : ''}
+                  ${t.duration ? ' (' + formatDuration(t.duration) + ')' : ''}
+                </span>
+              `).join('')}
+            </div>
+          ` : '<div class="tools-container"><span class="no-tools">No tools used yet</span></div>'}
+          ${req.todos && req.todos.length > 0 ? `
+            <div class="todos-container">
+              <div class="todos-header">📋 Todo List (${req.todos.filter(t => t.status === 'completed').length}/${req.todos.length})</div>
+              ${req.todos.map(t => `
+                <div class="todo-item todo-${t.status}">
+                  <span class="todo-check">${t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '⟳' : '○'}</span>
+                  <span class="todo-text">${escapeHtml(truncate(t.content, 60))}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+          ${req.streamingText ? `
+            <div class="streaming-preview">
+              <div class="streaming-label">Output Preview:</div>
+              <div class="streaming-content">${escapeHtml(req.streamingText.slice(-200))}${req.status === 'running' ? '<span class="cursor"></span>' : ''}</div>
+            </div>
+          ` : ''}
+          ${req.errors && req.errors.length > 0 ? `
+            <div class="errors-container">
+              <div class="error-label">⚠️ Errors:</div>
+              ${req.errors.slice(-3).map(e => `<div class="error-item">${escapeHtml(truncate(e, 100))}</div>`).join('')}
+            </div>
+          ` : ''}
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: ${Math.min(req.duration / 60000 * 100, 100)}%"></div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-abort" onclick="abortRequest('${req.requestId}')">Abort</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Render completed requests
+    function renderCompletedRequests(requests) {
+      const container = document.getElementById('completed-requests');
+      document.getElementById('completed-count').textContent = requests.length;
+
+      if (requests.length === 0) {
+        container.innerHTML = '<div class="empty-state">No completed requests</div>';
+        return;
+      }
+
+      // Show most recent first, limit to 10
+      const sorted = requests.sort((a, b) => {
+        const timeA = new Date(a.startTime).getTime() + a.duration;
+        const timeB = new Date(b.startTime).getTime() + b.duration;
+        return timeB - timeA;
+      }).slice(0, 10);
+
+      container.innerHTML = sorted.map(req => `
+        <div class="request-card">
+          <div class="request-header">
+            <span class="request-id">${req.requestId}</span>
+            <span class="source-badge source-${req.source || 'rest'}">${req.source || 'rest'}</span>
+            <span class="status-badge status-${req.status}">${req.status}</span>
+          </div>
+          <div class="request-message">${escapeHtml(truncate(req.message, 150))}</div>
+          <div class="request-meta">
+            <span>Duration: ${formatDuration(req.duration)}</span>
+            <span>Tab: ${req.tabId || 'N/A'}</span>
+            <span>Tools: ${req.tools ? req.tools.length : 0}</span>
+            ${req.todos && req.todos.length > 0 ? `<span>Todos: ${req.todos.filter(t => t.status === 'completed').length}/${req.todos.length}</span>` : ''}
+          </div>
+          ${req.tools && req.tools.length > 0 ? `
+            <div class="tools-container tools-summary">
+              ${summarizeTools(req.tools).map(t => `
+                <span class="tool-pill ${t.name}" title="${t.count} calls">
+                  ${t.name} (${t.count})
+                </span>
+              `).join('')}
+            </div>
+          ` : ''}
+          ${req.errors && req.errors.length > 0 ? `
+            <div class="error-indicator">⚠️ ${req.errors.length} error(s)</div>
+          ` : ''}
+        </div>
+      `).join('');
+    }
+
+    // Abort a request
+    async function abortRequest(requestId) {
+      try {
+        await fetch(`${API_BASE}/api/chat/abort/${requestId}`, { method: 'POST' });
+        addTimelineEvent('error', `Request ${requestId} aborted`);
+      } catch (error) {
+        console.error('Failed to abort request:', error);
+      }
+    }
+
+    // Add event to timeline
+    function addTimelineEvent(type, message) {
+      const timeline = document.getElementById('timeline');
+
+      // Remove empty state if present
+      const empty = timeline.querySelector('.empty-state');
+      if (empty) empty.remove();
+
+      const event = document.createElement('div');
+      event.className = `timeline-event ${type}`;
+      event.innerHTML = `
+        <div class="timeline-time">${new Date().toLocaleTimeString()}</div>
+        <div>${escapeHtml(message)}</div>
+      `;
+
+      timeline.insertBefore(event, timeline.firstChild);
+
+      // Limit to 50 events
+      while (timeline.children.length > 50) {
+        timeline.removeChild(timeline.lastChild);
+      }
+    }
+
+    // Clear timeline
+    function clearTimeline() {
+      document.getElementById('timeline').innerHTML = '<div class="empty-state">Events will appear here</div>';
+    }
+
+    // Utility functions
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function formatDuration(ms) {
+      if (ms < 1000) return `${ms}ms`;
+      if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+      return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+    }
+
+    function truncate(str, maxLen) {
+      if (!str) return '';
+      return str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
+    }
+
+    function truncateFile(filePath) {
+      if (!filePath) return '';
+      // Show just the filename, not the full path
+      const parts = filePath.split('/');
+      return parts[parts.length - 1];
+    }
+
+    function summarizeTools(tools) {
+      // Group tools by name and count occurrences
+      const counts = {};
+      tools.forEach(t => {
+        counts[t.name] = (counts[t.name] || 0) + 1;
+      });
+      return Object.entries(counts).map(([name, count]) => ({ name, count }));
+    }
+
+    // Start on load
+    startPolling();
+  </script>
+</body>
+</html>

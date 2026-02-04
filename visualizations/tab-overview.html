@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tab Overview - Claude Chat API</title>
+    <style>
+        :root {
+            --bg-base: #0d1117;
+            --bg-surface: #161b22;
+            --bg-elevated: #21262d;
+            --bg-overlay: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --border: #30363d;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-amber: #d29922;
+            --accent-red: #f85149;
+            --accent-purple: #a371f7;
+            --accent-pink: #db61a2;
+            --accent-cyan: #56d4dd;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 24px;
+            font-size: 13px;
+        }
+
+        .header-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .header-stat-value {
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        .header-stat-label {
+            color: var(--text-secondary);
+        }
+
+        .container {
+            padding: 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 20px;
+        }
+
+        .tab-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .tab-header {
+            background: var(--bg-elevated);
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tab-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .tab-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .tab-icon.active {
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+        }
+
+        .tab-icon.idle {
+            background: var(--bg-overlay);
+        }
+
+        .tab-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .tab-id {
+            font-size: 11px;
+            font-family: 'SF Mono', monospace;
+            color: var(--text-muted);
+        }
+
+        .tab-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .tab-meta span {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .request-list {
+            padding: 0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .request-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .request-item:hover {
+            background: var(--bg-elevated);
+        }
+
+        .request-item:last-child {
+            border-bottom: none;
+        }
+
+        .request-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .request-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-dot.running {
+            background: var(--accent-amber);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-dot.completed {
+            background: var(--accent-green);
+        }
+
+        .status-dot.error {
+            background: var(--accent-red);
+        }
+
+        .status-dot.aborted {
+            background: var(--accent-purple);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        .request-time {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .request-message {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-bottom: 10px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .request-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tool-dots {
+            display: flex;
+            gap: 3px;
+        }
+
+        .tool-dot {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .tool-dot.Read { background: #3b82f6; }
+        .tool-dot.Write { background: #22c55e; }
+        .tool-dot.Edit { background: #f59e0b; }
+        .tool-dot.Bash { background: #ef4444; }
+        .tool-dot.Grep { background: #8b5cf6; }
+        .tool-dot.Glob { background: #06b6d4; }
+        .tool-dot.Task { background: #ec4899; }
+        .tool-dot.other { background: #6e7681; }
+
+        .request-duration {
+            font-size: 12px;
+            font-family: 'SF Mono', monospace;
+            color: var(--text-muted);
+        }
+
+        .hat-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .hat-tag {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: rgba(163, 113, 247, 0.15);
+            border: 1px solid rgba(163, 113, 247, 0.3);
+            border-radius: 4px;
+            color: var(--accent-purple);
+        }
+
+        .source-badge {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 8px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .source-badge.websocket {
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-blue);
+        }
+
+        .source-badge.rest {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+            text-align: center;
+            grid-column: 1 / -1;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 16px;
+            opacity: 0.4;
+        }
+
+        /* Request detail modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        .modal-body {
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .modal-section {
+            margin-bottom: 20px;
+        }
+
+        .modal-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .modal-section-content {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-primary);
+        }
+
+        .modal-tools {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .modal-tool {
+            padding: 6px 12px;
+            background: var(--bg-elevated);
+            border-radius: 6px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .modal-streaming {
+            background: var(--bg-base);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'SF Mono', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .no-requests {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Tab Overview</h1>
+        <div class="header-stats">
+            <div class="header-stat">
+                <span class="header-stat-value" id="tabCount">0</span>
+                <span class="header-stat-label">Tabs</span>
+            </div>
+            <div class="header-stat">
+                <span class="header-stat-value" id="requestCount">0</span>
+                <span class="header-stat-label">Requests</span>
+            </div>
+            <div class="header-stat">
+                <span class="header-stat-value" id="activeCount">0</span>
+                <span class="header-stat-label">Active</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="container" id="tabContainer"></div>
+
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title" id="modalTitle">Request Details</span>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8081';
+        const POLL_INTERVAL = 1000;
+
+        function formatTime(date) {
+            return new Date(date).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+
+        function formatDuration(ms) {
+            if (!ms) return '...';
+            if (ms < 1000) return `${ms}ms`;
+            if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+            return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+        }
+
+        function truncateText(text, max = 100) {
+            if (!text) return '';
+            return text.length > max ? text.slice(0, max) + '...' : text;
+        }
+
+        function getToolAbbrev(name) {
+            const abbrevs = {
+                'Read': 'R',
+                'Write': 'W',
+                'Edit': 'E',
+                'Bash': 'B',
+                'Grep': 'G',
+                'Glob': 'L',
+                'Task': 'T',
+                'WebFetch': 'F',
+                'WebSearch': 'S',
+                'AskUserQuestion': 'A',
+                'TodoWrite': 'D',
+                'EnterPlanMode': 'P',
+                'ExitPlanMode': 'X'
+            };
+            return abbrevs[name] || name.charAt(0);
+        }
+
+        function getToolClass(name) {
+            const known = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Task'];
+            return known.includes(name) ? name : 'other';
+        }
+
+        function renderToolDots(tools) {
+            if (!tools || tools.length === 0) return '';
+
+            // Group tools by type and count
+            const grouped = {};
+            tools.forEach(t => {
+                grouped[t.name] = (grouped[t.name] || 0) + 1;
+            });
+
+            return Object.entries(grouped).slice(0, 8).map(([name, count]) => `
+                <div class="tool-dot ${getToolClass(name)}" title="${name}: ${count}">
+                    ${getToolAbbrev(name)}
+                </div>
+            `).join('');
+        }
+
+        function showModal(request) {
+            const modal = document.getElementById('modalOverlay');
+            const title = document.getElementById('modalTitle');
+            const body = document.getElementById('modalBody');
+
+            title.textContent = `Request ${request.requestId.slice(0, 20)}...`;
+
+            const tools = (request.tools || []).map(t => `
+                <div class="modal-tool">
+                    <div class="tool-dot ${getToolClass(t.name)}" style="width:14px;height:14px;font-size:8px;">
+                        ${getToolAbbrev(t.name)}
+                    </div>
+                    <span>${t.name}</span>
+                    <span style="color:var(--text-muted)">${formatDuration(t.duration)}</span>
+                </div>
+            `).join('') || '<span style="color:var(--text-muted)">No tools used</span>';
+
+            const hats = (request.hatIds || []).map(h => `<span class="hat-tag">${h}</span>`).join('') || '<span style="color:var(--text-muted)">No hats</span>';
+
+            body.innerHTML = `
+                <div class="modal-section">
+                    <div class="modal-section-title">Status</div>
+                    <div class="modal-section-content">
+                        <span class="status-dot ${request.status}" style="display:inline-block;margin-right:8px;"></span>
+                        ${request.status}
+                        <span class="source-badge ${request.source || 'rest'}" style="margin-left:12px;">
+                            ${request.source === 'websocket' ? 'WS' : 'REST'}
+                        </span>
+                    </div>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-section-title">Message</div>
+                    <div class="modal-section-content">${request.message || 'No message'}</div>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-section-title">Duration</div>
+                    <div class="modal-section-content">${formatDuration(request.duration)}</div>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-section-title">Tools (${(request.tools || []).length})</div>
+                    <div class="modal-tools">${tools}</div>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-section-title">Hats</div>
+                    <div class="hat-tags" style="margin-top:0">${hats}</div>
+                </div>
+                ${request.streamingText ? `
+                <div class="modal-section">
+                    <div class="modal-section-title">Output</div>
+                    <div class="modal-streaming">${truncateText(request.streamingText, 1000)}</div>
+                </div>
+                ` : ''}
+            `;
+
+            modal.classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modalOverlay').classList.remove('active');
+        }
+
+        // Close modal on overlay click
+        document.getElementById('modalOverlay').addEventListener('click', (e) => {
+            if (e.target.id === 'modalOverlay') closeModal();
+        });
+
+        // Close modal on Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        function renderTabCard(tabId, requests) {
+            const hasActive = requests.some(r => r.status === 'running');
+            const totalTools = requests.reduce((sum, r) => sum + (r.tools || []).length, 0);
+
+            const requestItems = requests.map(r => `
+                <div class="request-item" onclick='showModal(${JSON.stringify(r)})'>
+                    <div class="request-top">
+                        <div class="request-status">
+                            <span class="status-dot ${r.status}"></span>
+                            <span class="source-badge ${r.source || 'rest'}">${r.source === 'websocket' ? 'WS' : 'REST'}</span>
+                        </div>
+                        <span class="request-time">${formatTime(r.startTime)}</span>
+                    </div>
+                    <div class="request-message">${truncateText(r.message, 120) || 'No message'}</div>
+                    <div class="request-footer">
+                        <div class="tool-dots">${renderToolDots(r.tools)}</div>
+                        <span class="request-duration">${formatDuration(r.duration)}</span>
+                    </div>
+                    ${(r.hatIds || []).length > 0 ? `
+                        <div class="hat-tags">
+                            ${r.hatIds.slice(0, 3).map(h => `<span class="hat-tag">${h}</span>`).join('')}
+                            ${r.hatIds.length > 3 ? `<span class="hat-tag">+${r.hatIds.length - 3}</span>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('') || '<div class="no-requests">No requests in this tab</div>';
+
+            return `
+                <div class="tab-card">
+                    <div class="tab-header">
+                        <div class="tab-info">
+                            <div class="tab-icon ${hasActive ? 'active' : 'idle'}">
+                                ${hasActive ? '⚡' : '📋'}
+                            </div>
+                            <div>
+                                <div class="tab-name">Tab ${tabId.split('-').pop()}</div>
+                                <div class="tab-id">${tabId}</div>
+                            </div>
+                        </div>
+                        <div class="tab-meta">
+                            <span>📝 ${requests.length}</span>
+                            <span>🔧 ${totalTools}</span>
+                        </div>
+                    </div>
+                    <div class="request-list">
+                        ${requestItems}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function fetchAndRender() {
+            try {
+                const response = await fetch(`${API_BASE}/api/chat/requests`);
+                const data = await response.json();
+                const requests = Array.isArray(data.requests) ? data.requests : [];
+
+                // Group by tabId
+                const tabGroups = {};
+                requests.forEach(r => {
+                    const tabId = r.tabId || 'unknown';
+                    if (!tabGroups[tabId]) tabGroups[tabId] = [];
+                    tabGroups[tabId].push(r);
+                });
+
+                // Sort requests within each tab by startTime (newest first)
+                Object.values(tabGroups).forEach(group => {
+                    group.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+                });
+
+                // Update stats
+                const tabCount = Object.keys(tabGroups).length;
+                const activeCount = requests.filter(r => r.status === 'running').length;
+
+                document.getElementById('tabCount').textContent = tabCount;
+                document.getElementById('requestCount').textContent = requests.length;
+                document.getElementById('activeCount').textContent = activeCount;
+
+                const container = document.getElementById('tabContainer');
+
+                if (requests.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                            <p>No tabs with activity yet</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Sort tabs: active first, then by most recent activity
+                const sortedTabs = Object.entries(tabGroups).sort((a, b) => {
+                    const aActive = a[1].some(r => r.status === 'running');
+                    const bActive = b[1].some(r => r.status === 'running');
+                    if (aActive && !bActive) return -1;
+                    if (bActive && !aActive) return 1;
+
+                    const aLatest = new Date(a[1][0].startTime);
+                    const bLatest = new Date(b[1][0].startTime);
+                    return bLatest - aLatest;
+                });
+
+                container.innerHTML = sortedTabs.map(([tabId, reqs]) => renderTabCard(tabId, reqs)).join('');
+
+            } catch (error) {
+                console.error('Failed to fetch:', error);
+            }
+        }
+
+        fetchAndRender();
+        setInterval(fetchAndRender, POLL_INTERVAL);
+    </script>
+</body>
+</html>
