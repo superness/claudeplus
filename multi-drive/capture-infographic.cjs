@@ -13,8 +13,8 @@ async function captureInfographic() {
 
   // Set viewport to capture full infographic
   await page.setViewport({
-    width: 1400,
-    height: 1000,
+    width: 1260,
+    height: 720,
     deviceScaleFactor: 2 // High DPI for crisp screenshot
   });
 
@@ -29,11 +29,11 @@ async function captureInfographic() {
   // Wait a moment for any CSS transitions
   await new Promise(r => setTimeout(r, 500));
 
-  // Take screenshot
+  // Take screenshot of just the infographic element
   const screenshotPath = path.join(__dirname, 'maestro-infographic-screenshot.png');
-  await page.screenshot({
-    path: screenshotPath,
-    fullPage: true
+  const infographic = await page.$('.infographic');
+  await infographic.screenshot({
+    path: screenshotPath
   });
 
   console.log(`Screenshot saved to: ${screenshotPath}`);
