@@ -1,0 +1,2338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokemon Battles - AI Agent Arena</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Press Start 2P', monospace;
+            background: #0f0f23;
+            min-height: 100vh;
+            color: #fff;
+            overflow: hidden;
+        }
+
+        /* ============================================
+           HEADER - Game Boy style top bar
+        ============================================ */
+        .header {
+            background: linear-gradient(180deg, #2d2d5a 0%, #1a1a3a 100%);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 4px solid #ffcc00;
+            box-shadow: 0 4px 20px rgba(255, 204, 0, 0.3);
+        }
+
+        .title-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .pokeball-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(180deg, #ff4444 50%, #fff 50%);
+            border-radius: 50%;
+            border: 3px solid #333;
+            position: relative;
+            animation: pokeballSpin 3s linear infinite;
+        }
+
+        .pokeball-icon::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 10px;
+            height: 10px;
+            background: #fff;
+            border-radius: 50%;
+            border: 3px solid #333;
+        }
+
+        @keyframes pokeballSpin {
+            0%, 90%, 100% { transform: rotate(0deg); }
+            95% { transform: rotate(360deg); }
+        }
+
+        .header h1 {
+            font-size: 1rem;
+            color: #ffcc00;
+            text-shadow:
+                2px 2px 0 #ff6600,
+                -1px -1px 0 #cc9900;
+            letter-spacing: 2px;
+        }
+
+        .header h1 .subtitle {
+            font-size: 0.5rem;
+            color: #88aaff;
+            display: block;
+            margin-top: 4px;
+            text-shadow: none;
+            letter-spacing: 1px;
+        }
+
+        .stats-row {
+            display: flex;
+            gap: 25px;
+        }
+
+        .stat-box {
+            background: rgba(0,0,0,0.5);
+            border: 2px solid #444;
+            border-radius: 8px;
+            padding: 8px 15px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.45rem;
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 0.8rem;
+            color: #ffcc00;
+            text-shadow: 0 0 10px rgba(255,204,0,0.5);
+        }
+
+        /* ============================================
+           MAIN LAYOUT
+        ============================================ */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        /* ============================================
+           POKEDEX PANEL - Team roster
+        ============================================ */
+        .pokedex-panel {
+            width: 320px;
+            background: linear-gradient(135deg, #1a1a3a 0%, #0f0f23 100%);
+            border-right: 4px solid #333;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .pokedex-header {
+            background: linear-gradient(90deg, #cc2222 0%, #ff4444 50%, #cc2222 100%);
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 3px solid #881111;
+        }
+
+        .pokedex-led {
+            width: 20px;
+            height: 20px;
+            background: radial-gradient(circle at 30% 30%, #88ffff, #00aaff);
+            border-radius: 50%;
+            border: 2px solid #006688;
+            animation: ledPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes ledPulse {
+            0%, 100% { box-shadow: 0 0 5px #00aaff; }
+            50% { box-shadow: 0 0 20px #00aaff, 0 0 30px #88ffff; }
+        }
+
+        .pokedex-title {
+            font-size: 0.7rem;
+            color: #fff;
+            text-shadow: 1px 1px 0 #880000;
+        }
+
+        .team-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .team-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .team-list::-webkit-scrollbar-track {
+            background: #1a1a3a;
+        }
+
+        .team-list::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        /* Agent Pokemon Card */
+        .poke-card {
+            background: linear-gradient(145deg, #2a2a5a 0%, #1a1a3a 100%);
+            border: 3px solid #444;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .poke-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                45deg,
+                transparent 0%,
+                rgba(255,255,255,0.05) 50%,
+                transparent 100%
+            );
+            animation: cardShine 3s linear infinite;
+            pointer-events: none;
+        }
+
+        @keyframes cardShine {
+            0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
+            100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
+        }
+
+        .poke-card:hover {
+            border-color: #ffcc00;
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(255,204,0,0.3);
+        }
+
+        .poke-card.in-battle {
+            border-color: #ff6600;
+            animation: battlePulse 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes battlePulse {
+            from { box-shadow: 0 0 10px rgba(255,102,0,0.3); }
+            to { box-shadow: 0 0 25px rgba(255,102,0,0.7); }
+        }
+
+        .poke-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .poke-name {
+            font-size: 0.6rem;
+            color: #fff;
+            text-shadow: 1px 1px 0 #000;
+        }
+
+        .poke-level {
+            font-size: 0.5rem;
+            background: linear-gradient(180deg, #444 0%, #222 100%);
+            color: #ffcc00;
+            padding: 3px 8px;
+            border-radius: 4px;
+            border: 1px solid #666;
+        }
+
+        .poke-sprite-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 10px 0;
+        }
+
+        .poke-sprite {
+            width: 64px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: spriteFloat 2s ease-in-out infinite;
+        }
+
+        @keyframes spriteFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        .poke-info {
+            flex: 1;
+        }
+
+        .poke-types {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 6px;
+        }
+
+        .type-badge {
+            font-size: 0.4rem;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .type-fire { background: linear-gradient(135deg, #ff6b35 0%, #cc4411 100%); }
+        .type-water { background: linear-gradient(135deg, #5090ff 0%, #3366cc 100%); }
+        .type-grass { background: linear-gradient(135deg, #5dbe5d 0%, #3a8a3a 100%); }
+        .type-electric { background: linear-gradient(135deg, #ffd93d 0%, #cc9900 100%); color: #333; }
+        .type-psychic { background: linear-gradient(135deg, #ff6699 0%, #cc3366 100%); }
+        .type-ghost { background: linear-gradient(135deg, #7766cc 0%, #553399 100%); }
+        .type-normal { background: linear-gradient(135deg, #a8a8a8 0%, #777 100%); }
+        .type-fighting { background: linear-gradient(135deg, #cc5544 0%, #993322 100%); }
+        .type-dark { background: linear-gradient(135deg, #555577 0%, #333355 100%); }
+        .type-steel { background: linear-gradient(135deg, #9999bb 0%, #6666aa 100%); }
+        .type-ice { background: linear-gradient(135deg, #66ccff 0%, #4499cc 100%); }
+        .type-dragon { background: linear-gradient(135deg, #7766ee 0%, #5544bb 100%); }
+        .type-fairy { background: linear-gradient(135deg, #ffaacc 0%, #ee7799 100%); }
+
+        .poke-stats-mini {
+            display: flex;
+            gap: 8px;
+            font-size: 0.4rem;
+        }
+
+        .mini-stat {
+            color: #aaa;
+        }
+
+        .mini-stat span {
+            color: #ffcc00;
+        }
+
+        /* HP Bar */
+        .hp-bar-wrap {
+            margin: 8px 0;
+        }
+
+        .hp-bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.4rem;
+            color: #888;
+            margin-bottom: 3px;
+        }
+
+        .hp-bar {
+            height: 10px;
+            background: #222;
+            border-radius: 5px;
+            overflow: hidden;
+            border: 1px solid #444;
+        }
+
+        .hp-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #44cc44 0%, #88ff88 50%, #44cc44 100%);
+            transition: width 0.5s ease;
+            position: relative;
+        }
+
+        .hp-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: rgba(255,255,255,0.3);
+        }
+
+        .hp-fill.medium {
+            background: linear-gradient(90deg, #ccaa00 0%, #ffdd44 50%, #ccaa00 100%);
+        }
+
+        .hp-fill.low {
+            background: linear-gradient(90deg, #cc3333 0%, #ff6666 50%, #cc3333 100%);
+        }
+
+        /* XP Bar */
+        .xp-bar-wrap {
+            margin-top: 6px;
+        }
+
+        .xp-bar {
+            height: 6px;
+            background: #1a1a1a;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .xp-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3366cc 0%, #5588ff 50%, #3366cc 100%);
+            transition: width 0.8s ease;
+        }
+
+        /* Battle wins badge */
+        .wins-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: linear-gradient(135deg, #ffcc00 0%, #ff9900 100%);
+            color: #333;
+            font-size: 0.4rem;
+            padding: 3px 6px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        /* ============================================
+           BATTLE ARENA
+        ============================================ */
+        .battle-arena {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Arena background layers */
+        .arena-bg {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg,
+                #87ceeb 0%,
+                #add8e6 30%,
+                #90ee90 60%,
+                #228b22 100%
+            );
+        }
+
+        /* Clouds layer */
+        .clouds {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 40%;
+            overflow: hidden;
+        }
+
+        .cloud {
+            position: absolute;
+            background: rgba(255,255,255,0.8);
+            border-radius: 50px;
+            animation: cloudFloat linear infinite;
+        }
+
+        @keyframes cloudFloat {
+            0% { transform: translateX(-200px); }
+            100% { transform: translateX(calc(100vw + 200px)); }
+        }
+
+        /* Grass field */
+        .grass-field {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 45%;
+            background: linear-gradient(180deg,
+                #4a8b4a 0%,
+                #3d7a3d 50%,
+                #2d5a2d 100%
+            );
+        }
+
+        .grass-pattern {
+            position: absolute;
+            inset: 0;
+            background-image:
+                repeating-linear-gradient(
+                    90deg,
+                    transparent,
+                    transparent 20px,
+                    rgba(0,0,0,0.05) 20px,
+                    rgba(0,0,0,0.05) 40px
+                ),
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 15px,
+                    rgba(0,0,0,0.03) 15px,
+                    rgba(0,0,0,0.03) 30px
+                );
+        }
+
+        /* Battle platforms */
+        .platform {
+            position: absolute;
+            width: 200px;
+            height: 50px;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                rgba(0,0,0,0.2) 20%,
+                rgba(0,0,0,0.3) 50%,
+                rgba(0,0,0,0.2) 80%,
+                transparent 100%
+            );
+            border-radius: 100px / 25px;
+        }
+
+        .platform-agent {
+            left: 10%;
+            bottom: 15%;
+        }
+
+        .platform-enemy {
+            right: 15%;
+            top: 35%;
+            transform: scale(0.8);
+        }
+
+        /* Battle combatants */
+        .combatant {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .combatant-agent {
+            left: 10%;
+            bottom: 18%;
+        }
+
+        .combatant-enemy {
+            right: 15%;
+            top: 28%;
+        }
+
+        .battle-sprite {
+            font-size: 6rem;
+            filter: drop-shadow(4px 4px 8px rgba(0,0,0,0.5));
+            animation: battleIdle 1.5s ease-in-out infinite;
+            transition: all 0.3s ease;
+        }
+
+        .combatant-agent .battle-sprite {
+            transform: scaleX(-1);
+        }
+
+        @keyframes battleIdle {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .combatant-agent .battle-sprite {
+            animation: battleIdleAgent 1.5s ease-in-out infinite;
+        }
+
+        @keyframes battleIdleAgent {
+            0%, 100% { transform: scaleX(-1) translateY(0); }
+            50% { transform: scaleX(-1) translateY(-10px); }
+        }
+
+        .battle-sprite.attacking {
+            animation: attackAnim 0.5s ease-out !important;
+        }
+
+        .combatant-agent .battle-sprite.attacking {
+            animation: attackAnimAgent 0.5s ease-out !important;
+        }
+
+        @keyframes attackAnim {
+            0% { transform: translateX(0) scale(1); }
+            30% { transform: translateX(-80px) scale(1.3); }
+            60% { transform: translateX(-80px) scale(1.3); }
+            100% { transform: translateX(0) scale(1); }
+        }
+
+        @keyframes attackAnimAgent {
+            0% { transform: scaleX(-1) translateX(0) scale(1); }
+            30% { transform: scaleX(-1) translateX(-80px) scale(1.3); }
+            60% { transform: scaleX(-1) translateX(-80px) scale(1.3); }
+            100% { transform: scaleX(-1) translateX(0) scale(1); }
+        }
+
+        .battle-sprite.hit {
+            animation: hitAnim 0.4s ease-out !important;
+        }
+
+        .combatant-agent .battle-sprite.hit {
+            animation: hitAnimAgent 0.4s ease-out !important;
+        }
+
+        @keyframes hitAnim {
+            0%, 100% { opacity: 1; transform: translateX(0); }
+            20% { opacity: 0.3; transform: translateX(15px); }
+            40% { opacity: 1; transform: translateX(-10px); }
+            60% { opacity: 0.5; transform: translateX(8px); }
+            80% { opacity: 1; transform: translateX(-5px); }
+        }
+
+        @keyframes hitAnimAgent {
+            0%, 100% { opacity: 1; transform: scaleX(-1) translateX(0); }
+            20% { opacity: 0.3; transform: scaleX(-1) translateX(15px); }
+            40% { opacity: 1; transform: scaleX(-1) translateX(-10px); }
+            60% { opacity: 0.5; transform: scaleX(-1) translateX(8px); }
+            80% { opacity: 1; transform: scaleX(-1) translateX(-5px); }
+        }
+
+        .battle-sprite.fainted {
+            animation: faintAnim 1s ease-out forwards !important;
+        }
+
+        @keyframes faintAnim {
+            0% { opacity: 1; filter: brightness(1) grayscale(0); transform: rotate(0deg); }
+            50% { opacity: 0.5; filter: brightness(0.5) grayscale(0.5); }
+            100% { opacity: 0; filter: brightness(0) grayscale(1); transform: translateY(30px) rotate(15deg); }
+        }
+
+        /* HP info boxes */
+        .hp-box {
+            position: absolute;
+            background: linear-gradient(135deg, #f8f8f0 0%, #e8e8d8 100%);
+            border: 4px solid #333;
+            border-radius: 12px;
+            padding: 10px 15px;
+            min-width: 220px;
+            box-shadow: 4px 4px 0 rgba(0,0,0,0.3);
+        }
+
+        .hp-box-agent {
+            bottom: 50%;
+            left: 5%;
+        }
+
+        .hp-box-enemy {
+            top: 10%;
+            right: 35%;
+        }
+
+        .hp-box-name {
+            font-size: 0.65rem;
+            color: #333;
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .hp-box-level {
+            font-size: 0.5rem;
+            background: #333;
+            color: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .hp-box-bar {
+            height: 14px;
+            background: #333;
+            border-radius: 7px;
+            padding: 2px;
+            margin: 6px 0;
+        }
+
+        .hp-box-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #44cc44, #88ff88);
+            border-radius: 5px;
+            transition: width 0.5s ease;
+        }
+
+        .hp-box-fill.medium {
+            background: linear-gradient(90deg, #ddaa00, #ffee44);
+        }
+
+        .hp-box-fill.low {
+            background: linear-gradient(90deg, #dd3333, #ff6666);
+        }
+
+        .hp-box-text {
+            font-size: 0.5rem;
+            color: #333;
+            text-align: right;
+        }
+
+        .hp-box-xp {
+            margin-top: 6px;
+            height: 6px;
+            background: #222;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .hp-box-xp-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3366ff, #66aaff);
+            transition: width 0.5s ease;
+        }
+
+        /* Attack effects */
+        .attack-effect {
+            position: absolute;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .damage-popup {
+            position: absolute;
+            font-size: 2rem;
+            font-weight: bold;
+            color: #ff3333;
+            text-shadow:
+                2px 2px 0 #000,
+                -2px -2px 0 #000,
+                2px -2px 0 #000,
+                -2px 2px 0 #000;
+            animation: damagePopup 1.2s ease-out forwards;
+            pointer-events: none;
+            z-index: 200;
+        }
+
+        .damage-popup.critical {
+            font-size: 2.5rem;
+            color: #ff0000;
+        }
+
+        .damage-popup.super-effective {
+            color: #ff6600;
+        }
+
+        @keyframes damagePopup {
+            0% { opacity: 1; transform: translateY(0) scale(0.5); }
+            20% { transform: translateY(-20px) scale(1.2); }
+            40% { transform: translateY(-30px) scale(1); }
+            100% { opacity: 0; transform: translateY(-80px) scale(0.8); }
+        }
+
+        /* Particle effects */
+        .particle-container {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 150;
+        }
+
+        .particle {
+            position: absolute;
+            border-radius: 50%;
+            animation: particleFly 1s ease-out forwards;
+        }
+
+        @keyframes particleFly {
+            0% { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(0) translateY(-50px); }
+        }
+
+        /* Move effect overlays */
+        .move-effect {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .fire-effect {
+            background: radial-gradient(ellipse at center, rgba(255,100,0,0.4) 0%, transparent 60%);
+            animation: fireFlash 0.5s ease-out;
+        }
+
+        .water-effect {
+            background: radial-gradient(ellipse at center, rgba(0,150,255,0.4) 0%, transparent 60%);
+            animation: waterFlash 0.5s ease-out;
+        }
+
+        .electric-effect {
+            background: radial-gradient(ellipse at center, rgba(255,255,0,0.5) 0%, transparent 60%);
+            animation: electricFlash 0.3s ease-out;
+        }
+
+        .psychic-effect {
+            background: radial-gradient(ellipse at center, rgba(255,100,200,0.4) 0%, transparent 60%);
+            animation: psychicFlash 0.6s ease-out;
+        }
+
+        @keyframes fireFlash {
+            0% { opacity: 0; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0; transform: scale(1.5); }
+        }
+
+        @keyframes waterFlash {
+            0% { opacity: 0; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0; transform: scale(1.5); }
+        }
+
+        @keyframes electricFlash {
+            0%, 20%, 40%, 60%, 80%, 100% { opacity: 0; }
+            10%, 30%, 50%, 70%, 90% { opacity: 1; }
+        }
+
+        @keyframes psychicFlash {
+            0% { opacity: 0; transform: scale(0.5) rotate(0deg); }
+            50% { opacity: 1; transform: scale(1.2) rotate(180deg); }
+            100% { opacity: 0; transform: scale(1.5) rotate(360deg); }
+        }
+
+        /* Battle message box */
+        .message-box {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 85%;
+            max-width: 700px;
+            background: linear-gradient(135deg, #f8f8f0 0%, #e8e8d8 100%);
+            border: 5px solid #333;
+            border-radius: 12px;
+            padding: 20px 25px;
+            box-shadow: 6px 6px 0 rgba(0,0,0,0.3);
+            z-index: 50;
+        }
+
+        .message-text {
+            font-size: 0.75rem;
+            color: #333;
+            line-height: 1.8;
+            min-height: 50px;
+        }
+
+        .message-text .name {
+            color: #cc3333;
+        }
+
+        .message-text .move {
+            color: #3366cc;
+        }
+
+        .message-text .damage {
+            color: #cc3333;
+            font-weight: bold;
+        }
+
+        .message-text .xp {
+            color: #3366cc;
+        }
+
+        .message-text .level {
+            color: #cc9900;
+        }
+
+        .message-continue {
+            position: absolute;
+            bottom: 10px;
+            right: 20px;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-top: 10px solid #333;
+            animation: bounceContinue 0.6s ease-in-out infinite;
+        }
+
+        @keyframes bounceContinue {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(5px); }
+        }
+
+        /* Waiting state */
+        .waiting-state {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 30;
+        }
+
+        .waiting-pokeball {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 20px;
+            background: linear-gradient(180deg, #ff4444 50%, #fff 50%);
+            border-radius: 50%;
+            border: 6px solid #333;
+            position: relative;
+            animation: waitingBounce 1s ease-in-out infinite;
+        }
+
+        .waiting-pokeball::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 25px;
+            height: 25px;
+            background: #fff;
+            border-radius: 50%;
+            border: 6px solid #333;
+        }
+
+        @keyframes waitingBounce {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            25% { transform: translateY(-20px) rotate(-5deg); }
+            50% { transform: translateY(0) rotate(0deg); }
+            75% { transform: translateY(-10px) rotate(5deg); }
+        }
+
+        .waiting-text {
+            font-size: 0.8rem;
+            color: #fff;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        .waiting-subtext {
+            font-size: 0.5rem;
+            color: #aaa;
+            margin-top: 10px;
+        }
+
+        /* Wild tasks approaching panel */
+        .wild-panel {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 250px;
+            background: rgba(0,0,0,0.85);
+            border: 3px solid #ff6600;
+            border-radius: 10px;
+            overflow: hidden;
+            z-index: 300;
+            max-height: 200px;
+        }
+
+        .wild-header {
+            background: linear-gradient(90deg, #ff6600, #ff9944);
+            padding: 6px 10px;
+            font-size: 0.45rem;
+            color: #fff;
+            text-shadow: 1px 1px 0 #993300;
+            animation: wildPulse 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes wildPulse {
+            from { background: linear-gradient(90deg, #ff6600, #ff9944); }
+            to { background: linear-gradient(90deg, #ff9944, #ffcc66); }
+        }
+
+        .wild-list {
+            max-height: 120px;
+            overflow-y: auto;
+            padding: 6px;
+        }
+
+        .wild-task {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #1a1a2e;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 5px 8px;
+            margin-bottom: 4px;
+        }
+
+        .wild-sprite {
+            font-size: 1.2rem;
+            animation: wildBounce 0.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes wildBounce {
+            from { transform: translateY(0); }
+            to { transform: translateY(-4px); }
+        }
+
+        .wild-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .wild-name {
+            font-size: 0.45rem;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .wild-meta {
+            font-size: 0.35rem;
+            color: #888;
+            margin-top: 2px;
+            letter-spacing: 1px;
+        }
+
+        .wild-meta:first-of-type {
+            font-size: 0.5rem;
+            letter-spacing: 2px;
+        }
+
+        .wild-progress {
+            width: 40px;
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .wild-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff6600, #ffcc00);
+            animation: progressPulse 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes progressPulse {
+            from { opacity: 0.7; }
+            to { opacity: 1; }
+        }
+
+        .no-wild {
+            font-size: 0.5rem;
+            color: #666;
+            text-align: center;
+            padding: 15px;
+        }
+
+        /* Victory overlay */
+        .victory-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .victory-overlay.visible {
+            display: flex;
+        }
+
+        .victory-content {
+            background: linear-gradient(135deg, #1a2a5a 0%, #0a1a3a 100%);
+            border: 6px solid #ffcc00;
+            border-radius: 20px;
+            padding: 40px 60px;
+            text-align: center;
+            animation: victoryAppear 0.6s ease-out;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .victory-content::before {
+            content: '';
+            position: absolute;
+            inset: -50%;
+            background:
+                radial-gradient(circle at 20% 20%, rgba(255,255,0,0.1) 0%, transparent 30%),
+                radial-gradient(circle at 80% 80%, rgba(255,200,0,0.1) 0%, transparent 30%);
+            animation: victoryShine 2s linear infinite;
+        }
+
+        @keyframes victoryShine {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes victoryAppear {
+            0% { transform: scale(0) rotate(-10deg); opacity: 0; }
+            60% { transform: scale(1.1) rotate(3deg); }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+
+        .victory-title {
+            font-size: 2rem;
+            color: #ffcc00;
+            text-shadow:
+                3px 3px 0 #ff6600,
+                -2px -2px 0 #cc9900;
+            margin-bottom: 25px;
+            position: relative;
+        }
+
+        .victory-sprite {
+            font-size: 5rem;
+            margin: 20px 0;
+            animation: victoryDance 0.5s ease-in-out infinite alternate;
+            position: relative;
+        }
+
+        @keyframes victoryDance {
+            from { transform: translateY(0) rotate(-5deg); }
+            to { transform: translateY(-10px) rotate(5deg); }
+        }
+
+        .victory-xp {
+            font-size: 1.2rem;
+            color: #66aaff;
+            margin: 15px 0;
+            position: relative;
+        }
+
+        .victory-xp::before {
+            content: '';
+            position: absolute;
+            left: -20px;
+            right: -20px;
+            top: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #66aaff, transparent);
+        }
+
+        .victory-level {
+            font-size: 1rem;
+            color: #44ff44;
+            margin: 15px 0;
+            position: relative;
+        }
+
+        .victory-evolved {
+            font-size: 0.8rem;
+            color: #ff66ff;
+            margin: 10px 0;
+            animation: evolvedGlow 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes evolvedGlow {
+            from { text-shadow: 0 0 10px #ff66ff; }
+            to { text-shadow: 0 0 25px #ff66ff, 0 0 40px #ff99ff; }
+        }
+
+        .victory-btn {
+            font-family: inherit;
+            font-size: 0.8rem;
+            padding: 15px 40px;
+            background: linear-gradient(135deg, #ffcc00 0%, #ff9900 100%);
+            border: 4px solid #cc7700;
+            border-radius: 8px;
+            color: #333;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .victory-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(255, 200, 0, 0.5);
+        }
+
+        /* Victory banner - shows when task completes */
+        .victory-banner {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, #1a2a5a 0%, #0a1a3a 100%);
+            border: 6px solid #ffcc00;
+            border-radius: 20px;
+            padding: 30px 50px;
+            text-align: center;
+            z-index: 2000;
+            animation: bannerAppear 0.5s ease-out, bannerFade 0.5s ease-out 3.5s forwards;
+            box-shadow: 0 0 50px rgba(255, 204, 0, 0.5);
+        }
+
+        @keyframes bannerAppear {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+            60% { transform: translate(-50%, -50%) scale(1.1); }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+
+        @keyframes bannerFade {
+            to { opacity: 0; transform: translate(-50%, -100%) scale(0.8); }
+        }
+
+        .victory-banner .victory-text {
+            font-size: 1.5rem;
+            color: #ffcc00;
+            text-shadow: 3px 3px 0 #ff6600;
+            margin-bottom: 15px;
+        }
+
+        .victory-banner .victory-details {
+            font-size: 0.8rem;
+            color: #88aaff;
+            margin-bottom: 10px;
+        }
+
+        .victory-banner .victory-xp {
+            font-size: 1rem;
+            color: #66ff66;
+        }
+
+        /* Battle log message styles */
+        .msg-defeat { color: #66ff66; }
+        .msg-levelup { color: #ffcc00; text-shadow: 0 0 10px #ffcc00; }
+        .msg-victory { color: #ff66ff; text-shadow: 0 0 10px #ff66ff; }
+
+        /* Evolution animation */
+        .evolving-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            z-index: 1000;
+        }
+
+        .evolving-overlay.visible {
+            display: flex;
+        }
+
+        .evolving-text {
+            font-size: 1rem;
+            color: #fff;
+            margin-bottom: 30px;
+        }
+
+        .evolving-sprite {
+            font-size: 8rem;
+            animation: evolutionGlow 2s ease-in-out;
+        }
+
+        @keyframes evolutionGlow {
+            0% { filter: brightness(1); transform: scale(1); }
+            25% { filter: brightness(3) hue-rotate(60deg); transform: scale(1.3); }
+            50% { filter: brightness(5) hue-rotate(120deg); transform: scale(1.6); }
+            75% { filter: brightness(3) hue-rotate(180deg); transform: scale(1.3); }
+            100% { filter: brightness(1) hue-rotate(0deg); transform: scale(1); }
+        }
+
+        .evolving-new-name {
+            font-size: 1.2rem;
+            color: #ffcc00;
+            margin-top: 30px;
+            opacity: 0;
+            animation: nameReveal 1s ease-out 1.5s forwards;
+        }
+
+        @keyframes nameReveal {
+            0% { opacity: 0; transform: translateY(20px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Type effectiveness popup */
+        .effectiveness-popup {
+            position: absolute;
+            font-size: 0.6rem;
+            padding: 5px 10px;
+            border-radius: 5px;
+            animation: effectivenessShow 1.5s ease-out forwards;
+            pointer-events: none;
+            z-index: 200;
+        }
+
+        .effectiveness-popup.super {
+            background: #ff6600;
+            color: #fff;
+        }
+
+        .effectiveness-popup.not-very {
+            background: #666;
+            color: #fff;
+        }
+
+        @keyframes effectivenessShow {
+            0% { opacity: 0; transform: translateY(10px); }
+            20% { opacity: 1; transform: translateY(0); }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+
+        /* Critical hit animation */
+        .critical-flash {
+            position: absolute;
+            inset: 0;
+            background: rgba(255,255,255,0.8);
+            animation: critFlash 0.2s ease-out;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        @keyframes critFlash {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        /* Level up sparkles */
+        .sparkle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #ffcc00;
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+            animation: sparkleFade 1s ease-out forwards;
+            pointer-events: none;
+        }
+
+        @keyframes sparkleFade {
+            0% { opacity: 1; transform: scale(0) rotate(0deg); }
+            50% { opacity: 1; transform: scale(1.5) rotate(180deg); }
+            100% { opacity: 0; transform: scale(0.5) rotate(360deg) translateY(-30px); }
+        }
+
+        /* No team message */
+        .no-team {
+            padding: 20px;
+            text-align: center;
+        }
+
+        .no-team-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+
+        .no-team-text {
+            font-size: 0.6rem;
+            color: #888;
+            line-height: 1.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title-section">
+            <div class="pokeball-icon"></div>
+            <h1>
+                POKEMON BATTLES
+                <span class="subtitle">AI Agent Arena</span>
+            </h1>
+        </div>
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="stat-label">TEAM SIZE</div>
+                <div class="stat-value" id="teamSize">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">VICTORIES</div>
+                <div class="stat-value" id="totalVictories">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">TOTAL XP</div>
+                <div class="stat-value" id="totalXP">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">HIGHEST LV</div>
+                <div class="stat-value" id="highestLevel">1</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Pokedex Team Panel -->
+        <div class="pokedex-panel">
+            <div class="pokedex-header">
+                <div class="pokedex-led"></div>
+                <div class="pokedex-title">YOUR TEAM</div>
+            </div>
+            <div class="team-list" id="teamList">
+                <div class="no-team">
+                    <div class="no-team-icon">🎮</div>
+                    <div class="no-team-text">
+                        No agents yet!<br><br>
+                        Send messages to Claude<br>
+                        to spawn Pokemon agents!
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Battle Arena -->
+        <div class="battle-arena" id="battleArena">
+            <!-- Background layers -->
+            <div class="arena-bg"></div>
+            <div class="clouds" id="clouds"></div>
+            <div class="grass-field">
+                <div class="grass-pattern"></div>
+            </div>
+
+            <!-- Battle platforms -->
+            <div class="platform platform-agent"></div>
+            <div class="platform platform-enemy"></div>
+
+            <!-- Waiting state -->
+            <div class="waiting-state" id="waitingState">
+                <div class="waiting-pokeball"></div>
+                <div class="waiting-text">Waiting for battles...</div>
+                <div class="waiting-subtext">Send messages to Claude to spawn wild tasks!</div>
+            </div>
+
+            <!-- Combatants (hidden until battle) -->
+            <div class="combatant combatant-agent" id="agentCombatant" style="display: none;">
+                <div class="battle-sprite" id="agentSprite">🤖</div>
+            </div>
+            <div class="hp-box hp-box-agent" id="agentHPBox" style="display: none;">
+                <div class="hp-box-name">
+                    <span id="agentName">AGENT</span>
+                    <span class="hp-box-level" id="agentLevel">Lv.1</span>
+                </div>
+                <div class="hp-box-bar">
+                    <div class="hp-box-fill" id="agentHPFill" style="width: 100%"></div>
+                </div>
+                <div class="hp-box-text"><span id="agentHPText">100</span> / <span id="agentMaxHPText">100</span></div>
+                <div class="hp-box-xp">
+                    <div class="hp-box-xp-fill" id="agentXPFill" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="combatant combatant-enemy" id="enemyCombatant" style="display: none;">
+                <div class="battle-sprite" id="enemySprite">📋</div>
+            </div>
+            <div class="hp-box hp-box-enemy" id="enemyHPBox" style="display: none;">
+                <div class="hp-box-name">
+                    <span id="enemyName">WILD TASK</span>
+                    <span class="hp-box-level" id="enemyLevel">Lv.1</span>
+                </div>
+                <div class="hp-box-bar">
+                    <div class="hp-box-fill" id="enemyHPFill" style="width: 100%"></div>
+                </div>
+                <div class="hp-box-text"><span id="enemyHPText">100</span> / <span id="enemyMaxHPText">100</span></div>
+            </div>
+
+            <!-- Particle container -->
+            <div class="particle-container" id="particleContainer"></div>
+
+            <!-- Battle message box -->
+            <div class="message-box" id="messageBox">
+                <div class="message-text" id="messageText">
+                    Watching for wild tasks to appear...<br>
+                    Send a message to Claude to generate tasks!
+                </div>
+                <div class="message-continue" id="messageContinue" style="display: none;"></div>
+            </div>
+
+            <!-- Wild tasks panel -->
+            <div class="wild-panel" id="wildPanel">
+                <div class="wild-header">🚨 WILD TASKS APPROACHING!</div>
+                <div class="wild-list" id="wildList">
+                    <div class="no-wild">No wild tasks nearby...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Victory overlay -->
+    <div class="victory-overlay" id="victoryOverlay">
+        <div class="victory-content">
+            <div class="victory-title">VICTORY!</div>
+            <div class="victory-sprite" id="victorySprite">🎉</div>
+            <div class="victory-xp" id="victoryXP">+100 XP</div>
+            <div class="victory-level" id="victoryLevel" style="display: none;"></div>
+            <div class="victory-evolved" id="victoryEvolved" style="display: none;"></div>
+            <button class="victory-btn" onclick="closeVictory()">CONTINUE</button>
+        </div>
+    </div>
+
+    <!-- Evolution overlay -->
+    <div class="evolving-overlay" id="evolvingOverlay">
+        <div class="evolving-text" id="evolvingText">What? AGENT is evolving!</div>
+        <div class="evolving-sprite" id="evolvingSprite">🤖</div>
+        <div class="evolving-new-name" id="evolvingNewName">Congratulations!</div>
+    </div>
+
+    <script>
+        // ============================================
+        // POKEMON DATA
+        // ============================================
+        const AGENT_EVOLUTIONS = {
+            reader: [
+                { level: 1, sprite: '📖', name: 'READLING', types: ['psychic'], moves: ['FILE SCAN', 'ANALYZE', 'COMPREHEND'] },
+                { level: 10, sprite: '📚', name: 'BOOKWORM', types: ['psychic', 'normal'], moves: ['DEEP READ', 'MEMORIZE', 'INSIGHT'] },
+                { level: 25, sprite: '🧙', name: 'ARCHMAGE', types: ['psychic', 'dragon'], moves: ['KNOWLEDGE BLAST', 'OMNISCIENCE', 'WISDOM SURGE'] }
+            ],
+            writer: [
+                { level: 1, sprite: '✏️', name: 'SCRIBBLE', types: ['normal'], moves: ['QUICK WRITE', 'DRAFT', 'SKETCH'] },
+                { level: 10, sprite: '🖊️', name: 'PENMASTER', types: ['normal', 'steel'], moves: ['OVERWRITE', 'COMPOSE', 'INSCRIBE'] },
+                { level: 25, sprite: '📜', name: 'CODEXION', types: ['steel', 'dragon'], moves: ['MANIFEST', 'CREATE REALITY', 'ETERNAL SCRIPT'] }
+            ],
+            executor: [
+                { level: 1, sprite: '⚡', name: 'SPARKBASH', types: ['electric'], moves: ['SHELL SHOCK', 'SPARK', 'QUICKRUN'] },
+                { level: 10, sprite: '🔥', name: 'FLAMESHELL', types: ['fire', 'electric'], moves: ['SUDO STRIKE', 'BLAZE EXEC', 'POWER SURGE'] },
+                { level: 25, sprite: '💥', name: 'DETONATOR', types: ['fire', 'fighting'], moves: ['FORK BOMB', 'DETONATE', 'APOCALYPSE'] }
+            ],
+            searcher: [
+                { level: 1, sprite: '🔍', name: 'SEEKER', types: ['ghost'], moves: ['GREP BEAM', 'LOCATE', 'SCAN'] },
+                { level: 10, sprite: '👁️', name: 'ALLSEER', types: ['ghost', 'psychic'], moves: ['RECURSIVE SCAN', 'REVEAL', 'TRACK'] },
+                { level: 25, sprite: '🌐', name: 'OMNISCIENT', types: ['psychic', 'fairy'], moves: ['OMNISEARCH', 'ALL-KNOWING', 'UNIVERSE SCAN'] }
+            ],
+            tasker: [
+                { level: 1, sprite: '🤖', name: 'TASKBOT', types: ['steel'], moves: ['DELEGATE', 'QUEUE', 'SCHEDULE'] },
+                { level: 10, sprite: '🦾', name: 'AUTOMATON', types: ['steel', 'electric'], moves: ['ORCHESTRATE', 'AUTOMATE', 'PARALLELIZE'] },
+                { level: 25, sprite: '🎭', name: 'DELEGATOR', types: ['dark', 'steel'], moves: ['SWARM', 'MASTER COMMAND', 'LEGION SUMMON'] }
+            ]
+        };
+
+        const MOVE_DATA = {
+            // Reader moves
+            'FILE SCAN': { power: 25, type: 'psychic', accuracy: 100 },
+            'ANALYZE': { power: 30, type: 'normal', accuracy: 100 },
+            'COMPREHEND': { power: 35, type: 'psychic', accuracy: 95 },
+            'DEEP READ': { power: 50, type: 'psychic', accuracy: 95 },
+            'MEMORIZE': { power: 45, type: 'normal', accuracy: 100 },
+            'INSIGHT': { power: 55, type: 'psychic', accuracy: 90 },
+            'KNOWLEDGE BLAST': { power: 80, type: 'psychic', accuracy: 85 },
+            'OMNISCIENCE': { power: 90, type: 'dragon', accuracy: 80 },
+            'WISDOM SURGE': { power: 100, type: 'psychic', accuracy: 75 },
+
+            // Writer moves
+            'QUICK WRITE': { power: 25, type: 'normal', accuracy: 100 },
+            'DRAFT': { power: 30, type: 'normal', accuracy: 100 },
+            'SKETCH': { power: 35, type: 'normal', accuracy: 95 },
+            'OVERWRITE': { power: 50, type: 'steel', accuracy: 95 },
+            'COMPOSE': { power: 55, type: 'normal', accuracy: 90 },
+            'INSCRIBE': { power: 60, type: 'steel', accuracy: 90 },
+            'MANIFEST': { power: 85, type: 'steel', accuracy: 85 },
+            'CREATE REALITY': { power: 95, type: 'dragon', accuracy: 80 },
+            'ETERNAL SCRIPT': { power: 110, type: 'steel', accuracy: 75 },
+
+            // Executor moves
+            'SHELL SHOCK': { power: 30, type: 'electric', accuracy: 100 },
+            'SPARK': { power: 35, type: 'electric', accuracy: 100 },
+            'QUICKRUN': { power: 40, type: 'normal', accuracy: 95 },
+            'SUDO STRIKE': { power: 60, type: 'fire', accuracy: 90 },
+            'BLAZE EXEC': { power: 65, type: 'fire', accuracy: 90 },
+            'POWER SURGE': { power: 70, type: 'electric', accuracy: 85 },
+            'FORK BOMB': { power: 90, type: 'fire', accuracy: 80 },
+            'DETONATE': { power: 100, type: 'fire', accuracy: 75 },
+            'APOCALYPSE': { power: 120, type: 'fighting', accuracy: 70 },
+
+            // Searcher moves
+            'GREP BEAM': { power: 25, type: 'ghost', accuracy: 100 },
+            'LOCATE': { power: 30, type: 'ghost', accuracy: 100 },
+            'SCAN': { power: 35, type: 'normal', accuracy: 95 },
+            'RECURSIVE SCAN': { power: 55, type: 'psychic', accuracy: 95 },
+            'REVEAL': { power: 50, type: 'ghost', accuracy: 90 },
+            'TRACK': { power: 45, type: 'ghost', accuracy: 95 },
+            'OMNISEARCH': { power: 80, type: 'psychic', accuracy: 85 },
+            'ALL-KNOWING': { power: 90, type: 'fairy', accuracy: 80 },
+            'UNIVERSE SCAN': { power: 105, type: 'psychic', accuracy: 75 },
+
+            // Tasker moves
+            'DELEGATE': { power: 35, type: 'steel', accuracy: 100 },
+            'QUEUE': { power: 30, type: 'normal', accuracy: 100 },
+            'SCHEDULE': { power: 40, type: 'steel', accuracy: 95 },
+            'ORCHESTRATE': { power: 60, type: 'steel', accuracy: 90 },
+            'AUTOMATE': { power: 55, type: 'electric', accuracy: 95 },
+            'PARALLELIZE': { power: 65, type: 'steel', accuracy: 90 },
+            'SWARM': { power: 85, type: 'dark', accuracy: 85 },
+            'MASTER COMMAND': { power: 95, type: 'steel', accuracy: 80 },
+            'LEGION SUMMON': { power: 115, type: 'dark', accuracy: 75 },
+
+            // Task (enemy) moves
+            // Task moves - weaker than agent moves since tasks are "wild" and untrained
+            'DEMAND': { power: 15, type: 'normal', accuracy: 85 },
+            'REQUIRE': { power: 20, type: 'dark', accuracy: 80 },
+            'DEADLINE': { power: 30, type: 'fighting', accuracy: 75 },
+            'COMPLEXITY': { power: 35, type: 'psychic', accuracy: 70 },
+            'SCOPE CREEP': { power: 45, type: 'dark', accuracy: 65 }
+        };
+
+        // Type effectiveness chart
+        const TYPE_CHART = {
+            normal: { ghost: 0, rock: 0.5, steel: 0.5 },
+            fire: { fire: 0.5, water: 0.5, grass: 2, ice: 2, bug: 2, rock: 0.5, dragon: 0.5, steel: 2 },
+            water: { fire: 2, water: 0.5, grass: 0.5, ground: 2, rock: 2, dragon: 0.5 },
+            electric: { water: 2, electric: 0.5, grass: 0.5, ground: 0, flying: 2, dragon: 0.5 },
+            grass: { fire: 0.5, water: 2, grass: 0.5, poison: 0.5, ground: 2, flying: 0.5, bug: 0.5, rock: 2, dragon: 0.5, steel: 0.5 },
+            ice: { fire: 0.5, water: 0.5, grass: 2, ice: 0.5, ground: 2, flying: 2, dragon: 2, steel: 0.5 },
+            fighting: { normal: 2, ice: 2, poison: 0.5, flying: 0.5, psychic: 0.5, bug: 0.5, rock: 2, ghost: 0, dark: 2, steel: 2, fairy: 0.5 },
+            poison: { grass: 2, poison: 0.5, ground: 0.5, rock: 0.5, ghost: 0.5, steel: 0, fairy: 2 },
+            ground: { fire: 2, electric: 2, grass: 0.5, poison: 2, flying: 0, bug: 0.5, rock: 2, steel: 2 },
+            flying: { electric: 0.5, grass: 2, fighting: 2, bug: 2, rock: 0.5, steel: 0.5 },
+            psychic: { fighting: 2, poison: 2, psychic: 0.5, dark: 0, steel: 0.5 },
+            bug: { fire: 0.5, grass: 2, fighting: 0.5, poison: 0.5, flying: 0.5, psychic: 2, ghost: 0.5, dark: 2, steel: 0.5, fairy: 0.5 },
+            rock: { fire: 2, ice: 2, fighting: 0.5, ground: 0.5, flying: 2, bug: 2, steel: 0.5 },
+            ghost: { normal: 0, psychic: 2, ghost: 2, dark: 0.5 },
+            dragon: { dragon: 2, steel: 0.5, fairy: 0 },
+            dark: { fighting: 0.5, psychic: 2, ghost: 2, dark: 0.5, fairy: 0.5 },
+            steel: { fire: 0.5, water: 0.5, electric: 0.5, ice: 2, rock: 2, steel: 0.5, fairy: 2 },
+            fairy: { fire: 0.5, fighting: 2, poison: 0.5, dragon: 2, dark: 2, steel: 0.5 }
+        };
+
+        const TOOL_TO_AGENT = {
+            'Read': 'reader', 'Glob': 'reader',
+            'Write': 'writer', 'Edit': 'writer', 'NotebookEdit': 'writer', 'TodoWrite': 'writer',
+            'Bash': 'executor',
+            'Grep': 'searcher', 'WebSearch': 'searcher', 'WebFetch': 'searcher',
+            'Task': 'tasker', 'Skill': 'tasker',
+            'AskUserQuestion': 'reader',
+            'EnterPlanMode': 'reader', 'ExitPlanMode': 'writer'
+        };
+
+        // ============================================
+        // ENEMY POKEMON POOL - Task trainers send these out
+        // ============================================
+        const ENEMY_POKEMON = [
+          { name: 'BUGMON', emoji: '🐛', type: 'Bug', baseHP: 20, moves: ['BUG BITE', 'CRASH'] },
+          { name: 'CRASHER', emoji: '💥', type: 'Fire', baseHP: 25, moves: ['CRASH', 'EXPLODE'] },
+          { name: 'NULLBYTE', emoji: '0️⃣', type: 'Ghost', baseHP: 18, moves: ['NULL POINTER', 'VANISH'] },
+          { name: 'TIMEOUT', emoji: '⏰', type: 'Psychic', baseHP: 22, moves: ['STALL', 'WAIT'] },
+          { name: 'MEMHOG', emoji: '🐷', type: 'Normal', baseHP: 35, moves: ['CONSUME', 'BLOAT'] },
+          { name: 'DEADLOCK', emoji: '🔒', type: 'Steel', baseHP: 30, moves: ['LOCK UP', 'FREEZE'] },
+          { name: 'RACECOND', emoji: '🏃', type: 'Electric', baseHP: 20, moves: ['RUSH', 'SCRAMBLE'] },
+          { name: 'STACKFLOW', emoji: '📚', type: 'Water', baseHP: 24, moves: ['OVERFLOW', 'FLOOD'] },
+          { name: 'LOOPINF', emoji: '♾️', type: 'Dark', baseHP: 28, moves: ['LOOP', 'INFINITE SPIN'] },
+          { name: 'SEGFAULT', emoji: '⚡', type: 'Electric', baseHP: 18, moves: ['FAULT', 'SEGMENT'] },
+          { name: 'DEPCONF', emoji: '📦', type: 'Poison', baseHP: 22, moves: ['CONFLICT', 'VERSION WAR'] },
+          { name: 'TYPERR', emoji: '❌', type: 'Fairy', baseHP: 19, moves: ['MISMATCH', 'CONFUSE'] },
+          { name: 'SYNTAXERR', emoji: '📝', type: 'Normal', baseHP: 17, moves: ['MISSPELL', 'MISPLACE'] },
+          { name: 'MERGCONF', emoji: '🔀', type: 'Fighting', baseHP: 26, moves: ['CONFLICT', 'MERGE FAIL'] },
+          { name: 'HOTFIX', emoji: '🔥', type: 'Fire', baseHP: 21, moves: ['BURN', 'URGENCY'] },
+          { name: 'REFACTOR', emoji: '🔧', type: 'Steel', baseHP: 28, moves: ['RECONSTRUCT', 'OVERHAUL'] },
+          { name: 'LEGACY', emoji: '👴', type: 'Ghost', baseHP: 32, moves: ['HAUNT', 'ANCIENT CODE'] }
+        ];
+
+        // Add enemy moves to MOVE_DATA
+        Object.assign(MOVE_DATA, {
+          'BUG BITE': { power: 18, type: 'bug', accuracy: 90 },
+          'CRASH': { power: 22, type: 'normal', accuracy: 80 },
+          'NULL POINTER': { power: 20, type: 'ghost', accuracy: 85 },
+          'VANISH': { power: 15, type: 'ghost', accuracy: 100 },
+          'STALL': { power: 12, type: 'psychic', accuracy: 100 },
+          'WAIT': { power: 18, type: 'normal', accuracy: 85 },
+          'CONSUME': { power: 25, type: 'normal', accuracy: 80 },
+          'BLOAT': { power: 20, type: 'normal', accuracy: 90 },
+          'LOCK UP': { power: 22, type: 'steel', accuracy: 85 },
+          'FREEZE': { power: 18, type: 'ice', accuracy: 90 },
+          'RUSH': { power: 15, type: 'electric', accuracy: 95 },
+          'SCRAMBLE': { power: 20, type: 'electric', accuracy: 85 },
+          'OVERFLOW': { power: 25, type: 'water', accuracy: 80 },
+          'FLOOD': { power: 30, type: 'water', accuracy: 70 },
+          'LOOP': { power: 18, type: 'dark', accuracy: 100 },
+          'INFINITE SPIN': { power: 25, type: 'dark', accuracy: 75 },
+          'FAULT': { power: 22, type: 'electric', accuracy: 85 },
+          'SEGMENT': { power: 18, type: 'normal', accuracy: 90 },
+          'CONFLICT': { power: 20, type: 'poison', accuracy: 85 },
+          'VERSION WAR': { power: 25, type: 'dark', accuracy: 80 },
+          'MISMATCH': { power: 18, type: 'fairy', accuracy: 90 },
+          'CONFUSE': { power: 15, type: 'psychic', accuracy: 95 },
+          'MISSPELL': { power: 12, type: 'normal', accuracy: 100 },
+          'MISPLACE': { power: 16, type: 'normal', accuracy: 95 },
+          'MERGE FAIL': { power: 25, type: 'fighting', accuracy: 80 },
+          'BURN': { power: 22, type: 'fire', accuracy: 85 },
+          'URGENCY': { power: 28, type: 'fire', accuracy: 75 },
+          'RECONSTRUCT': { power: 20, type: 'steel', accuracy: 90 },
+          'OVERHAUL': { power: 28, type: 'steel', accuracy: 75 },
+          'HAUNT': { power: 20, type: 'ghost', accuracy: 85 },
+          'ANCIENT CODE': { power: 30, type: 'ghost', accuracy: 70 },
+          'EXPLODE': { power: 35, type: 'fire', accuracy: 65 }
+        });
+
+        // Generate enemy team for a task trainer
+        function generateEnemyTeam(request) {
+          const toolCount = request.tools?.length || 1;
+          const messageLen = request.message?.length || 50;
+
+          // Team size: 1-6 based on task complexity
+          // More tools = bigger team to fight through
+          const teamSize = Math.min(6, Math.max(1, Math.floor(toolCount / 2) + 1));
+
+          // Base level from message complexity
+          const baseLevel = Math.min(8, Math.floor(messageLen / 150) + 1);
+
+          const team = [];
+          const usedIndices = new Set();
+
+          for (let i = 0; i < teamSize; i++) {
+            // Pick random enemy, avoid duplicates
+            let idx;
+            do {
+              idx = Math.floor(Math.random() * ENEMY_POKEMON.length);
+            } while (usedIndices.has(idx) && usedIndices.size < ENEMY_POKEMON.length);
+            usedIndices.add(idx);
+
+            const template = ENEMY_POKEMON[idx];
+            const level = Math.max(1, baseLevel + Math.floor(Math.random() * 3) - 1);
+            const maxHP = template.baseHP + level * 3;
+
+            team.push({
+              name: template.name,
+              emoji: template.emoji,
+              type: template.type,
+              types: [template.type.toLowerCase()],
+              level,
+              hp: maxHP,
+              maxHP: maxHP,
+              moves: template.moves,
+              defeated: false,
+              xpReward: 15 + level * 5
+            });
+          }
+
+          return team;
+        }
+
+        // ============================================
+        // STATE
+        // ============================================
+        let agents = {};
+        let activeBattles = new Map(); // requestId -> { agent, trainer, seenTools, currentEnemy }
+        let completedBattles = new Set();
+        let totalVictories = 0;
+        let totalXP = 0;
+        let battleLog = []; // For battle events
+
+        // Track tool states for detecting changes
+        let previousToolStates = new Map(); // requestId -> { toolId -> status }
+
+        // ============================================
+        // UTILITY FUNCTIONS
+        // ============================================
+        function xpForLevel(level) {
+            return Math.floor(100 * Math.pow(1.5, level - 1));
+        }
+
+        function levelFromXP(xp) {
+            let level = 1;
+            let totalNeeded = 0;
+            let needed = 100;
+
+            while (xp >= totalNeeded + needed) {
+                totalNeeded += needed;
+                level++;
+                needed = Math.floor(100 * Math.pow(1.5, level - 1));
+            }
+
+            return {
+                level,
+                currentXP: xp - totalNeeded,
+                neededXP: needed,
+                totalXP: xp
+            };
+        }
+
+        function maxHP(level) {
+            // Agents have high HP - they're trained professionals!
+            return 80 + (level * 15);
+        }
+
+        function getEvolution(agentType, level) {
+            const evolutions = AGENT_EVOLUTIONS[agentType] || AGENT_EVOLUTIONS.tasker;
+            let evolution = evolutions[0];
+            for (const evo of evolutions) {
+                if (level >= evo.level) evolution = evo;
+            }
+            return evolution;
+        }
+
+        function getAgentType(toolName) {
+            return TOOL_TO_AGENT[toolName] || 'tasker';
+        }
+
+        function truncate(text, len) {
+            if (!text) return '';
+            return text.length > len ? text.substring(0, len) + '...' : text;
+        }
+
+        function calculateTypeEffectiveness(moveType, defenderTypes) {
+            let effectiveness = 1;
+            for (const defType of defenderTypes) {
+                const chart = TYPE_CHART[moveType];
+                if (chart && chart[defType] !== undefined) {
+                    effectiveness *= chart[defType];
+                }
+            }
+            return effectiveness;
+        }
+
+        // ============================================
+        // CLOUD GENERATION
+        // ============================================
+        function createClouds() {
+            const container = document.getElementById('clouds');
+            container.innerHTML = '';
+
+            for (let i = 0; i < 5; i++) {
+                const cloud = document.createElement('div');
+                cloud.className = 'cloud';
+                cloud.style.cssText = `
+                    width: ${80 + Math.random() * 100}px;
+                    height: ${30 + Math.random() * 30}px;
+                    top: ${Math.random() * 30}%;
+                    left: ${-200 + Math.random() * 100}px;
+                    animation-duration: ${30 + Math.random() * 30}s;
+                    animation-delay: ${-Math.random() * 30}s;
+                `;
+                container.appendChild(cloud);
+            }
+        }
+
+        // ============================================
+        // AGENT MANAGEMENT
+        // ============================================
+        function updateAgent(requestId, request) {
+            const toolCounts = {};
+            for (const tool of request.tools || []) {
+                const type = getAgentType(tool.name);
+                toolCounts[type] = (toolCounts[type] || 0) + 1;
+            }
+
+            let mainType = 'tasker';
+            let maxCount = 0;
+            for (const [type, count] of Object.entries(toolCounts)) {
+                if (count > maxCount) {
+                    maxCount = count;
+                    mainType = type;
+                }
+            }
+
+            if (!agents[requestId]) {
+                agents[requestId] = {
+                    id: requestId,
+                    type: mainType,
+                    xp: 0,
+                    hp: maxHP(1),
+                    maxHP: maxHP(1),
+                    status: 'active',
+                    battles: 0,
+                    victories: 0,
+                    tools: [],
+                    createdAt: Date.now()
+                };
+            }
+
+            const agent = agents[requestId];
+            agent.tools = request.tools || [];
+            agent.message = request.message;
+            agent.status = request.status;
+
+            if (maxCount > 0) {
+                agent.type = mainType;
+            }
+
+            const levelInfo = levelFromXP(agent.xp);
+            agent.level = levelInfo.level;
+            agent.currentXP = levelInfo.currentXP;
+            agent.neededXP = levelInfo.neededXP;
+
+            const evo = getEvolution(agent.type, agent.level);
+            agent.sprite = evo.sprite;
+            agent.name = evo.name;
+            agent.types = evo.types;
+            agent.moves = evo.moves;
+
+            agent.maxHP = maxHP(agent.level);
+            if (agent.hp > agent.maxHP) agent.hp = agent.maxHP;
+
+            return agent;
+        }
+
+        // ============================================
+        // TASK TRAINER CREATION - Creates trainer representing the task
+        // Enemies are generated dynamically from running tools
+        // ============================================
+        function createTaskTrainer(request) {
+            return {
+                id: request.id,
+                name: getTrainerName(request),
+                message: request.message || 'Task',
+                sprite: getTrainerSprite(request),
+                defeatedEnemies: [], // Track which tools have completed
+                totalXP: 0,          // Accumulated XP from defeated enemies
+                status: 'active'     // active, defeated
+            };
+        }
+
+        // Create enemy Pokemon from a running tool
+        function createEnemyFromTool(tool, request) {
+            const toolName = tool.name || 'Unknown';
+            const baseLevel = Math.min(8, Math.floor((request.message?.length || 0) / 150) + 1);
+            const level = baseLevel + Math.floor(Math.random() * 3);
+
+            // Match tool to enemy type
+            let enemyTemplate;
+            switch(toolName) {
+                case 'Read':
+                    enemyTemplate = { name: 'READBLOCK', sprite: '📖', types: ['Normal'], moves: ['DEMAND', 'STALL'] };
+                    break;
+                case 'Write':
+                    enemyTemplate = { name: 'WRITELOCK', sprite: '📝', types: ['Steel'], moves: ['INSCRIBE', 'OVERWRITE'] };
+                    break;
+                case 'Edit':
+                    enemyTemplate = { name: 'MUTATOR', sprite: '✏️', types: ['Psychic'], moves: ['CHANGE', 'CORRUPT'] };
+                    break;
+                case 'Bash':
+                    enemyTemplate = { name: 'SHELLSHOCK', sprite: '💥', types: ['Fire'], moves: ['CRASH', 'EXPLODE'] };
+                    break;
+                case 'Grep':
+                    enemyTemplate = { name: 'SEARCHFAIL', sprite: '🔍', types: ['Electric'], moves: ['SCAN', 'MISS'] };
+                    break;
+                case 'Glob':
+                    enemyTemplate = { name: 'WILDCARD', sprite: '🌐', types: ['Fairy'], moves: ['MATCH', 'EXPAND'] };
+                    break;
+                case 'Task':
+                    enemyTemplate = { name: 'SUBPROCESS', sprite: '🤖', types: ['Ghost'], moves: ['SPAWN', 'RECURSE'] };
+                    break;
+                case 'WebFetch':
+                    enemyTemplate = { name: 'TIMEOUT', sprite: '⏰', types: ['Water'], moves: ['STALL', 'WAIT'] };
+                    break;
+                case 'WebSearch':
+                    enemyTemplate = { name: 'RATELMIT', sprite: '🚫', types: ['Dark'], moves: ['THROTTLE', 'DENY'] };
+                    break;
+                default:
+                    enemyTemplate = ENEMY_POKEMON[Math.floor(Math.random() * ENEMY_POKEMON.length)];
+            }
+
+            const hp = 30 + level * 5;
+            return {
+                toolId: `${tool.name}_${tool.startTime}`, // Unique identifier
+                name: enemyTemplate.name,
+                sprite: enemyTemplate.sprite,
+                types: enemyTemplate.types,
+                moves: enemyTemplate.moves || ['STRUGGLE', 'DEMAND'],
+                level: level,
+                hp: hp,
+                maxHP: hp,
+                status: tool.status, // 'running' or 'completed'
+                xpReward: 15 + level * 5
+            };
+        }
+
+        function getTrainerName(request) {
+            const msg = (request.message || '').toLowerCase();
+            if (msg.includes('bug') || msg.includes('fix')) return 'BUG HUNTER';
+            if (msg.includes('test')) return 'QA TESTER';
+            if (msg.includes('feature')) return 'FEATURE REQ';
+            if (msg.includes('refactor')) return 'CODE REVIEWER';
+            if (msg.includes('deploy')) return 'DEVOPS';
+            if (msg.includes('security')) return 'SEC AUDITOR';
+            if (msg.includes('performance')) return 'PERF ANALYST';
+            return 'TASK MASTER';
+        }
+
+        function getTrainerSprite(request) {
+            const msg = (request.message || '').toLowerCase();
+            if (msg.includes('bug') || msg.includes('fix') || msg.includes('error')) return '🐛';
+            if (msg.includes('test')) return '🧪';
+            if (msg.includes('feature') || msg.includes('add') || msg.includes('new')) return '✨';
+            if (msg.includes('read') || msg.includes('find') || msg.includes('search')) return '🔎';
+            if (msg.includes('write') || msg.includes('create') || msg.includes('make')) return '📝';
+            if (msg.includes('delete') || msg.includes('remove')) return '🗑️';
+            if (msg.includes('update') || msg.includes('change') || msg.includes('modify')) return '🔄';
+            if (msg.includes('refactor') || msg.includes('clean')) return '🧹';
+            if (msg.includes('deploy') || msg.includes('release')) return '🚀';
+            return '📋';
+        }
+
+        // Get current enemy pokemon from trainer
+        function getCurrentEnemy(trainer) {
+            if (!trainer || !trainer.team) return null;
+            // Find next non-defeated pokemon
+            for (let i = trainer.currentPokemon; i < trainer.team.length; i++) {
+                if (!trainer.team[i].defeated) {
+                    trainer.currentPokemon = i;
+                    return trainer.team[i];
+                }
+            }
+            return null; // All defeated
+        }
+
+        // ============================================
+        // RENDER FUNCTIONS
+        // ============================================
+        function renderTeam() {
+            const container = document.getElementById('teamList');
+            const sortedAgents = Object.values(agents).sort((a, b) => b.xp - a.xp);
+
+            if (sortedAgents.length === 0) {
+                container.innerHTML = `
+                    <div class="no-team">
+                        <div class="no-team-icon">🎮</div>
+                        <div class="no-team-text">
+                            No agents yet!<br><br>
+                            Send messages to Claude<br>
+                            to spawn Pokemon agents!
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = sortedAgents.map(agent => {
+                const hpPercent = (agent.hp / agent.maxHP) * 100;
+                const hpClass = hpPercent > 50 ? '' : hpPercent > 20 ? 'medium' : 'low';
+                const xpPercent = (agent.currentXP / agent.neededXP) * 100;
+                const inBattle = currentBattle && currentBattle.agent.id === agent.id;
+
+                return `
+                    <div class="poke-card ${inBattle ? 'in-battle' : ''}">
+                        <div class="wins-badge">⭐ ${agent.victories}</div>
+                        <div class="poke-card-header">
+                            <div class="poke-name">${agent.name}</div>
+                            <div class="poke-level">Lv.${agent.level}</div>
+                        </div>
+                        <div class="poke-sprite-container">
+                            <div class="poke-sprite">${agent.sprite}</div>
+                            <div class="poke-info">
+                                <div class="poke-types">
+                                    ${agent.types.map(t => `<span class="type-badge type-${t}">${t}</span>`).join('')}
+                                </div>
+                                <div class="poke-stats-mini">
+                                    <div class="mini-stat">ATK: <span>${10 + agent.level * 3}</span></div>
+                                    <div class="mini-stat">DEF: <span>${8 + agent.level * 2}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hp-bar-wrap">
+                            <div class="hp-bar-label">
+                                <span>HP</span>
+                                <span>${agent.hp} / ${agent.maxHP}</span>
+                            </div>
+                            <div class="hp-bar">
+                                <div class="hp-fill ${hpClass}" style="width: ${hpPercent}%"></div>
+                            </div>
+                        </div>
+                        <div class="xp-bar-wrap">
+                            <div class="hp-bar-label">
+                                <span>XP</span>
+                                <span>${agent.currentXP} / ${agent.neededXP}</span>
+                            </div>
+                            <div class="xp-bar">
+                                <div class="xp-fill" style="width: ${xpPercent}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Update header stats
+            document.getElementById('teamSize').textContent = sortedAgents.length;
+            document.getElementById('totalVictories').textContent = totalVictories;
+            document.getElementById('totalXP').textContent = totalXP;
+            document.getElementById('highestLevel').textContent = Math.max(...sortedAgents.map(a => a.level));
+        }
+
+        // Render the main battle arena showing active battles
+        function renderBattleArena() {
+            const waitingState = document.getElementById('waitingState');
+            const agentCombatant = document.getElementById('agentCombatant');
+            const enemyCombatant = document.getElementById('enemyCombatant');
+            const agentHPBox = document.getElementById('agentHPBox');
+            const enemyHPBox = document.getElementById('enemyHPBox');
+            const wildPanel = document.querySelector('.wild-panel');
+            const wildList = document.getElementById('wildList');
+
+            const battles = Array.from(activeBattles.values());
+
+            if (battles.length === 0) {
+                // No active battles - show waiting state
+                waitingState.style.display = 'flex';
+                agentCombatant.style.display = 'none';
+                enemyCombatant.style.display = 'none';
+                agentHPBox.style.display = 'none';
+                enemyHPBox.style.display = 'none';
+                wildList.innerHTML = '<div class="no-wild">No trainers challenging...</div>';
+                return;
+            }
+
+            // Show the first active battle in the main arena
+            const mainBattle = battles[0];
+            const agent = mainBattle.agent;
+            const trainer = mainBattle.trainer;
+            const currentEnemy = mainBattle.currentEnemy;
+
+            if (currentEnemy && currentEnemy.hp > 0) {
+                // Active enemy - show battle
+                waitingState.style.display = 'none';
+                agentCombatant.style.display = 'flex';
+                enemyCombatant.style.display = 'flex';
+                agentHPBox.style.display = 'block';
+                enemyHPBox.style.display = 'block';
+
+                // Update sprites
+                document.getElementById('agentSprite').textContent = agent.sprite;
+                document.getElementById('enemySprite').textContent = currentEnemy.sprite;
+
+                // Update names
+                document.getElementById('agentName').textContent = agent.name;
+                document.getElementById('agentLevel').textContent = `Lv.${agent.level}`;
+                document.getElementById('enemyName').textContent = currentEnemy.name;
+                document.getElementById('enemyLevel').textContent = `Lv.${currentEnemy.level}`;
+
+                // Update HP bars
+                const agentHPPercent = (agent.hp / agent.maxHP) * 100;
+                const enemyHPPercent = (currentEnemy.hp / currentEnemy.maxHP) * 100;
+
+                document.getElementById('agentHPFill').style.width = agentHPPercent + '%';
+                document.getElementById('agentHPFill').className = 'hp-fill' +
+                    (agentHPPercent <= 20 ? ' critical' : agentHPPercent <= 50 ? ' warning' : '');
+                document.getElementById('agentHPText').textContent = `${agent.hp}/${agent.maxHP}`;
+
+                document.getElementById('enemyHPFill').style.width = enemyHPPercent + '%';
+                document.getElementById('enemyHPFill').className = 'hp-fill' +
+                    (enemyHPPercent <= 20 ? ' critical' : enemyHPPercent <= 50 ? ' warning' : '');
+                document.getElementById('enemyHPText').textContent = `${currentEnemy.hp}/${currentEnemy.maxHP}`;
+
+                // Show message about current tool
+                showMessage(`<span class="name">${agent.name}</span> is battling <span class="name">${currentEnemy.name}</span>!`);
+            } else {
+                // No current enemy (between tools or waiting)
+                waitingState.style.display = 'flex';
+                waitingState.innerHTML = `
+                    <div class="waiting-text">⚔️ ${trainer.name} is thinking...</div>
+                    <div class="waiting-spinner">🔄</div>
+                `;
+                agentCombatant.style.display = 'none';
+                enemyCombatant.style.display = 'none';
+                agentHPBox.style.display = 'none';
+                enemyHPBox.style.display = 'none';
+            }
+
+            // Update wild panel with all active battles
+            wildList.innerHTML = battles.map(battle => {
+                const tr = battle.trainer;
+                const ag = battle.agent;
+                const defeated = tr.defeatedEnemies.length;
+                const total = battle.seenTools.size;
+                const current = battle.currentEnemy;
+
+                // Team status icons
+                const enemyIcons = Array.from(battle.seenTools.values()).map(enemy => {
+                    if (enemy.hp <= 0) return '⚫'; // Fainted
+                    if (enemy === current) return '🔴'; // Current
+                    return '⚪'; // Waiting
+                }).join('') || '❓';
+
+                return `
+                    <div class="wild-task">
+                        <div class="wild-sprite">${current?.sprite || tr.sprite}</div>
+                        <div class="wild-info">
+                            <div class="wild-name">${tr.name}</div>
+                            <div class="wild-meta">${enemyIcons}</div>
+                            <div class="wild-meta">${ag.name} battling (${defeated}/${total || '?'})</div>
+                        </div>
+                        <div class="wild-progress">
+                            <div class="wild-progress-fill" style="width: ${total > 0 ? (defeated / total) * 100 : 0}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render the battle log
+        function renderBattleLog() {
+            const logBox = document.getElementById('battleMessageBox');
+            if (!logBox) return;
+
+            // Keep showing the most recent message
+            if (battleLog.length > 0) {
+                const latest = battleLog[0];
+                let className = '';
+                if (latest.type === 'defeat') className = 'msg-defeat';
+                else if (latest.type === 'levelup') className = 'msg-levelup';
+                else if (latest.type === 'victory') className = 'msg-victory';
+
+                logBox.innerHTML = `<span class="${className}">${latest.message}</span>`;
+            }
+        }
+
+        // ============================================
+        // UTILITY FUNCTIONS
+        // ============================================
+        function showMessage(text) {
+            document.getElementById('messageText').innerHTML = text;
+        }
+
+        function closeVictory() {
+            document.getElementById('victoryOverlay').classList.remove('visible');
+        }
+
+        // ============================================
+        // DATA FETCHING - Correlates real tool execution with battle state
+        // ============================================
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:8081/api/chat/requests');
+                const data = await response.json();
+
+                const requests = (data.requests || []).map(r => ({
+                    ...r,
+                    id: r.requestId,
+                    startTime: new Date(r.startTime).getTime()
+                }));
+
+                for (const request of requests) {
+                    const agent = updateAgent(request.id, request);
+
+                    if (request.status === 'running') {
+                        // ACTIVE BATTLE: Task is running = battle in progress
+                        let battle = activeBattles.get(request.id);
+
+                        if (!battle) {
+                            // NEW BATTLE: Task just started
+                            const trainer = createTaskTrainer(request);
+                            battle = {
+                                agent,
+                                trainer,
+                                seenTools: new Map(), // toolId -> enemy
+                                currentEnemy: null,
+                                startTime: Date.now()
+                            };
+                            activeBattles.set(request.id, battle);
+                            addBattleLog(`${trainer.name} wants to battle!`, 'challenge');
+                        }
+
+                        // Update agent reference
+                        battle.agent = agent;
+
+                        // Process each tool
+                        const tools = request.tools || [];
+                        for (const tool of tools) {
+                            const toolId = `${tool.name}_${tool.startTime}`;
+
+                            if (!battle.seenTools.has(toolId)) {
+                                // NEW TOOL = New enemy Pokemon appears
+                                const enemy = createEnemyFromTool(tool, request);
+                                battle.seenTools.set(toolId, enemy);
+
+                                if (tool.status === 'running') {
+                                    // This is the current enemy being fought
+                                    battle.currentEnemy = enemy;
+                                    addBattleLog(`${battle.trainer.name} sent out ${enemy.name}!`, 'appear');
+                                } else if (tool.status === 'completed') {
+                                    // Tool already completed - enemy was instantly defeated
+                                    enemy.hp = 0;
+                                    battle.trainer.defeatedEnemies.push(enemy);
+                                    battle.trainer.totalXP += enemy.xpReward;
+                                    addBattleLog(`${agent.name} defeated ${enemy.name}!`, 'defeat');
+                                }
+                            } else {
+                                // EXISTING TOOL - check for status change
+                                const enemy = battle.seenTools.get(toolId);
+                                const prevStatus = enemy.status;
+
+                                if (prevStatus === 'running' && tool.status === 'completed') {
+                                    // TOOL COMPLETED = Enemy defeated!
+                                    enemy.status = 'completed';
+                                    enemy.hp = 0;
+                                    battle.trainer.defeatedEnemies.push(enemy);
+                                    battle.trainer.totalXP += enemy.xpReward;
+
+                                    // Award XP to agent
+                                    const xpGained = enemy.xpReward;
+                                    agent.xp += xpGained;
+                                    totalXP += xpGained;
+
+                                    addBattleLog(`${agent.name} defeated ${enemy.name}! +${xpGained} XP`, 'defeat');
+
+                                    // Check for level up
+                                    const newLevelInfo = levelFromXP(agent.xp);
+                                    if (newLevelInfo.level > agent.level) {
+                                        addBattleLog(`${agent.name} grew to level ${newLevelInfo.level}!`, 'levelup');
+                                    }
+
+                                    // Find next running tool as current enemy
+                                    battle.currentEnemy = null;
+                                    for (const [tid, en] of battle.seenTools.entries()) {
+                                        if (en.status === 'running') {
+                                            battle.currentEnemy = en;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (request.status === 'completed' && !completedBattles.has(request.id)) {
+                        // TASK COMPLETED = Trainer defeated!
+                        completedBattles.add(request.id);
+
+                        let battle = activeBattles.get(request.id);
+                        if (battle) {
+                            // Mark all remaining enemies as defeated
+                            for (const [toolId, enemy] of battle.seenTools.entries()) {
+                                if (enemy.status === 'running') {
+                                    enemy.status = 'completed';
+                                    enemy.hp = 0;
+                                    battle.trainer.defeatedEnemies.push(enemy);
+                                    battle.trainer.totalXP += enemy.xpReward;
+                                    agent.xp += enemy.xpReward;
+                                    totalXP += enemy.xpReward;
+                                }
+                            }
+
+                            // Victory!
+                            battle.trainer.status = 'defeated';
+                            totalVictories++;
+                            agent.victories++;
+
+                            // Bonus XP for defeating trainer
+                            const bonusXP = 50;
+                            agent.xp += bonusXP;
+                            totalXP += bonusXP;
+
+                            addBattleLog(`${agent.name} defeated ${battle.trainer.name}! +${bonusXP} bonus XP`, 'victory');
+
+                            // Clean up
+                            activeBattles.delete(request.id);
+
+                            // Show victory (we'll render this in the UI)
+                            showVictoryBanner(agent, battle.trainer);
+                        }
+                    }
+                }
+
+                renderTeam();
+                renderBattleArena();
+                renderBattleLog();
+
+            } catch (error) {
+                console.error('Failed to fetch:', error);
+            }
+        }
+
+        // Add to battle log
+        function addBattleLog(message, type) {
+            battleLog.unshift({ message, type, time: Date.now() });
+            if (battleLog.length > 20) battleLog.pop();
+        }
+
+        // Show victory banner
+        function showVictoryBanner(agent, trainer) {
+            const banner = document.createElement('div');
+            banner.className = 'victory-banner';
+            banner.innerHTML = `
+                <div class="victory-text">🎉 TRAINER DEFEATED! 🎉</div>
+                <div class="victory-details">
+                    ${agent.sprite} ${agent.name} defeated ${trainer.sprite} ${trainer.name}
+                </div>
+                <div class="victory-xp">+${trainer.totalXP + 50} Total XP</div>
+            `;
+            document.body.appendChild(banner);
+            setTimeout(() => banner.remove(), 4000);
+        }
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        createClouds();
+        fetchData();
+        setInterval(fetchData, 2000);
+    </script>
+</body>
+</html>

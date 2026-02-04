@@ -760,13 +760,19 @@
             color: #c9d1d9;
         }
 
-        .plan-text ol, .plan-text ul {
+        .plan-text ol, .plan-text ul, .plan-text .plan-list {
             margin: 0.5rem 0 0.5rem 1.25rem;
             padding: 0;
+            list-style-type: disc;
         }
 
         .plan-text li {
             margin-bottom: 0.5rem;
+            line-height: 1.5;
+        }
+
+        .plan-text li strong {
+            color: #58a6ff;
         }
 
         .plan-text code {
@@ -1693,28 +1699,50 @@ DECISION: COMPLETED
         function parsePlanSections(plan) {
             const sections = {};
 
-            // Extract sections using headers (supports both ## HEADER and HEADER: formats)
-            // Pattern supports: "## UNDERSTANDING\n", "UNDERSTANDING:", "**UNDERSTANDING:**", "**UNDERSTANDING**:"
-            const sectionPattern = (name) => new RegExp(
-                `(?:##\\s*${name}|\\*\\*${name}:?\\*\\*:?|^${name})\\s*[:.]?\\s*\\n?([\\s\\S]*?)(?=##|\\n\\*\\*[A-Z]|\\n[A-Z_]+:|\\[DECISION|$)`,
-                'im'
-            );
+            // Two-phase extraction: first try with boundary, then fallback to end-of-string
+            function extractSection(text, name) {
+                // Boundary pattern - match header then content until next ALL-CAPS header
+                // Note: DO NOT include $ in lookahead as it causes lazy quantifier to match too little
+                const withBoundary = new RegExp(
+                    `(?:##\\s*${name}|\\*\\*${name}:?\\*\\*:?|${name})\\s*[:.]?\\s*\\n?` +
+                    `([\\s\\S]*?)` +
+                    `(?=\\n##[A-Z]|\\n\\*\\*[A-Z]|\\n[A-Z]{2,}[A-Z_]*:|\\[DECISION)`,
+                    'im'
+                );
 
-            const understandingMatch = plan.match(sectionPattern('UNDERSTANDING'));
-            const approachMatch = plan.match(sectionPattern('APPROACH'));
-            const stepsMatch = plan.match(sectionPattern('STEPS')) || plan.match(sectionPattern('EXECUTION STEPS'));
-            const filesMatch = plan.match(sectionPattern('KEY FILES\\/AREAS')) || plan.match(sectionPattern('FILES'));
-            const risksMatch = plan.match(sectionPattern('RISKS')) || plan.match(sectionPattern('TEST_CONSIDERATIONS'));
-            const evidenceMatch = plan.match(sectionPattern('EVIDENCE'));
+                let match = text.match(withBoundary);
+                if (match) return match[1].trim();
+
+                // Fallback: match to end of string (for last section)
+                const toEnd = new RegExp(
+                    `(?:##\\s*${name}|\\*\\*${name}:?\\*\\*:?|${name})\\s*[:.]?\\s*\\n?([\\s\\S]*)`,
+                    'im'
+                );
+
+                match = text.match(toEnd);
+                if (match) return match[1].trim();
+
+                return null;
+            }
+
+            sections.understanding = extractSection(plan, 'UNDERSTANDING');
+            sections.approach = extractSection(plan, 'APPROACH');
+            sections.steps = extractSection(plan, 'STEPS') || extractSection(plan, 'EXECUTION[\\s_]*STEPS');
+            sections.files = extractSection(plan, 'KEY[\\s_]*FILES(?:\\/AREAS)?') || extractSection(plan, 'FILES');
+            sections.risks = extractSection(plan, 'RISKS') || extractSection(plan, 'TEST[_\\s]*CONSIDERATIONS');
+            sections.evidence = extractSection(plan, 'EVIDENCE');
+
+            // Confidence: extract value and normalize
             const confidenceMatch = plan.match(/CONFIDENCE:?\s*(\w+[-\w]*)/i);
-
-            sections.understanding = understandingMatch ? understandingMatch[1].trim() : null;
-            sections.approach = approachMatch ? approachMatch[1].trim() : null;
-            sections.steps = stepsMatch ? stepsMatch[1].trim() : null;
-            sections.files = filesMatch ? filesMatch[1].trim() : null;
-            sections.risks = risksMatch ? risksMatch[1].trim() : null;
-            sections.evidence = evidenceMatch ? evidenceMatch[1].trim() : null;
-            sections.confidence = confidenceMatch ? confidenceMatch[1].toUpperCase() : 'MEDIUM';
+            if (confidenceMatch) {
+                const val = confidenceMatch[1].toUpperCase();
+                // Normalize "MEDIUM-HIGH" to "HIGH", etc.
+                if (val.includes('HIGH')) sections.confidence = 'HIGH';
+                else if (val.includes('LOW')) sections.confidence = 'LOW';
+                else sections.confidence = 'MEDIUM';
+            } else {
+                sections.confidence = 'MEDIUM';
+            }
 
             return sections;
         }
@@ -1743,12 +1771,54 @@ DECISION: COMPLETED
 
         function formatPlanText(text) {
             if (!text) return '';
-            return text
-                .replace(/^\d+\.\s*/gm, '<li>')  // numbered lists
-                .replace(/^-\s*/gm, '<li>')  // bullet lists
+
+            // Convert markdown to HTML
+            let html = text
                 .replace(/`([^`]+)`/g, '<code>$1</code>')
-                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-                .replace(/\n/g, '<br>');
+                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+            // Split into lines and process
+            const lines = html.split('\n');
+            let inList = false;
+            let result = [];
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+
+                // Check for list item patterns: "1.", "1)", "-", "•"
+                const listMatch = trimmed.match(/^(\d+[.)]\s*|-\s*|•\s*)/);
+
+                if (listMatch) {
+                    if (!inList) {
+                        result.push('<ul class="plan-list">');
+                        inList = true;
+                    }
+                    // Remove the list marker and wrap in <li>
+                    const content = trimmed.substring(listMatch[0].length);
+                    result.push(`<li>${content}</li>`);
+                } else if (trimmed === '') {
+                    // Empty line - close list if in one
+                    if (inList) {
+                        result.push('</ul>');
+                        inList = false;
+                    }
+                    result.push('<br>');
+                } else {
+                    // Regular text - close list if in one
+                    if (inList) {
+                        result.push('</ul>');
+                        inList = false;
+                    }
+                    result.push(trimmed);
+                }
+            }
+
+            // Close any open list
+            if (inList) {
+                result.push('</ul>');
+            }
+
+            return result.join('\n');
         }
 
         function approvePlan() {

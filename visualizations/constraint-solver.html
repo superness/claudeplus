@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Constraint Solver - Chat API Visualization</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: linear-gradient(180deg, #12121a 0%, #0a0a0f 100%);
+      border-bottom: 1px solid #2a2a3a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #00ff88 0%, #00aaff 100%);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #0a0a0f;
+      font-size: 14px;
+    }
+
+    .logo-text {
+      font-size: 18px;
+      font-weight: 600;
+      background: linear-gradient(90deg, #00ff88, #00aaff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stats {
+      display: flex;
+      gap: 24px;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: bold;
+      color: #00ff88;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #666;
+      letter-spacing: 1px;
+    }
+
+    /* Main Canvas */
+    .main-container {
+      position: fixed;
+      top: 60px;
+      left: 0;
+      right: 300px;
+      bottom: 0;
+      overflow: hidden;
+    }
+
+    #solver-canvas {
+      width: 100%;
+      height: 100%;
+      background: #0a0a0f;
+    }
+
+    /* Side Panel */
+    .side-panel {
+      position: fixed;
+      top: 60px;
+      right: 0;
+      width: 300px;
+      bottom: 0;
+      background: #12121a;
+      border-left: 1px solid #2a2a3a;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .panel-section {
+      margin-bottom: 24px;
+    }
+
+    .panel-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #666;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #2a2a3a;
+    }
+
+    /* Constraint System Card */
+    .system-card {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      transition: all 0.3s ease;
+    }
+
+    .system-card:hover {
+      border-color: #00ff88;
+      box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+    }
+
+    .system-card.solving {
+      border-color: #ffaa00;
+      animation: solving-pulse 1.5s ease-in-out infinite;
+    }
+
+    .system-card.satisfied {
+      border-color: #00ff88;
+    }
+
+    .system-card.unsatisfiable {
+      border-color: #ff4444;
+    }
+
+    @keyframes solving-pulse {
+      0%, 100% { box-shadow: 0 0 10px rgba(255, 170, 0, 0.2); }
+      50% { box-shadow: 0 0 25px rgba(255, 170, 0, 0.4); }
+    }
+
+    .system-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .system-id {
+      font-size: 11px;
+      color: #888;
+      font-family: monospace;
+    }
+
+    .system-status {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .system-status.solving {
+      background: rgba(255, 170, 0, 0.2);
+      color: #ffaa00;
+    }
+
+    .system-status.satisfied {
+      background: rgba(0, 255, 136, 0.2);
+      color: #00ff88;
+    }
+
+    .system-status.unsatisfiable {
+      background: rgba(255, 68, 68, 0.2);
+      color: #ff4444;
+    }
+
+    .system-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .mini-stat {
+      text-align: center;
+      padding: 6px;
+      background: #0a0a0f;
+      border-radius: 4px;
+    }
+
+    .mini-stat-value {
+      font-size: 14px;
+      font-weight: bold;
+      color: #00aaff;
+    }
+
+    .mini-stat-label {
+      font-size: 9px;
+      color: #666;
+      text-transform: uppercase;
+    }
+
+    /* Propagation Log */
+    .prop-log {
+      font-size: 11px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .prop-entry {
+      padding: 6px 8px;
+      margin-bottom: 4px;
+      background: #1a1a24;
+      border-radius: 4px;
+      border-left: 3px solid #333;
+      animation: slide-in 0.3s ease;
+    }
+
+    .prop-entry.propagate {
+      border-left-color: #00aaff;
+    }
+
+    .prop-entry.conflict {
+      border-left-color: #ff4444;
+    }
+
+    .prop-entry.backtrack {
+      border-left-color: #ffaa00;
+    }
+
+    .prop-entry.satisfy {
+      border-left-color: #00ff88;
+    }
+
+    @keyframes slide-in {
+      from {
+        opacity: 0;
+        transform: translateX(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .prop-type {
+      font-weight: bold;
+      text-transform: uppercase;
+      font-size: 9px;
+      letter-spacing: 1px;
+    }
+
+    .prop-type.propagate { color: #00aaff; }
+    .prop-type.conflict { color: #ff4444; }
+    .prop-type.backtrack { color: #ffaa00; }
+    .prop-type.satisfy { color: #00ff88; }
+
+    .prop-detail {
+      color: #888;
+      margin-top: 2px;
+    }
+
+    /* Legend */
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #888;
+    }
+
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    /* Variable node colors by tool type */
+    .var-read { background: #00aaff; }
+    .var-write { background: #00ff88; }
+    .var-bash { background: #ff4444; }
+    .var-task { background: #aa00ff; }
+    .var-grep { background: #ffaa00; }
+    .var-edit { background: #ff00aa; }
+
+    /* Connection indicator */
+    .connection-status {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #666;
+    }
+
+    .connection-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff4444;
+    }
+
+    .connection-dot.connected {
+      background: #00ff88;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0a0a0f;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #444;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">∃</div>
+      <span class="logo-text">Constraint Solver</span>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="stat-systems">0</div>
+        <div class="stat-label">Systems</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-variables">0</div>
+        <div class="stat-label">Variables</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-constraints">0</div>
+        <div class="stat-label">Constraints</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-propagations">0</div>
+        <div class="stat-label">Propagations</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-container">
+    <canvas id="solver-canvas"></canvas>
+  </div>
+
+  <aside class="side-panel">
+    <div class="panel-section">
+      <div class="panel-title">Active Constraint Systems</div>
+      <div id="systems-list"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Propagation Log</div>
+      <div class="prop-log" id="prop-log"></div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Legend</div>
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-color var-read"></div>
+          <span>Read (input)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color var-write"></div>
+          <span>Write (output)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color var-bash"></div>
+          <span>Bash (exec)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color var-task"></div>
+          <span>Task (spawn)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color var-grep"></div>
+          <span>Grep (search)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color var-edit"></div>
+          <span>Edit (mutate)</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="connection-status">
+    <div class="connection-dot" id="connection-dot"></div>
+    <span id="connection-text">Connecting...</span>
+  </div>
+
+  <script>
+    // ========================================
+    // CONSTRAINT SOLVER VISUALIZATION
+    // ========================================
+    // Represents Chat API requests as constraint satisfaction problems
+    // - Variables = Tools (with domains representing states)
+    // - Constraints = Dependencies and ordering
+    // - Propagation = Tool execution updates
+    // - Conflict = Errors
+    // - Satisfaction = Completion
+
+    const API_URL = 'http://localhost:8081/api/chat/requests';
+    const POLL_INTERVAL = 1000;
+
+    // Canvas setup
+    const canvas = document.getElementById('solver-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // State
+    let constraintSystems = new Map();
+    let propagationLog = [];
+    let totalPropagations = 0;
+    let isConnected = false;
+
+    // Tool to variable color mapping
+    const TOOL_COLORS = {
+      'Read': '#00aaff',
+      'Write': '#00ff88',
+      'Bash': '#ff4444',
+      'Task': '#aa00ff',
+      'Grep': '#ffaa00',
+      'Glob': '#ff8800',
+      'Edit': '#ff00aa',
+      'WebFetch': '#00ffaa',
+      'WebSearch': '#88ff00',
+      'TodoWrite': '#00ddff',
+      'AskUserQuestion': '#ffdd00',
+      'EnterPlanMode': '#dd00ff',
+      'ExitPlanMode': '#ff00dd',
+      'NotebookEdit': '#00ffdd',
+      'Skill': '#ddff00'
+    };
+
+    // Domain values for variables
+    const DOMAIN_VALUES = {
+      UNASSIGNED: 0,
+      RUNNING: 1,
+      COMPLETED: 2,
+      FAILED: 3
+    };
+
+    // ========================================
+    // CONSTRAINT SYSTEM CLASS
+    // ========================================
+    class ConstraintSystem {
+      constructor(request) {
+        this.id = request.requestId || request.id;
+        this.request = request;
+        this.variables = [];
+        this.constraints = [];
+        this.x = 0;
+        this.y = 0;
+        this.targetX = 0;
+        this.targetY = 0;
+        this.radius = 150;
+        this.phase = 0;
+        this.propagationWaves = [];
+        this.conflictFlash = 0;
+        this.satisfactionGlow = 0;
+
+        this.buildFromRequest(request);
+      }
+
+      buildFromRequest(request) {
+        // Create variables from tools
+        const tools = request.tools || [];
+        const angleStep = (2 * Math.PI) / Math.max(tools.length, 1);
+
+        tools.forEach((tool, i) => {
+          const angle = angleStep * i - Math.PI / 2;
+          const distance = 60 + Math.random() * 30;
+
+          this.variables.push({
+            id: `${this.id}_${tool.name}_${i}`,
+            name: tool.name,
+            tool: tool,
+            domain: this.getDomainFromTool(tool),
+            assigned: tool.status === 'completed' || tool.status === 'running',
+            value: this.getValueFromTool(tool),
+            angle: angle,
+            distance: distance,
+            orbitalSpeed: 0.001 + Math.random() * 0.002,
+            size: 8 + (tool.duration ? Math.min(tool.duration / 1000, 10) : 4),
+            color: TOOL_COLORS[tool.name] || '#888888',
+            pulsePhase: Math.random() * Math.PI * 2
+          });
+        });
+
+        // Create constraints (sequential ordering)
+        for (let i = 1; i < this.variables.length; i++) {
+          this.constraints.push({
+            from: this.variables[i - 1],
+            to: this.variables[i],
+            type: 'precedence',
+            satisfied: this.checkPrecedence(this.variables[i - 1], this.variables[i])
+          });
+        }
+      }
+
+      getDomainFromTool(tool) {
+        return [DOMAIN_VALUES.UNASSIGNED, DOMAIN_VALUES.RUNNING, DOMAIN_VALUES.COMPLETED, DOMAIN_VALUES.FAILED];
+      }
+
+      getValueFromTool(tool) {
+        if (tool.status === 'completed') return DOMAIN_VALUES.COMPLETED;
+        if (tool.status === 'running') return DOMAIN_VALUES.RUNNING;
+        if (tool.status === 'error') return DOMAIN_VALUES.FAILED;
+        return DOMAIN_VALUES.UNASSIGNED;
+      }
+
+      checkPrecedence(v1, v2) {
+        // v1 must be completed before v2 starts
+        if (v1.value === DOMAIN_VALUES.COMPLETED) return true;
+        if (v2.value === DOMAIN_VALUES.UNASSIGNED) return true;
+        return false;
+      }
+
+      getStatus() {
+        if (this.request.status === 'error' || this.request.status === 'aborted') {
+          return 'unsatisfiable';
+        }
+        if (this.request.status === 'completed') {
+          return 'satisfied';
+        }
+        return 'solving';
+      }
+
+      propagate() {
+        // Emit propagation wave when a tool completes
+        const runningVars = this.variables.filter(v => v.tool.status === 'running');
+        runningVars.forEach(v => {
+          this.propagationWaves.push({
+            x: 0,
+            y: 0,
+            varAngle: v.angle,
+            varDistance: v.distance,
+            radius: 0,
+            maxRadius: 100,
+            alpha: 1,
+            color: v.color
+          });
+        });
+      }
+
+      update(dt) {
+        this.phase += dt * 0.001;
+
+        // Smooth position interpolation
+        this.x += (this.targetX - this.x) * 0.05;
+        this.y += (this.targetY - this.y) * 0.05;
+
+        // Update variable orbital positions
+        this.variables.forEach(v => {
+          v.angle += v.orbitalSpeed;
+          v.pulsePhase += dt * 0.003;
+        });
+
+        // Update propagation waves
+        this.propagationWaves = this.propagationWaves.filter(wave => {
+          wave.radius += dt * 0.1;
+          wave.alpha = 1 - (wave.radius / wave.maxRadius);
+          return wave.alpha > 0;
+        });
+
+        // Update constraint satisfaction
+        this.constraints.forEach(c => {
+          c.satisfied = this.checkPrecedence(c.from, c.to);
+        });
+
+        // Conflict flash decay
+        if (this.conflictFlash > 0) {
+          this.conflictFlash -= dt * 0.002;
+        }
+
+        // Satisfaction glow
+        if (this.getStatus() === 'satisfied') {
+          this.satisfactionGlow = Math.min(1, this.satisfactionGlow + dt * 0.002);
+        }
+      }
+
+      draw(ctx, offsetX, offsetY) {
+        const cx = this.x + offsetX;
+        const cy = this.y + offsetY;
+        const status = this.getStatus();
+
+        // Draw system boundary (constraint space)
+        ctx.save();
+
+        // Outer glow based on status
+        if (status === 'solving') {
+          const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, this.radius);
+          gradient.addColorStop(0, 'rgba(255, 170, 0, 0.05)');
+          gradient.addColorStop(0.7, 'rgba(255, 170, 0, 0.02)');
+          gradient.addColorStop(1, 'rgba(255, 170, 0, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(cx, cy, this.radius, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (status === 'satisfied') {
+          const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, this.radius * (1 + this.satisfactionGlow * 0.2));
+          gradient.addColorStop(0, `rgba(0, 255, 136, ${0.1 * this.satisfactionGlow})`);
+          gradient.addColorStop(0.7, `rgba(0, 255, 136, ${0.05 * this.satisfactionGlow})`);
+          gradient.addColorStop(1, 'rgba(0, 255, 136, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(cx, cy, this.radius * (1 + this.satisfactionGlow * 0.2), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Conflict flash
+        if (this.conflictFlash > 0 || status === 'unsatisfiable') {
+          const flashAlpha = status === 'unsatisfiable' ? 0.1 : this.conflictFlash * 0.2;
+          ctx.fillStyle = `rgba(255, 68, 68, ${flashAlpha})`;
+          ctx.beginPath();
+          ctx.arc(cx, cy, this.radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Draw constraint space boundary
+        ctx.strokeStyle = status === 'satisfied' ? '#00ff88' :
+                          status === 'unsatisfiable' ? '#ff4444' : '#333';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, this.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw propagation waves
+        this.propagationWaves.forEach(wave => {
+          const wx = cx + Math.cos(wave.varAngle) * wave.varDistance;
+          const wy = cy + Math.sin(wave.varAngle) * wave.varDistance;
+
+          ctx.strokeStyle = wave.color.replace(')', `, ${wave.alpha * 0.5})`).replace('rgb', 'rgba');
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(wx, wy, wave.radius, 0, Math.PI * 2);
+          ctx.stroke();
+        });
+
+        // Draw constraints (arcs between variables)
+        this.constraints.forEach(c => {
+          const fromX = cx + Math.cos(c.from.angle) * c.from.distance;
+          const fromY = cy + Math.sin(c.from.angle) * c.from.distance;
+          const toX = cx + Math.cos(c.to.angle) * c.to.distance;
+          const toY = cy + Math.sin(c.to.angle) * c.to.distance;
+
+          // Draw constraint arc
+          ctx.strokeStyle = c.satisfied ? 'rgba(0, 255, 136, 0.3)' : 'rgba(255, 68, 68, 0.5)';
+          ctx.lineWidth = c.satisfied ? 1 : 2;
+          ctx.beginPath();
+          ctx.moveTo(fromX, fromY);
+
+          // Curved line through center
+          const midX = (fromX + toX) / 2;
+          const midY = (fromY + toY) / 2;
+          const ctrlX = cx + (midX - cx) * 0.3;
+          const ctrlY = cy + (midY - cy) * 0.3;
+          ctx.quadraticCurveTo(ctrlX, ctrlY, toX, toY);
+          ctx.stroke();
+
+          // Arrowhead
+          if (!c.satisfied) {
+            const angle = Math.atan2(toY - ctrlY, toX - ctrlX);
+            ctx.fillStyle = 'rgba(255, 68, 68, 0.7)';
+            ctx.beginPath();
+            ctx.moveTo(toX, toY);
+            ctx.lineTo(toX - 8 * Math.cos(angle - 0.3), toY - 8 * Math.sin(angle - 0.3));
+            ctx.lineTo(toX - 8 * Math.cos(angle + 0.3), toY - 8 * Math.sin(angle + 0.3));
+            ctx.closePath();
+            ctx.fill();
+          }
+        });
+
+        // Draw variables (tool nodes)
+        this.variables.forEach(v => {
+          const vx = cx + Math.cos(v.angle) * v.distance;
+          const vy = cy + Math.sin(v.angle) * v.distance;
+          const pulse = Math.sin(v.pulsePhase) * 0.2 + 1;
+          const size = v.size * (v.tool.status === 'running' ? pulse : 1);
+
+          // Variable glow
+          if (v.tool.status === 'running') {
+            const gradient = ctx.createRadialGradient(vx, vy, 0, vx, vy, size * 3);
+            gradient.addColorStop(0, v.color.replace(')', ', 0.3)').replace('rgb', 'rgba'));
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(vx, vy, size * 3, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Variable node
+          ctx.fillStyle = v.assigned ? v.color : '#333';
+          ctx.beginPath();
+          ctx.arc(vx, vy, size, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Domain indicator (small arc showing remaining domain)
+          const domainFraction = v.assigned ? 1 : 0.5;
+          ctx.strokeStyle = v.color;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(vx, vy, size + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * domainFraction);
+          ctx.stroke();
+
+          // Value indicator
+          if (v.value === DOMAIN_VALUES.COMPLETED) {
+            ctx.fillStyle = '#00ff88';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('✓', vx, vy + 3);
+          } else if (v.value === DOMAIN_VALUES.FAILED) {
+            ctx.fillStyle = '#ff4444';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('✗', vx, vy + 3);
+          } else if (v.value === DOMAIN_VALUES.RUNNING) {
+            ctx.fillStyle = '#ffaa00';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('⟳', vx, vy + 3);
+          }
+        });
+
+        // Draw center label
+        ctx.fillStyle = '#666';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(this.truncateId(this.id), cx, cy + 4);
+
+        ctx.restore();
+      }
+
+      truncateId(id) {
+        if (id.length <= 12) return id;
+        return id.slice(0, 6) + '...' + id.slice(-4);
+      }
+    }
+
+    // ========================================
+    // VISUALIZATION STATE
+    // ========================================
+    function resizeCanvas() {
+      const container = document.querySelector('.main-container');
+      canvas.width = container.clientWidth;
+      canvas.height = container.clientHeight;
+    }
+
+    function layoutSystems() {
+      const systems = Array.from(constraintSystems.values());
+      const cols = Math.ceil(Math.sqrt(systems.length));
+      const rows = Math.ceil(systems.length / cols);
+
+      const cellWidth = canvas.width / cols;
+      const cellHeight = canvas.height / rows;
+
+      systems.forEach((sys, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        sys.targetX = (col + 0.5) * cellWidth;
+        sys.targetY = (row + 0.5) * cellHeight;
+        sys.radius = Math.min(cellWidth, cellHeight) * 0.4;
+      });
+    }
+
+    // ========================================
+    // DATA FETCHING
+    // ========================================
+    async function fetchData() {
+      try {
+        const response = await fetch(API_URL);
+        if (!response.ok) throw new Error('API error');
+
+        const data = await response.json();
+        const requests = data.requests || [];
+
+        isConnected = true;
+        updateConnectionStatus();
+        processRequests(requests);
+
+      } catch (err) {
+        console.error('Fetch error:', err);
+        isConnected = false;
+        updateConnectionStatus();
+      }
+    }
+
+    function processRequests(requests) {
+      const currentIds = new Set();
+      let totalVars = 0;
+      let totalConstraints = 0;
+
+      requests.forEach(req => {
+        const id = req.requestId || req.id;
+        currentIds.add(id);
+
+        if (!constraintSystems.has(id)) {
+          // New constraint system
+          const system = new ConstraintSystem(req);
+          system.x = canvas.width / 2;
+          system.y = canvas.height / 2;
+          constraintSystems.set(id, system);
+
+          addPropagationEntry('satisfy', `New system: ${system.truncateId(id)}`, `${req.tools?.length || 0} variables`);
+          layoutSystems();
+        } else {
+          // Update existing system
+          const system = constraintSystems.get(id);
+          const oldStatus = system.getStatus();
+          const oldToolCount = system.variables.length;
+
+          // Check for new tools (propagations)
+          const newToolCount = (req.tools || []).length;
+          if (newToolCount > oldToolCount) {
+            const newTools = (req.tools || []).slice(oldToolCount);
+            newTools.forEach(tool => {
+              addPropagationEntry('propagate', `Assign: ${tool.name}`, `in ${system.truncateId(id)}`);
+              totalPropagations++;
+            });
+            system.propagate();
+          }
+
+          // Check for conflicts (errors)
+          if (req.status === 'error' && oldStatus !== 'unsatisfiable') {
+            addPropagationEntry('conflict', `Conflict detected`, system.truncateId(id));
+            system.conflictFlash = 1;
+          }
+
+          // Check for satisfaction (completion)
+          if (req.status === 'completed' && oldStatus !== 'satisfied') {
+            addPropagationEntry('satisfy', `SATISFIED`, system.truncateId(id));
+          }
+
+          // Rebuild system with new data
+          system.request = req;
+          system.variables = [];
+          system.constraints = [];
+          system.buildFromRequest(req);
+        }
+
+        const sys = constraintSystems.get(id);
+        totalVars += sys.variables.length;
+        totalConstraints += sys.constraints.length;
+      });
+
+      // Remove old systems
+      for (const [id, system] of constraintSystems) {
+        if (!currentIds.has(id)) {
+          constraintSystems.delete(id);
+          layoutSystems();
+        }
+      }
+
+      // Update stats
+      document.getElementById('stat-systems').textContent = constraintSystems.size;
+      document.getElementById('stat-variables').textContent = totalVars;
+      document.getElementById('stat-constraints').textContent = totalConstraints;
+      document.getElementById('stat-propagations').textContent = totalPropagations;
+
+      // Update side panel
+      updateSystemsList();
+    }
+
+    function addPropagationEntry(type, message, detail) {
+      propagationLog.unshift({ type, message, detail, time: Date.now() });
+      if (propagationLog.length > 50) propagationLog.pop();
+      updatePropagationLog();
+    }
+
+    function updatePropagationLog() {
+      const container = document.getElementById('prop-log');
+      container.innerHTML = propagationLog.slice(0, 20).map(entry => `
+        <div class="prop-entry ${entry.type}">
+          <div class="prop-type ${entry.type}">${entry.type}</div>
+          <div class="prop-message">${entry.message}</div>
+          <div class="prop-detail">${entry.detail}</div>
+        </div>
+      `).join('');
+    }
+
+    function updateSystemsList() {
+      const container = document.getElementById('systems-list');
+      const systems = Array.from(constraintSystems.values());
+
+      container.innerHTML = systems.map(sys => {
+        const status = sys.getStatus();
+        const satisfied = sys.constraints.filter(c => c.satisfied).length;
+        const total = sys.constraints.length;
+
+        return `
+          <div class="system-card ${status}">
+            <div class="system-header">
+              <span class="system-id">${sys.truncateId(sys.id)}</span>
+              <span class="system-status ${status}">${status}</span>
+            </div>
+            <div class="system-stats">
+              <div class="mini-stat">
+                <div class="mini-stat-value">${sys.variables.length}</div>
+                <div class="mini-stat-label">Vars</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-value">${satisfied}/${total}</div>
+                <div class="mini-stat-label">Sat</div>
+              </div>
+              <div class="mini-stat">
+                <div class="mini-stat-value">${sys.variables.filter(v => v.assigned).length}</div>
+                <div class="mini-stat-label">Assigned</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateConnectionStatus() {
+      const dot = document.getElementById('connection-dot');
+      const text = document.getElementById('connection-text');
+
+      if (isConnected) {
+        dot.classList.add('connected');
+        text.textContent = 'Connected to API';
+      } else {
+        dot.classList.remove('connected');
+        text.textContent = 'Disconnected';
+      }
+    }
+
+    // ========================================
+    // RENDERING
+    // ========================================
+    let lastTime = 0;
+
+    function render(time) {
+      const dt = time - lastTime;
+      lastTime = time;
+
+      // Clear canvas
+      ctx.fillStyle = '#0a0a0f';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw grid
+      drawGrid();
+
+      // Update and draw systems
+      for (const system of constraintSystems.values()) {
+        system.update(dt);
+        system.draw(ctx, 0, 0);
+      }
+
+      // Draw title if no systems
+      if (constraintSystems.size === 0) {
+        ctx.fillStyle = '#333';
+        ctx.font = '14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waiting for constraint systems...', canvas.width / 2, canvas.height / 2);
+        ctx.font = '11px monospace';
+        ctx.fillText('Send a request via Claude Chat to see it visualized', canvas.width / 2, canvas.height / 2 + 20);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    function drawGrid() {
+      ctx.strokeStyle = '#1a1a24';
+      ctx.lineWidth = 1;
+
+      const gridSize = 40;
+
+      for (let x = 0; x < canvas.width; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+
+      for (let y = 0; y < canvas.height; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+      }
+    }
+
+    // ========================================
+    // INITIALIZATION
+    // ========================================
+    function init() {
+      resizeCanvas();
+      window.addEventListener('resize', () => {
+        resizeCanvas();
+        layoutSystems();
+      });
+
+      // Start fetching data
+      fetchData();
+      setInterval(fetchData, POLL_INTERVAL);
+
+      // Start render loop
+      requestAnimationFrame(render);
+    }
+
+    init();
+  </script>
+</body>
+</html>
