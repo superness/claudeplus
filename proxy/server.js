@@ -307,14 +307,14 @@ class ClaudeProxy {
     }
 
     // GET /api/pipeline/status/:pipelineId - Check pipeline status
-    const pipelineStatusMatch = req.url.match(/^\/api\/pipeline\/status\/([^/?]+)$/);
+    const pipelineStatusMatch = req.url.match(/^\/api\/pipeline\/status\/([^/?]+)/);
     if (pipelineStatusMatch && req.method === 'GET') {
       this.handlePipelineStatus(req, res, pipelineStatusMatch[1]);
       return;
     }
 
-    // GET /api/pipeline/result/:pipelineId - Get pipeline results
-    const pipelineResultMatch = req.url.match(/^\/api\/pipeline\/result\/([^/?]+)$/);
+    // GET /api/pipeline/result/:pipelineId - Get pipeline results (allows ?block=true/false query param)
+    const pipelineResultMatch = req.url.match(/^\/api\/pipeline\/result\/([^/?]+)/);
     if (pipelineResultMatch && req.method === 'GET') {
       this.handlePipelineResult(req, res, pipelineResultMatch[1]);
       return;
