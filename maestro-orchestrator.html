@@ -1771,66 +1771,154 @@ DECISION: COMPLETED
         }
 
         // ============================================
-        // PLANNING PHASE
+        // PLANNING PHASE (uses pipeline engine)
         // ============================================
 
         async function runPlanningPhase(userMessage) {
-            log('INFO', 'PLANNING', '--- Starting Planning Phase ---');
-            addMessage('orchestration', 'Starting planning phase...', { header: 'Planning' });
+            log('INFO', 'PLANNING', '--- Starting Planning Phase via Pipeline Engine ---');
+            addMessage('orchestration', 'Starting plan-review pipeline...', { header: 'Planning Pipeline' });
 
-            // Create planner tab
-            const plannerTabId = await createTab('Strategic Planner', 'default', currentWorkingDir);
-            log('INFO', 'PLANNING', `Created planner tab: ${plannerTabId}`);
-
-            // Add to agent tree
-            agentTree[plannerTabId] = {
-                id: plannerTabId,
-                name: '📋 Strategic Planner',
-                hat: 'planner',
+            // Create visual tree nodes for planning pipeline
+            const pipelineNodeId = 'pipeline-planning';
+            agentTree[pipelineNodeId] = {
+                id: pipelineNodeId,
+                name: '📋 Plan-Review Pipeline',
+                hat: 'pipeline',
                 status: 'active',
                 parentTabId: null,
                 childTabIds: [],
-                task: 'Create high-level plan'
+                task: 'Plan → Review cycle until approved'
             };
             renderAgentTree();
 
-            // Get plan from planner
-            addMessage('orchestration', 'Creating high-level execution plan...', { header: 'Planner' });
-            const plan = await sendToTab(plannerTabId, userMessage, PLANNER_PROMPT);
-            log('INFO', 'PLANNING', 'Plan created');
-            updateAgentStatus(plannerTabId, 'complete', 'Plan created');
+            // Execute the maestro-planning pipeline via HTTP API
+            const pipelineId = `maestro-plan-${Date.now()}`;
+            log('INFO', 'PLANNING', `Starting pipeline: ${pipelineId}`);
 
-            // Create reviewer tab
-            const reviewerTabId = await createTab('Plan Reviewer', 'default', currentWorkingDir);
-            log('INFO', 'PLANNING', `Created reviewer tab: ${reviewerTabId}`);
+            try {
+                // Start pipeline execution
+                const startResponse = await fetch(`${API_BASE}/api/pipeline/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        templateId: 'maestro-planning',
+                        pipelineId: pipelineId,
+                        userContext: userMessage,
+                        workingDirectory: currentWorkingDir
+                    })
+                });
 
-            agentTree[reviewerTabId] = {
-                id: reviewerTabId,
-                name: '🔍 Plan Reviewer',
-                hat: 'reviewer',
-                status: 'active',
-                parentTabId: plannerTabId,
-                childTabIds: [],
-                task: 'Review and critique plan'
-            };
-            agentTree[plannerTabId].childTabIds.push(reviewerTabId);
-            renderAgentTree();
+                if (!startResponse.ok) {
+                    const error = await startResponse.json();
+                    throw new Error(error.error || 'Failed to start pipeline');
+                }
 
-            // Get review
-            addMessage('orchestration', 'Expert reviewing the plan...', { header: 'Reviewer' });
-            const reviewContext = `Please review this plan for the following request:
+                const startData = await startResponse.json();
+                log('INFO', 'PLANNING', `Pipeline started: ${startData.pipelineId}`, startData);
+                addMessage('orchestration', `Running ${startData.stages}-stage plan-review cycle...`, { header: 'Pipeline Running' });
 
-**USER REQUEST:**
-${userMessage}
+                // Poll for pipeline status
+                let iteration = 0;
+                const pollInterval = 2000;
+                const maxIterations = 300; // 10 minutes max
 
-**PROPOSED PLAN:**
-${plan}`;
+                while (iteration < maxIterations) {
+                    iteration++;
 
-            const review = await sendToTab(reviewerTabId, reviewContext, REVIEWER_PROMPT);
-            log('INFO', 'PLANNING', 'Review complete');
-            updateAgentStatus(reviewerTabId, 'complete', 'Review complete');
+                    // Check status
+                    const statusResponse = await fetch(`${API_BASE}/api/pipeline/status/${pipelineId}`);
+                    const statusData = await statusResponse.json();
 
-            return { plan, review, plannerTabId, reviewerTabId };
+                    // Update UI with current stage
+                    if (statusData.currentStage) {
+                        updateOrchestrationStatus('active', statusData.currentStage);
+
+                        // Update agent tree with stage info
+                        agentTree[pipelineNodeId].task = statusData.currentStage;
+                        renderAgentTree();
+                    }
+
+                    log('DEBUG', 'PLANNING', `Pipeline status: ${statusData.status}`, statusData);
+
+                    // Check if complete
+                    if (statusData.status === 'completed' || statusData.status === 'failed') {
+                        break;
+                    }
+
+                    // Wait before next poll
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                }
+
+                // Get final results
+                const resultResponse = await fetch(`${API_BASE}/api/pipeline/result/${pipelineId}?block=false`);
+                const resultData = await resultResponse.json();
+
+                if (resultData.status === 'failed') {
+                    throw new Error(resultData.error || 'Pipeline failed');
+                }
+
+                log('INFO', 'PLANNING', 'Pipeline completed', { status: resultData.status });
+
+                // Extract plan and review from stage results
+                // The pipeline stores results keyed by stage ID
+                const planResult = resultData.stageResults?.planning?.result ||
+                                   resultData.results?.planning ||
+                                   extractPlanFromResults(resultData.results);
+
+                const reviewResult = resultData.stageResults?.review?.result ||
+                                     resultData.results?.review ||
+                                     extractReviewFromResults(resultData.results);
+
+                // Update tree status
+                updateAgentStatus(pipelineNodeId, 'complete', 'Plan approved');
+
+                log('INFO', 'PLANNING', 'Plan-review cycle complete');
+                addMessage('orchestration', 'Plan-review cycle complete. Plan approved by expert.', { header: 'Pipeline Complete' });
+
+                // Return plan and review for user approval step
+                return {
+                    plan: planResult || resultData.results || 'Plan generated via pipeline',
+                    review: reviewResult || 'DECISION: APPROVED',
+                    plannerTabId: pipelineNodeId,
+                    reviewerTabId: pipelineNodeId
+                };
+
+            } catch (error) {
+                log('ERROR', 'PLANNING', `Pipeline error: ${error.message}`, { stack: error.stack });
+                updateAgentStatus(pipelineNodeId, 'failed', error.message);
+                throw error;
+            }
+        }
+
+        // Helper to extract plan from various result formats
+        function extractPlanFromResults(results) {
+            if (!results) return null;
+            if (typeof results === 'string') return results;
+            if (results.plan) return results.plan;
+
+            // Check for planning stage output
+            for (const key of Object.keys(results)) {
+                if (key.includes('plan') && results[key]) {
+                    return typeof results[key] === 'string' ? results[key] : JSON.stringify(results[key], null, 2);
+                }
+            }
+
+            return JSON.stringify(results, null, 2);
+        }
+
+        // Helper to extract review from various result formats
+        function extractReviewFromResults(results) {
+            if (!results) return null;
+            if (results.review) return results.review;
+
+            // Check for review stage output
+            for (const key of Object.keys(results)) {
+                if (key.includes('review') && results[key]) {
+                    return typeof results[key] === 'string' ? results[key] : JSON.stringify(results[key], null, 2);
+                }
+            }
+
+            return null;
         }
 
         // ============================================

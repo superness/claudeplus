@@ -298,6 +298,28 @@ class ClaudeProxy {
       return;
     }
 
+    // ========== REST API: Pipeline Execution Endpoints ==========
+
+    // POST /api/pipeline/execute - Execute a pipeline
+    if (req.url === '/api/pipeline/execute' && req.method === 'POST') {
+      this.handlePipelineExecute(req, res);
+      return;
+    }
+
+    // GET /api/pipeline/status/:pipelineId - Check pipeline status
+    const pipelineStatusMatch = req.url.match(/^\/api\/pipeline\/status\/([^/?]+)$/);
+    if (pipelineStatusMatch && req.method === 'GET') {
+      this.handlePipelineStatus(req, res, pipelineStatusMatch[1]);
+      return;
+    }
+
+    // GET /api/pipeline/result/:pipelineId - Get pipeline results
+    const pipelineResultMatch = req.url.match(/^\/api\/pipeline\/result\/([^/?]+)$/);
+    if (pipelineResultMatch && req.method === 'GET') {
+      this.handlePipelineResult(req, res, pipelineResultMatch[1]);
+      return;
+    }
+
     // ========== REST API: Chat Endpoints ==========
 
     // POST /api/chat/send - Send a message to a specific tab
@@ -712,6 +734,254 @@ class ClaudeProxy {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ requests }));
+  }
+
+  // ========== REST API: Pipeline Execution Handler Methods ==========
+
+  // POST /api/pipeline/execute - Execute a pipeline and return pipeline ID
+  async handlePipelineExecute(req, res) {
+    try {
+      const body = await this.parseJsonBody(req);
+
+      // Validate required fields
+      if (!body.templateId && !body.pipeline) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'templateId or pipeline is required' }));
+        return;
+      }
+
+      // Load template if templateId provided
+      let pipeline = body.pipeline;
+      if (body.templateId) {
+        pipeline = this.loadTemplate(body.templateId);
+        if (!pipeline) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `Template not found: ${body.templateId}` }));
+          return;
+        }
+      }
+
+      // Generate pipeline ID
+      const pipelineId = body.pipelineId || `pipeline_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      // Working directory
+      let workingDir = body.workingDirectory || process.cwd();
+
+      // Convert Windows paths to WSL paths if needed
+      if (workingDir && workingDir.match(/^[A-Z]:\\/)) {
+        workingDir = workingDir.replace(/^([A-Z]):\\/, '/mnt/$1/').replace(/\\/g, '/').toLowerCase();
+      }
+
+      console.log(`[PROXY] [API] Pipeline execution started: ${pipelineId} (${pipeline.name})`);
+
+      // Track pipeline execution
+      if (!this.httpPipelineExecutions) {
+        this.httpPipelineExecutions = new Map();
+      }
+
+      this.httpPipelineExecutions.set(pipelineId, {
+        status: 'running',
+        startTime: Date.now(),
+        pipelineName: pipeline.name,
+        workingDir: workingDir,
+        results: null,
+        stageResults: {},
+        currentStage: null,
+        error: null
+      });
+
+      // Create a mock WebSocket to capture pipeline events
+      const mockWs = this.createMockWebSocketForPipeline(pipelineId);
+
+      // Execute pipeline asynchronously
+      this.executePipelineStages(pipeline, body.userContext || '', workingDir, mockWs, pipelineId)
+        .then(result => {
+          const execution = this.httpPipelineExecutions.get(pipelineId);
+          if (execution) {
+            execution.status = 'completed';
+            execution.results = result;
+            execution.endTime = Date.now();
+          }
+          console.log(`[PROXY] [API] Pipeline ${pipelineId} completed`);
+        })
+        .catch(error => {
+          const execution = this.httpPipelineExecutions.get(pipelineId);
+          if (execution) {
+            execution.status = 'failed';
+            execution.error = error.message;
+            execution.endTime = Date.now();
+          }
+          console.error(`[PROXY] [API] Pipeline ${pipelineId} failed:`, error);
+        });
+
+      // Return immediately with pipeline ID
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        pipelineId: pipelineId,
+        status: 'running',
+        pipelineName: pipeline.name,
+        stages: pipeline.stages?.length || 0
+      }));
+
+    } catch (error) {
+      console.error('[PROXY] [API] Pipeline execution error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+  }
+
+  // Create a mock WebSocket that captures pipeline events for HTTP API
+  createMockWebSocketForPipeline(pipelineId) {
+    const execution = this.httpPipelineExecutions.get(pipelineId);
+
+    return {
+      send: (data) => {
+        try {
+          const message = JSON.parse(data);
+
+          // Track stage updates
+          if (message.type === 'pipeline-stage-update') {
+            if (execution) {
+              execution.currentStage = message.stageName;
+              execution.stageResults[message.stageId] = {
+                status: message.status,
+                stageName: message.stageName,
+                agent: message.agent
+              };
+            }
+          }
+
+          // Track stage completion
+          if (message.type === 'pipeline-status' && message.content?.type === 'stage-complete') {
+            if (execution && execution.stageResults[message.content.stageId]) {
+              execution.stageResults[message.content.stageId].result = message.content.result;
+            }
+          }
+
+          // Store all events for debugging
+          if (!execution.events) {
+            execution.events = [];
+          }
+          execution.events.push({
+            timestamp: Date.now(),
+            ...message
+          });
+
+        } catch (e) {
+          // Ignore parse errors
+        }
+      },
+      readyState: 1 // OPEN
+    };
+  }
+
+  // GET /api/pipeline/status/:pipelineId - Check pipeline status
+  handlePipelineStatus(req, res, pipelineId) {
+    if (!this.httpPipelineExecutions?.has(pipelineId)) {
+      // Check state file as fallback
+      const statePath = path.join(__dirname, 'pipeline-states', `${pipelineId}.json`);
+      if (fs.existsSync(statePath)) {
+        try {
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            pipelineId: pipelineId,
+            status: state.status || 'unknown',
+            currentStage: state.currentStage,
+            completedStages: state.completedStages?.length || 0,
+            totalStages: state.stages?.length || 0,
+            fromStateFile: true
+          }));
+          return;
+        } catch (e) {
+          // Fall through to not found
+        }
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Pipeline not found' }));
+      return;
+    }
+
+    const execution = this.httpPipelineExecutions.get(pipelineId);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      pipelineId: pipelineId,
+      status: execution.status,
+      pipelineName: execution.pipelineName,
+      currentStage: execution.currentStage,
+      stageCount: Object.keys(execution.stageResults).length,
+      startTime: execution.startTime,
+      endTime: execution.endTime,
+      error: execution.error
+    }));
+  }
+
+  // GET /api/pipeline/result/:pipelineId - Get pipeline results (waits if still running)
+  async handlePipelineResult(req, res, pipelineId) {
+    if (!this.httpPipelineExecutions?.has(pipelineId)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Pipeline not found' }));
+      return;
+    }
+
+    const execution = this.httpPipelineExecutions.get(pipelineId);
+
+    // Parse query params for timeout
+    const urlObj = new URL(req.url, `http://${req.headers.host}`);
+    const block = urlObj.searchParams.get('block') !== 'false';
+    const timeout = parseInt(urlObj.searchParams.get('timeout') || '300000', 10); // 5 min default
+
+    // If not blocking or already complete, return immediately
+    if (!block || execution.status !== 'running') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        pipelineId: pipelineId,
+        status: execution.status,
+        pipelineName: execution.pipelineName,
+        results: execution.results,
+        stageResults: execution.stageResults,
+        error: execution.error
+      }));
+      return;
+    }
+
+    // Wait for completion
+    const startWait = Date.now();
+    const pollInterval = 500;
+
+    const waitForCompletion = () => {
+      const current = this.httpPipelineExecutions.get(pipelineId);
+
+      if (!current || current.status !== 'running') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          pipelineId: pipelineId,
+          status: current?.status || 'unknown',
+          pipelineName: current?.pipelineName,
+          results: current?.results,
+          stageResults: current?.stageResults,
+          error: current?.error
+        }));
+        return;
+      }
+
+      if (Date.now() - startWait > timeout) {
+        res.writeHead(408, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'Timeout waiting for pipeline completion',
+          pipelineId: pipelineId,
+          status: 'running',
+          currentStage: current.currentStage
+        }));
+        return;
+      }
+
+      setTimeout(waitForCompletion, pollInterval);
+    };
+
+    waitForCompletion();
   }
 
   // ========== REST API: Tab Management Handler Methods ==========
