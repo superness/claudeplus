@@ -1693,14 +1693,20 @@ DECISION: COMPLETED
         function parsePlanSections(plan) {
             const sections = {};
 
-            // Extract sections using headers
-            const understandingMatch = plan.match(/##\s*UNDERSTANDING\s*\n([\s\S]*?)(?=##|$)/i);
-            const approachMatch = plan.match(/##\s*APPROACH\s*\n([\s\S]*?)(?=##|$)/i);
-            const stepsMatch = plan.match(/##\s*EXECUTION STEPS\s*\n([\s\S]*?)(?=##|$)/i);
-            const filesMatch = plan.match(/##\s*KEY FILES\/AREAS\s*\n([\s\S]*?)(?=##|$)/i);
-            const risksMatch = plan.match(/##\s*RISKS.*?\n([\s\S]*?)(?=##|$)/i);
-            const evidenceMatch = plan.match(/##\s*EVIDENCE.*?\n([\s\S]*?)(?=##|$)/i);
-            const confidenceMatch = plan.match(/##\s*CONFIDENCE:\s*(\w+)/i);
+            // Extract sections using headers (supports both ## HEADER and HEADER: formats)
+            // Pattern supports: "## UNDERSTANDING\n", "UNDERSTANDING:", "**UNDERSTANDING:**"
+            const sectionPattern = (name) => new RegExp(
+                `(?:##\\s*${name}|\\*\\*${name}\\*\\*|^${name})\\s*[:.]?\\s*\\n?([\\s\\S]*?)(?=##|\\n[A-Z_]+:|\\*\\*[A-Z]|\\[DECISION|$)`,
+                'im'
+            );
+
+            const understandingMatch = plan.match(sectionPattern('UNDERSTANDING'));
+            const approachMatch = plan.match(sectionPattern('APPROACH'));
+            const stepsMatch = plan.match(sectionPattern('STEPS')) || plan.match(sectionPattern('EXECUTION STEPS'));
+            const filesMatch = plan.match(sectionPattern('KEY FILES\\/AREAS')) || plan.match(sectionPattern('FILES'));
+            const risksMatch = plan.match(sectionPattern('RISKS')) || plan.match(sectionPattern('TEST_CONSIDERATIONS'));
+            const evidenceMatch = plan.match(sectionPattern('EVIDENCE'));
+            const confidenceMatch = plan.match(/CONFIDENCE:?\s*(\w+[-\w]*)/i);
 
             sections.understanding = understandingMatch ? understandingMatch[1].trim() : null;
             sections.approach = approachMatch ? approachMatch[1].trim() : null;
@@ -1721,10 +1727,11 @@ DECISION: COMPLETED
                 improvements: ''
             };
 
-            const decisionMatch = review.match(/##\s*DECISION:\s*(\w+)/i);
-            const assessmentMatch = review.match(/##\s*ASSESSMENT\s*\n([\s\S]*?)(?=##|$)/i);
-            const evidenceMatch = review.match(/##\s*EVIDENCE QUALITY:\s*(\w+)/i);
-            const improvementsMatch = review.match(/##\s*SUGGESTED IMPROVEMENTS.*?\n([\s\S]*?)(?=##|$)/i);
+            // Support both "## DECISION: X" and "DECISION: X" formats
+            const decisionMatch = review.match(/(?:##\s*)?DECISION:?\s*(\w+)/i);
+            const assessmentMatch = review.match(/(?:##\s*)?ASSESSMENT:?\s*\n?([\s\S]*?)(?=##|\n[A-Z_]+:|EVIDENCE|DECISION|$)/i);
+            const evidenceMatch = review.match(/(?:##\s*)?EVIDENCE[_\s]*QUALITY:?\s*(\w+)/i);
+            const improvementsMatch = review.match(/(?:##\s*)?(?:SUGGESTED\s*)?IMPROVEMENTS:?\s*\n?([\s\S]*?)(?=##|\n[A-Z_]+:|DECISION|$)/i);
 
             if (decisionMatch) data.decision = decisionMatch[1].toUpperCase();
             if (assessmentMatch) data.assessment = assessmentMatch[1].trim();
