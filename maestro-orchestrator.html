@@ -294,6 +294,12 @@
             color: #f85149;
         }
 
+        .agent-status-badge.retrying {
+            background: rgba(251, 146, 60, 0.2);
+            color: #fb923c;
+            animation: pulse 1s infinite;
+        }
+
         .agent-hat {
             font-size: 0.75rem;
             color: #8b949e;
@@ -1371,8 +1377,15 @@ DECISION: COMPLETED
             return tabId;
         }
 
-        // Send message to a tab and wait for response
-        async function sendToTab(tabId, message, systemPrompt = null) {
+        // Check if an error is retryable (transient API failures)
+        function isRetryableError(error) {
+            const errorStr = error?.message || String(error);
+            // Retry on 500/502/503/504 errors, rate limits, timeouts
+            return /500|502|503|504|Internal server error|rate.?limit|overloaded|timeout/i.test(errorStr);
+        }
+
+        // Send message to a tab and wait for response (internal, no retry)
+        async function sendToTabInternal(tabId, message, systemPrompt = null) {
             const messagePreview = message.length > 100 ? message.substring(0, 100) + '...' : message;
             log('INFO', 'API', `Sending message to tab ${tabId}`, { messagePreview, hasSystemPrompt: !!systemPrompt });
 
@@ -1394,7 +1407,7 @@ DECISION: COMPLETED
 
             if (!response.ok) {
                 log('ERROR', 'API', `Failed to send message to tab ${tabId}`, { status: response.status });
-                throw new Error('Failed to send message');
+                throw new Error(`Failed to send message: HTTP ${response.status}`);
             }
             const { requestId } = await response.json();
             log('DEBUG', 'API', `Request submitted: ${requestId}`);
@@ -1428,6 +1441,50 @@ DECISION: COMPLETED
 
                 await new Promise(r => setTimeout(r, 500));
             }
+        }
+
+        // Send message with automatic retry for transient failures
+        const MAX_RETRIES = 3;
+        const BASE_RETRY_DELAY = 5000; // 5 seconds
+
+        async function sendToTab(tabId, message, systemPrompt = null) {
+            let lastError;
+
+            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    return await sendToTabInternal(tabId, message, systemPrompt);
+                } catch (error) {
+                    lastError = error;
+
+                    // Don't retry if aborted or non-retryable
+                    if (error.message === 'Aborted' || !isRetryableError(error)) {
+                        throw error;
+                    }
+
+                    if (attempt < MAX_RETRIES) {
+                        const delay = BASE_RETRY_DELAY * Math.pow(2, attempt - 1); // Exponential backoff
+                        log('WARN', 'API', `Retryable error on attempt ${attempt}/${MAX_RETRIES}. Retrying in ${delay/1000}s...`, {
+                            error: error.message,
+                            tabId
+                        });
+
+                        // Update UI to show retry status
+                        const tabNode = document.querySelector(`[data-tab-id="${tabId}"]`);
+                        if (tabNode) {
+                            const statusEl = tabNode.querySelector('.agent-status-badge');
+                            if (statusEl) {
+                                statusEl.textContent = `RETRY ${attempt}/${MAX_RETRIES}`;
+                                statusEl.className = 'agent-status-badge retrying';
+                            }
+                        }
+
+                        await new Promise(r => setTimeout(r, delay));
+                    }
+                }
+            }
+
+            log('ERROR', 'API', `All ${MAX_RETRIES} retry attempts failed for tab ${tabId}`);
+            throw lastError;
         }
 
         // Parse any agent's ABUDDI response (works for Maestro, Feature Owner, etc.)
