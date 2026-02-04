@@ -1607,12 +1607,17 @@ If DELEGATE, decompose into Feature Owner scopes:
 DECOMPOSITION:
 [SUBTASK]
 {
-  "name": "Subtask name",
+  "name": "DESCRIPTIVE name (e.g., 'Browser Manager', 'API Service', 'Test Suite' - NEVER 'Feature Owner 1' or 'Sub-IC 2')",
   "hat": "feature-owner",
   "context": "What this Feature Owner should deliver (self-contained feature scope)"
 }
 [/SUBTASK]
 ...more subtasks...
+
+**CRITICAL: Subtask Naming**
+- GOOD names: "Browser Manager", "API Client Layer", "Playwright Config", "Page Object Models"
+- BAD names: "Feature Owner 1", "Sub-IC 2", "Task A", "Subtask 1"
+- The name should describe WHAT is being built, not WHO is building it
 
 Feature Owners will recursively decompose their scope into Sub-IC tasks if needed.
 
