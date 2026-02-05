@@ -277,6 +277,70 @@ class ClaudeProxy {
       return;
     }
 
+    // ========== Pipeline Execution Log Endpoints ==========
+
+    // GET /api/list-pipelines - List pipeline execution logs
+    if (req.url.startsWith('/api/list-pipelines') && req.method === 'GET') {
+      try {
+        const url = new URL(req.url, `http://localhost:8081`);
+        const pattern = url.searchParams.get('pattern') || '';
+
+        let pipelines = [];
+
+        if (fs.existsSync(this.pipelinesDataDir)) {
+          pipelines = fs.readdirSync(this.pipelinesDataDir)
+            .filter(f => f.endsWith('_execution.json'))
+            .filter(f => !pattern || f.includes(pattern))
+            .map(f => {
+              const filePath = path.join(this.pipelinesDataDir, f);
+              const stats = fs.statSync(filePath);
+              const pipelineId = f.replace('_execution.json', '');
+              return {
+                pipelineId,
+                fileName: f,
+                modified: stats.mtime.toISOString(),
+                size: stats.size
+              };
+            })
+            .sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(pipelines));
+      } catch (error) {
+        console.error('[PROXY] Error listing pipelines:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // GET /api/pipeline/:pipelineId/execution - Get pipeline execution events
+    const pipelineExecMatch = req.url.match(/^\/api\/pipeline\/([^/]+)\/execution$/);
+    if (pipelineExecMatch && req.method === 'GET') {
+      const pipelineId = pipelineExecMatch[1];
+      try {
+        const logPath = path.join(this.pipelinesDataDir, `${pipelineId}_execution.json`);
+
+        if (!fs.existsSync(logPath)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Pipeline execution log not found', pipelineId }));
+          return;
+        }
+
+        const logData = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+        const events = logData.events || [];
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(events));
+      } catch (error) {
+        console.error('[PROXY] Error reading pipeline execution:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
     // ========== Maestro Log Endpoint ==========
 
     // POST /api/maestro-log - Persist Maestro orchestration log
@@ -7881,6 +7945,7 @@ Your commentary:`;
           pipelineId: pipelineState.id,
           content: {
             timestamp: new Date().toISOString(),
+            stageId: stage.id,  // CRITICAL: Required for result storage in HTTP API
             agent: stage.agent.toUpperCase(),
             stageName: stage.name,
             type: 'stage-complete',

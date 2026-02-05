@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plan Conversation Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+            color: #58a6ff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 0.4rem 0.8rem;
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #30363d;
+            border-color: #8b949e;
+        }
+
+        .btn.primary {
+            background: #238636;
+            border-color: #238636;
+        }
+
+        .btn.primary:hover {
+            background: #2ea043;
+        }
+
+        .status {
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 12px;
+            background: #21262d;
+        }
+
+        .status.running { background: #1f6feb33; color: #58a6ff; }
+        .status.completed { background: #23863633; color: #3fb950; }
+        .status.error { background: #f8514933; color: #f85149; }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .stage-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+
+        .stage-header {
+            padding: 1rem;
+            background: #21262d;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stage-title {
+            font-weight: 600;
+            color: #58a6ff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stage-agent {
+            font-size: 0.8rem;
+            color: #8b949e;
+            font-family: monospace;
+        }
+
+        .stage-meta {
+            font-size: 0.75rem;
+            color: #8b949e;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .stage-content {
+            padding: 1rem;
+        }
+
+        .message-block {
+            margin-bottom: 1rem;
+        }
+
+        .message-label {
+            font-size: 0.7rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+            letter-spacing: 0.5px;
+        }
+
+        .message-text {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 1rem;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .message-text.input {
+            border-left: 3px solid #1f6feb;
+        }
+
+        .message-text.output {
+            border-left: 3px solid #3fb950;
+        }
+
+        .decision-badge {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+
+        .decision-badge.APPROVED { background: #23863633; color: #3fb950; }
+        .decision-badge.REJECTED { background: #f8514933; color: #f85149; }
+        .decision-badge.plan_complete { background: #1f6feb33; color: #58a6ff; }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #8b949e;
+        }
+
+        .spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #f8514922;
+            border: 1px solid #f85149;
+            color: #f85149;
+            padding: 1rem;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .timeline {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            background: #21262d;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+            overflow-x: auto;
+        }
+
+        .timeline-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 80px;
+        }
+
+        .timeline-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #30363d;
+        }
+
+        .timeline-dot.completed { background: #3fb950; }
+        .timeline-dot.running { background: #58a6ff; animation: pulse 1.5s infinite; }
+        .timeline-dot.error { background: #f85149; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .timeline-label {
+            font-size: 0.7rem;
+            color: #8b949e;
+            margin-top: 0.3rem;
+        }
+
+        .timeline-arrow {
+            color: #30363d;
+            font-size: 1.2rem;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: #8b949e;
+        }
+
+        .auto-refresh input {
+            accent-color: #58a6ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📋 Plan Conversation Viewer</h1>
+        <div class="header-controls">
+            <select id="pipelineSelect" onchange="onPipelineSelect()" style="padding: 0.4rem; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; font-size: 0.8rem; max-width: 200px;">
+                <option value="">Loading...</option>
+            </select>
+            <span class="status" id="pipelineStatus">Loading...</span>
+            <div class="auto-refresh">
+                <input type="checkbox" id="autoRefresh" checked>
+                <label for="autoRefresh">Auto-refresh (3s)</label>
+            </div>
+            <button class="btn" onclick="loadPreviousPipeline()">◀ Previous</button>
+            <button class="btn primary" onclick="loadLatestPipeline()">🔄 Refresh</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="timeline" id="timeline">
+            <!-- Timeline populated dynamically -->
+        </div>
+
+        <div id="content">
+            <div class="loading">
+                <div class="spinner"></div>
+                <div>Loading latest plan pipeline...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8081';
+        let currentPipelineIndex = 0;
+        let pipelines = [];
+        let autoRefreshInterval = null;
+
+        async function init() {
+            await discoverPipelines();
+            if (pipelines.length > 0) {
+                await loadPipeline(pipelines[0].pipelineId);
+            } else {
+                document.getElementById('content').innerHTML = '<div class="error">No maestro-plan pipelines found</div>';
+            }
+
+            // Setup auto-refresh
+            document.getElementById('autoRefresh').addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    startAutoRefresh();
+                } else {
+                    stopAutoRefresh();
+                }
+            });
+            startAutoRefresh();
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+            autoRefreshInterval = setInterval(async () => {
+                if (document.getElementById('autoRefresh').checked && pipelines.length > 0) {
+                    await loadPipeline(pipelines[currentPipelineIndex].pipelineId);
+                }
+            }, 3000);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+
+        async function discoverPipelines() {
+            try {
+                const response = await fetch(`${API_BASE}/api/list-pipelines?pattern=maestro-plan`);
+                if (response.ok) {
+                    pipelines = await response.json();
+                    // Already sorted by modified date (newest first) from API
+                    updatePipelineSelect();
+                } else {
+                    pipelines = [];
+                }
+            } catch (e) {
+                console.error('Failed to discover pipelines:', e);
+                pipelines = [];
+            }
+        }
+
+        function updatePipelineSelect() {
+            const select = document.getElementById('pipelineSelect');
+            select.innerHTML = pipelines.map((p, i) => {
+                const date = new Date(p.modified);
+                const label = `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+                return `<option value="${i}">${label}</option>`;
+            }).join('');
+            select.value = currentPipelineIndex;
+        }
+
+        function onPipelineSelect() {
+            const select = document.getElementById('pipelineSelect');
+            currentPipelineIndex = parseInt(select.value);
+            if (pipelines[currentPipelineIndex]) {
+                loadPipeline(pipelines[currentPipelineIndex].pipelineId);
+            }
+        }
+
+        async function loadLatestPipeline() {
+            currentPipelineIndex = 0;
+            await discoverPipelines();
+            if (pipelines.length > 0) {
+                await loadPipeline(pipelines[0].pipelineId);
+            } else {
+                document.getElementById('content').innerHTML = '<div class="error">No maestro-plan pipelines found</div>';
+            }
+        }
+
+        function loadPreviousPipeline() {
+            if (currentPipelineIndex < pipelines.length - 1) {
+                currentPipelineIndex++;
+                loadPipeline(pipelines[currentPipelineIndex].pipelineId);
+            }
+        }
+
+        async function loadPipeline(pipelineId) {
+            const contentDiv = document.getElementById('content');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/pipeline/${pipelineId}/execution`);
+                if (response.ok) {
+                    const events = await response.json();
+                    renderPipeline(events, pipelineId);
+                } else {
+                    const error = await response.json();
+                    contentDiv.innerHTML = `<div class="error">Failed to load pipeline: ${error.error || response.status}</div>`;
+                }
+            } catch (e) {
+                contentDiv.innerHTML = `<div class="error">Failed to load pipeline: ${e.message}</div>`;
+            }
+        }
+
+        function renderPipeline(events, pipelineId) {
+            const contentDiv = document.getElementById('content');
+            const timelineDiv = document.getElementById('timeline');
+            const statusSpan = document.getElementById('pipelineStatus');
+
+            // Determine pipeline status
+            const hasCompleted = events.some(e => e.eventType === 'pipeline_completed');
+            const hasError = events.some(e => e.eventType === 'stage_error');
+            const lastEvent = events[events.length - 1];
+
+            if (hasCompleted) {
+                statusSpan.className = 'status completed';
+                statusSpan.textContent = 'Completed';
+            } else if (hasError) {
+                statusSpan.className = 'status error';
+                statusSpan.textContent = 'Error';
+            } else {
+                statusSpan.className = 'status running';
+                statusSpan.textContent = 'Running';
+            }
+
+            // Build timeline
+            const stages = events.filter(e => e.eventType === 'stage_started');
+            const completedStages = events.filter(e => e.eventType === 'stage_completed').map(e => e.stageId);
+            const errorStages = events.filter(e => e.eventType === 'stage_error').map(e => e.stageId);
+
+            timelineDiv.innerHTML = stages.map((stage, i) => {
+                const isCompleted = completedStages.includes(stage.stageId);
+                const isError = errorStages.includes(stage.stageId);
+                const isRunning = !isCompleted && !isError && i === stages.length - 1;
+
+                const dotClass = isError ? 'error' : isRunning ? 'running' : isCompleted ? 'completed' : '';
+
+                return `
+                    ${i > 0 ? '<span class="timeline-arrow">→</span>' : ''}
+                    <div class="timeline-item">
+                        <div class="timeline-dot ${dotClass}"></div>
+                        <div class="timeline-label">${stage.stageName || stage.stageId}</div>
+                    </div>
+                `;
+            }).join('');
+
+            // Build stage cards
+            const stageCards = [];
+            let currentStage = null;
+
+            for (const event of events) {
+                if (event.eventType === 'stage_started') {
+                    currentStage = {
+                        id: event.stageId,
+                        name: event.stageName,
+                        agent: event.agent,
+                        startTime: event.timestamp,
+                        executionNumber: event.executionNumber
+                    };
+                } else if (event.eventType === 'stage_completed' && currentStage) {
+                    currentStage.endTime = event.timestamp;
+                    currentStage.result = event.result;
+                    currentStage.decision = event.decision;
+                    stageCards.push(currentStage);
+                    currentStage = null;
+                } else if (event.eventType === 'stage_error' && currentStage) {
+                    currentStage.error = event.error;
+                    currentStage.stack = event.stack;
+                    stageCards.push(currentStage);
+                    currentStage = null;
+                }
+            }
+
+            // If still processing, add current stage
+            if (currentStage) {
+                currentStage.running = true;
+                stageCards.push(currentStage);
+            }
+
+            contentDiv.innerHTML = stageCards.map(stage => {
+                const duration = stage.endTime
+                    ? formatDuration(new Date(stage.endTime) - new Date(stage.startTime))
+                    : 'running...';
+
+                let outputHtml = '';
+                if (stage.result) {
+                    // Extract key parts of the result
+                    const result = typeof stage.result === 'string' ? stage.result : JSON.stringify(stage.result, null, 2);
+                    outputHtml = `
+                        <div class="message-block">
+                            <div class="message-label">Output</div>
+                            <div class="message-text output">${escapeHtml(result)}</div>
+                            ${stage.decision ? `<span class="decision-badge ${stage.decision}">${stage.decision}</span>` : ''}
+                        </div>
+                    `;
+                }
+
+                if (stage.error) {
+                    outputHtml = `
+                        <div class="message-block">
+                            <div class="message-label">Error</div>
+                            <div class="message-text output" style="border-left-color: #f85149;">
+${escapeHtml(stage.error)}
+${stage.stack ? '\n\n--- Stack ---\n' + escapeHtml(stage.stack) : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                if (stage.running) {
+                    outputHtml = `
+                        <div class="message-block">
+                            <div class="loading" style="padding: 1rem;">
+                                <div class="spinner" style="width: 20px; height: 20px;"></div>
+                                Processing...
+                            </div>
+                        </div>
+                    `;
+                }
+
+                return `
+                    <div class="stage-card">
+                        <div class="stage-header">
+                            <div>
+                                <div class="stage-title">
+                                    ${stage.running ? '🔄' : stage.error ? '❌' : '✅'}
+                                    ${stage.name || stage.id}
+                                    ${stage.executionNumber > 1 ? `<span style="color: #f0883e;">(iteration ${stage.executionNumber})</span>` : ''}
+                                </div>
+                                <div class="stage-agent">${stage.agent}</div>
+                            </div>
+                            <div class="stage-meta">
+                                <span>⏱ ${duration}</span>
+                                <span>${formatTime(stage.startTime)}</span>
+                            </div>
+                        </div>
+                        <div class="stage-content">
+                            ${outputHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatDuration(ms) {
+            if (ms < 1000) return `${ms}ms`;
+            if (ms < 60000) return `${(ms/1000).toFixed(1)}s`;
+            return `${Math.floor(ms/60000)}m ${Math.floor((ms%60000)/1000)}s`;
+        }
+
+        function formatTime(timestamp) {
+            return new Date(timestamp).toLocaleTimeString();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize
+        init();
+    </script>
+</body>
+</html>
