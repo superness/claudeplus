@@ -1951,31 +1951,37 @@ DECISION: COMPLETED
                 log('INFO', 'PLANNING', `Pipeline started: ${startData.pipelineId}`, startData);
                 addMessage('orchestration', `Running ${startData.stages}-stage plan-review cycle...`, { header: 'Pipeline Running' });
 
-                // Poll for pipeline status
+                // Poll for pipeline status - no hard timeout, wait until actually done
                 let iteration = 0;
-                const pollInterval = 2000;
-                const maxIterations = 300; // 10 minutes max
+                const pollInterval = 3000;
+                let pipelineDone = false;
 
-                while (iteration < maxIterations) {
+                while (!pipelineDone) {
                     iteration++;
 
                     // Check status
                     const statusResponse = await fetch(`${API_BASE}/api/pipeline/status/${pipelineId}`);
                     const statusData = await statusResponse.json();
 
-                    // Update UI with current stage
+                    // Update UI with current stage and elapsed time
+                    const elapsed = Math.round(iteration * pollInterval / 1000);
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = elapsed % 60;
+                    const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+
                     if (statusData.currentStage) {
-                        updateOrchestrationStatus('active', statusData.currentStage);
+                        updateOrchestrationStatus('active', `${statusData.currentStage} (${timeStr})`);
 
                         // Update agent tree with stage info
-                        agentTree[pipelineNodeId].task = statusData.currentStage;
+                        agentTree[pipelineNodeId].task = `${statusData.currentStage} (${timeStr})`;
                         renderAgentTree();
                     }
 
-                    log('DEBUG', 'PLANNING', `Pipeline status: ${statusData.status}`, statusData);
+                    log('DEBUG', 'PLANNING', `Pipeline status: ${statusData.status} (${timeStr})`, statusData);
 
                     // Check if complete
                     if (statusData.status === 'completed' || statusData.status === 'failed') {
+                        pipelineDone = true;
                         break;
                     }
 
@@ -1983,7 +1989,7 @@ DECISION: COMPLETED
                     await new Promise(resolve => setTimeout(resolve, pollInterval));
                 }
 
-                // Get final results
+                // Get final results - pipeline is guaranteed done at this point
                 const resultResponse = await fetch(`${API_BASE}/api/pipeline/result/${pipelineId}?block=false`);
                 const resultData = await resultResponse.json();
 
